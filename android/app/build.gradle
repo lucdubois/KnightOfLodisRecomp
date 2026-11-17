@@ -99,9 +99,11 @@ android {
         }
     }
 
-    // The recompiled .so is enormous and already compressed poorly; leaving it
-    // uncompressed lets Android mmap it straight from the APK.
-    packagingOptions { jniLibs { useLegacyPackaging false } }
+    // The recompiled .so is stored compressed: it is ~120 MB of very regular
+    // generated code that zips to ~33 MB, which halves the download (165 ->
+    // ~78 MB). Android unpacks it once at install (useLegacyPackaging true =
+    // extractNativeLibs) instead of mapping it from the APK uncompressed.
+    packagingOptions { jniLibs { useLegacyPackaging true } }
 
     // The HD instruments' bank as the asset hd_instruments.bank (above).
     // 16-bit samples barely compress, and stored it reads without inflating.
