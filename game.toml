@@ -1,0 +1,4941 @@
+# game.toml — per-binary recompile config for
+# Tactics Ogre: The Knight of Lodis (USA), GBA game code ATOE.
+#
+# See gbarecomp/docs/TOML_SCHEMA.md for the schema reference.
+# This file is HAND-MAINTAINED. gba_recompile never writes to it —
+# miss-log-derived proposals land in recomp_seed_proposals.toml and
+# are merged in here manually after human review (see CLAUDE.md).
+
+[program]
+name         = "Tactics Ogre: The Knight of Lodis"
+id           = "totkol"
+load_address = 0x08000000
+size         = 0x00800000   # 8 MiB (8,388,608 bytes)
+entry_pc     = 0x080000C0   # standard GBA post-header entry
+
+# Every aligned instruction in every emitted body gets a dispatch/resume entry.
+# Reason (2026-09-18): a save state records the guest PC, and on ANDROID an
+# interior PC that is not a declared resume point cannot be entered natively —
+# self-heal recompilation is off there by design (no runtime toolchain), so the
+# load falls into the interpreter bridge. When that PC is inside an idle event
+# pump the bridge deadlocks: the loop only exits on input, and input cannot
+# arrive because the host loop that delivers it is blocked inside the bridge.
+# It burns 200M instructions and aborts. Saving on any static screen (the
+# character info page is the reproducer) landed on 0x0801A4F8, the backward
+# branch of the pump at 0x0801A4EC, and produced exactly that.
+# A [[resume_range]] over that one function would fix that one screen; this
+# makes every save state resumable instead, which is what the schema
+# recommends for strict end-to-end AOT builds.
+static_resume_all = true
+
+[identity]
+sha1 = "85a46320a31f16f5c6dda27fc094edd078dbe43d"
+md5  = "5d4f385e4e1cfa4a057d0ac828993906"
+
+# ── Coverage gap found chasing the call-return-stack leak (2026-09-17) ──
+# 0x0815938A is a genuine, direct `bl 0x0815938a` call target (confirmed
+# by disassembly of the call site at 0x08010386), but it sits in the
+# MIDDLE of a larger enclosing function's byte range (a backward-branch
+# loop ends just a few bytes before it) - the discovery walk never
+# treats mid-function bytes as a fresh entry on its own, so this call
+# ALWAYS missed and went through the self-heal interpreter bridge on
+# every single invocation. That bridge's handling of a real IRQ firing
+# mid-interpretation is implicated (not fully root-caused) in a call-
+# return-stack leak that survived an earlier upstream gbarecomp fix -
+# see README.md/CLAUDE.md. Seeding this entry makes the call a plain,
+# statically-dispatched C++ call like any other, removing it from the
+# self-heal path entirely regardless of whether the deeper bridge/IRQ
+# interaction is ever fully fixed.
+[[extra_func]]
+addr = 0x0815938A
+mode = "thumb"
+note = "self-heal miss, chasing the call-return-stack leak; genuine bl target mid-function, never discovered as its own entry"
+
+# ── Function entries ────────────────────────────────────────────────
+# Reviewed 2026-09-17 from recomp_master_misses_ATOE.toml.frag, produced
+# by a cold-cache 600-frame boot (--no-window --frames 600) after the
+# first automated discovery pass (37,477 functions, 0 manual seeds).
+# All nine are "near" an already-discovered function per the self-heal
+# log, i.e. entry points inside/adjacent to a function the initial walk
+# found but didn't fully bound (interior BL/branch targets it didn't
+# follow as separate entries). Each is a real ROM code address the
+# static walk simply didn't reach on its own.
+#
+# NOT merged from that same run's proposal, on purpose:
+#   0x03001110 (arm), 0x03007E5C (thumb) — IWRAM (RAM) addresses, outside
+#     this binary's ROM range (load_address/size above). Code copied into
+#     RAM at runtime belongs to the self-heal RAM-dispatch tier
+#     (g_runtime_ram_dispatch_hook in the shared runtime), never a
+#     game.toml extra_func — there is no fixed ROM byte range to decode.
+#
+# 0x08000000 (arm), bridged x1 — investigated 2026-09-17, corrected below.
+# This was WRONGLY described in an earlier revision of this file as
+# "inside the header (title/checksum bytes)". It isn't. The real GBA
+# header layout is: bytes 0x00-0x03 = the entry branch instruction
+# (code), 0x04-0x9F = the Nintendo logo bitmap, 0xA0-0xAB = title,
+# 0xAC-0xAF = game code, 0xB0-0xB1 = maker, 0xBD = checksum (data).
+# Disassembling 0x08000000 directly (gbarecomp's own ARM decoder, same
+# throwaway tool used for the 0x0815B8xx cluster below) shows a genuine,
+# valid `b 0x080000C0` — the actual GBA hardware boot entry point, which
+# just branches past the logo/title/checksum to the code at entry_pc
+# above. Real hardware's BIOS jumps to 0x08000000, not 0x080000C0; our
+# entry_pc skips that one redundant hop for the discovery walk, so
+# nothing in the reachable graph pointed back at it — except the
+# recompiled BIOS's own boot sequence, once, taking the hardware-accurate
+# path. Not a false-positive risk: this is independently verified as a
+# real instruction, not a guess from an address that merely looks
+# code-shaped.
+
+[[extra_func]]
+addr = 0x08000000
+mode = "arm"
+name = "cart_header_entry_branch"
+note = "Real hardware GBA boot entry: `b 0x080000C0`, skips the logo/title/checksum. Hit once by the recompiled BIOS's own boot sequence; see comment above."
+
+
+# Superseded 2026-09-17: 0x080005DC, 0x080005EA, 0x080005F4, 0x0800072A,
+# 0x08000732, 0x08000954, 0x0800135E, 0x0815B878 and 0x0815B880 were
+# originally added here as individual [[extra_func]] entries. Direct
+# disassembly (same method as the handler-table cluster below) showed
+# every one of them is the interior return-point of an internal `bl`
+# inside one long, already-discovered function, not a separate function
+# body — the same resume-point shape, just not yet understood as such
+# at the time. A fresh cold-cache run then surfaced a NEW, previously
+# unseen sibling point (0x080005D8) in the exact same function,
+# confirming individual points are the wrong tool here: which interior
+# PC gets hit shifts with self-heal cache warmth / execution timing.
+# Replaced with resume_range entries over each enclosing function's
+# real extent (bounded by disassembling forward to its actual `bx`/pop
+# return), which covers every interior point in each function, seen or
+# not, in one entry.
+
+[[resume_range]]
+start = 0x080005A0
+end   = 0x0800075C
+mode  = "thumb"
+note  = "Long per-frame-update-shaped function, many internal bl calls; covers 0x080005D8/DC/EA/F4, 0x0800072A/732 and siblings"
+
+[[resume_range]]
+start = 0x0800075E
+end   = 0x080008CC
+mode  = "thumb"
+note  = "Next function in the same run; covers 0x08000954"
+
+[[resume_range]]
+start = 0x08001314
+end   = 0x080013FA
+mode  = "thumb"
+note  = "Covers 0x0800135E"
+
+[[resume_range]]
+start = 0x0815B846
+end   = 0x0815B8A2
+mode  = "thumb"
+note  = "Covers 0x0815B878 and 0x0815B880"
+
+[[extra_func]]
+addr = 0x0815BBEC
+mode = "thumb"
+note = "self-heal miss, 600-frame cold-cache boot; near gf_tfunc_0815BBD2"
+
+# ── 0x0815BC80-0815BDB0 handler-table cluster ─────────────────────────
+# Reviewed 2026-09-17 from a clean cold-cache 2000-frame boot, by hand
+# disassembling the region with gbarecomp's own ARM/Thumb decoder (a
+# throwaway tool linked against libgbarecomp_armv4t.a) instead of
+# guessing from the miss log alone. NOT a jump table, despite the
+# runtime's own "jump_table_candidate" flag on some of these PCs (that
+# heuristic is just "misses are close together" and false-positives on
+# this shape). What's actually here: a run of tiny trampoline functions,
+# each `mov r12,lr / bl <shared helper> / store result / bx r12` -
+# consistent with MP2K/Sappy's per-parameter track/channel event
+# handlers. Every one of these functions has exactly one internal `bl`,
+# so it has exactly one interior instruction (the return point from
+# that bl) that only gets asked for when an IRQ happens to land there -
+# structurally the same thing bios/gba_bios.toml's [[resume_range]]
+# entries exist for, not a discovery gap.
+#
+# The ten entries below are the trampoline functions themselves (the
+# static walk never found a caller for them - they're reached through
+# an as-yet-unidentified function-pointer table, the actual "jump
+# table" this cluster's data plausibly belongs to). The resume_range
+# after them covers every interior return-point PC inside this whole
+# region, present and future - exact-address whack-a-mole isn't
+# reliable here since which interior PC gets hit depends on self-heal
+# cache warmth shifting instruction timing run to run (observed:
+# 0x0815BC16/18/22 appeared as misses in an earlier probe of this same
+# cluster and did not reappear in the run this note is based on).
+
+[[extra_func]]
+addr = 0x0815BC04
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BC88
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BCB4
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BCD0
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BD20
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BD34
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BD48
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BD78
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BD8C
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[extra_func]]
+addr = 0x0815BDA0
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; trampoline fn entry, caller not yet found"
+
+[[resume_range]]
+start = 0x0815BBEC
+end   = 0x0815BDB0
+mode  = "thumb"
+note  = "Interior IRQ-return points inside the trampoline cluster above (confirmed via disassembly, not a jump table); covers 0x0815BC16/18/22, 0x0815BCAC, 0x0815BD26/3A/62/6A/72/7E/92/A6 and any sibling PC the same shape produces later"
+
+# ── Isolated single resume point, unrelated to the cluster above ─────
+[[extra_func]]
+addr = 0x0813966C
+mode = "thumb"
+note = "self-heal miss, cold-cache 2000-frame boot; ordinary trampoline fn entry, standalone (not part of the 0x0815Bxxx cluster)"
+
+[[resume_range]]
+start = 0x08000E40
+end   = 0x08000E68
+mode  = "thumb"
+note  = "0x08000E5C is the interior return-point of an internal bl inside this loop (confirmed via disassembly); loop body itself already discovered, this just adds the interior alias"
+
+# ── Sprite visibility window (the extended view's side/top margins) ──
+#
+# 0x08076810 is the game's generic sprite emitter: everything drawn as an OBJ
+# goes through it, and it rejects anything whose screen position falls outside
+# the GBA's own 240x160. The four immediates below ARE that window:
+#
+#   08076872  ldrh  r0,[r5,#0x1C]   ; screen X
+#   08076874  adds  r0,#0x20        ; + left slack          <-- override
+#   08076876  lsls  r0,r0,#16       ; truncate to u16
+#   08076878  movs  r1,#0x98        ; width limit / 2       <-- override
+#   0807687A  lsls  r1,r1,#17       ; 0x98<<17 == 304<<16
+#   0807687C  cmp   r0,r1
+#   0807687E  bhi   0x080768B2      ; reject
+#   08076880  movs  r0,#0x1E        ; STRUCT OFFSET - never override
+#   08076882  ldrsh r1,[r5,r0]      ; screen Y
+#   08076884  movs  r0,#0x10        ; top slack             <-- override
+#   08076886  rsbs  r0,r0,#0
+#   08076888  cmp   r1,r0
+#   0807688A  blt   0x080768B2      ; reject
+#   0807688C  cmp   r1,#0xC0        ; bottom limit          <-- override
+#   0807688E  bgt   0x080768B2      ; reject
+#
+# So the stock accept window is X in [-32, 272], Y in [-16, 192]. That -32 is
+# exactly the boundary measured in OAM when units pop in at the edge of the
+# extended view (README "Units do not appear in the margins"): the sprites are
+# never emitted, so no rendering policy can reveal them.
+#
+# Routing these four through the immediate hook lets the game widen its OWN
+# cull to the surface it is actually being rendered at, so animation, facing,
+# palette and isometric depth ordering all still come from the guest. The
+# callback returns the stock value whenever the view is the authentic 240x160,
+# which keeps the faithful render byte-identical.
+#
+# 0x08076880 and 0x08076890 are immediates in the same basic block and are NOT
+# listed: the first is a struct offset used as an ldrsh index, the second is a
+# plain zero.
+
+[[thumb_alu_immediate_override]]
+addr = 0x08076874
+note = "OBJ cull: left slack, stock 0x20 (32px). Widened to 32 + extra_x."
+
+[[thumb_alu_immediate_override]]
+addr = 0x08076878
+note = "OBJ cull: horizontal limit, stock 0x98 (<<17 == 304). Widened to 152 + extra_x."
+
+[[thumb_alu_immediate_override]]
+addr = 0x08076884
+note = "OBJ cull: top slack, stock 0x10 (negated to -16). Widened to 16 + extra_y."
+
+[[thumb_alu_immediate_override]]
+addr = 0x0807688C
+note = "OBJ cull: bottom limit, stock 0xC0 (192). Widened to 192 + extra_y."
+
+# ── The menu screens' task table (2026-09-24) ─────────────────────
+# The ROM table at 0x0860D77C..0x0860DA3C is 44 records of 16 bytes:
+# {task fn|1, second fn|1 or 0, flags, data ptr}. It is how the army roster,
+# the status window and the other menu screens are started, so every routine
+# in it is reached only through this pointer and none was found statically:
+# three whole code regions (0x0802B506-0x0802EA2C, 0x0802F1CE-0x08039018,
+# 0x08040422-0x08043CC4) ran interpreted, bridged by self-heal, and on
+# Android stayed interpreted. Each of the 23 distinct targets below was
+# disassembled and opens with a real push {..., lr}. 0x08034498 and 0x08040D9C
+# came from the self-heal miss log; the other 21 are their table siblings.
+#
+# The same miss log also proposed 0x08035F9C, 0x0802B73C, 0x0802B75E,
+# 0x08040D38, 0x08041146 and 0x08041270. Those are NOT entries: each one
+# directly follows a `bl`, i.e. it is the return point inside one of the
+# functions above, and becomes a resume point once its function is static.
+
+[[extra_func]]
+addr = 0x0802BE54
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0802C1A4
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0802C9AC
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0802D160
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0802DB38
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0802FCE8
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x080309F8
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08032CCC
+mode = "thumb"
+note = "menu task table 0x0860D77C; battle status window builder candidate (caller of the window builder 0x0803F298)"
+
+[[extra_func]]
+addr = 0x0803339C
+mode = "thumb"
+note = "menu task table 0x0860D77C; battle status window builder candidate (caller of the window builder 0x0803F298)"
+
+[[extra_func]]
+addr = 0x08033DC8
+mode = "thumb"
+note = "menu task table 0x0860D77C; battle status window builder candidate (caller of the window builder 0x0803F298)"
+
+[[extra_func]]
+addr = 0x08034498
+mode = "thumb"
+note = "menu task table 0x0860D77C; roster status task (state byte in r1: 0 init/build, 3 up, 4 equipment change); the self-heal miss that blocks in-window Next unit"
+
+[[extra_func]]
+addr = 0x08036810
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08037E88
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0804096C
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08040D9C
+mode = "thumb"
+note = "menu task table 0x0860D77C; second routine of the status records (paired with 0x08034498)"
+
+[[extra_func]]
+addr = 0x080414C0
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0804175C
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x0804198C
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08041B68
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08041C84
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08043780
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08044628
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+[[extra_func]]
+addr = 0x08045098
+mode = "thumb"
+note = "menu task table 0x0860D77C; table target, push {..., lr}"
+
+# Stored as a callback by two routines in the regions above (literal pools
+# at 0x08033610 and 0x08034D28); bridged about once a frame while a status
+# window is up. Opens with push {r4-r6, lr}.
+
+[[extra_func]]
+addr = 0x0803A8F8
+mode = "thumb"
+note = "self-heal miss; per-frame callback of the status window, pointer stored at 0x08033610/0x08034D28"
+
+# ── Next unit, from a button (2026-09-24) ──────────────────────────
+# 0x080745A4 is the battle cursor's hold-L state machine, called once a frame
+# during player control. src/kol_actions.cpp may take ONE call of it, when the
+# second screen's "Next unit" button is pending and the machine is in its
+# ordinary state, and tail-call the game's own selection 0x08074338(0) in its
+# place with the index it keeps. Declines every other call. KOL_NO_ACTIONS=1.
+[[mod_function_hook]]
+addr = 0x080745A4
+mode = "thumb"
+
+# 0x0803A0D0 is the status window's task (the battle map's window and the
+# army roster's alike). src/kol_actions.cpp only records the unit the window
+# shows, for the second screen, and declines every call. KOL_NO_ACTIONS=1.
+[[mod_function_hook]]
+addr = 0x0803A0D0
+mode = "thumb"
+
+# 0x08034498 is the roster task (in the menu task table above). It draws the
+# status window's contents, in the army roster and on the battle map alike;
+# its state byte (r1) is 3 while the window is up. src/kol_actions.cpp, with
+# a "Next unit"/"Previous unit" tap pending and the window idle (control
+# block sub-state 1), points the window at the neighbouring unit and sets
+# that byte to 0, then declines, so the task's own init draws the new unit.
+# In battle it then takes ONE later idle call and tail-calls 0x0803A964, the
+# game's own refresh of the window's sprite, in its place. Declines every
+# other call. KOL_NO_STATUS_SWITCH=1 (or KOL_NO_ACTIONS=1).
+[[mod_function_hook]]
+addr = 0x08034498
+mode = "thumb"
+
+# 0x0801670C polls a text box: it returns 0xFF once the text is out and A is
+# pressed. The move choice's NAVI prompt ("Choose where you want to move this
+# character.", NAVI bank 0x0875D99A entry 0x22, opened at 0x080662C4) waits on
+# it in state 9 (handler at 0x080662F0), then closes the box, puts the map
+# cursor back (0x03000FD5 = 1) and goes on to state 0x0B. src/kol_actions.cpp
+# answers 0xFF for that one caller (return address 0x080662F4), so the prompt
+# closes at once and the second screen shows its text instead. Declines every
+# other call: every other dialogue waits as the game made it.
+# The move choice's message state (0x08066B28, return address 0x08066B2C)
+# polls it too: A on a cell out of range puts up "Can't move to that spot."
+# That caller is answered as well, and the text goes to the second screen.
+# KOL_NO_SKIP_MOVE_NAVI=1 (or KOL_NO_ACTIONS=1).
+[[mod_function_hook]]
+addr = 0x0801670C
+mode = "thumb"
+
+# The magic shop's second screen buys a spell and equips it by the game's own
+# purchase (src/kol_shop_buy.cpp, README "Tap a character to buy and equip"):
+# 0x08132444 is the Buy list's task, one frame of its state (block +0x49C):
+# from the list to the "Buy?" state with no box, and on to the list after it.
+# 0x080197C0 is the box's "was it cancelled", answered no for that one caller
+# (0x08133A26), as the text-box poll above is at 0x08133A10. 0x081300E0, the
+# task's last call, gives way for a frame each to the game's recount 0x0813A6B0
+# and its list builder 0x08131EF4. All decline unless a purchase is under way.
+# KOL_NO_SHOP_BUY=1.
+# 0x0815BC94 is the sound driver's GOTO. Song 10's track 4 loops past its own end of
+# a tie, so each time round leaves one more note held (in the cartridge); at that one GOTO
+# src/kol_shop_buy.cpp ends them. Declines always. KOL_KEEP_SONG_TIE=1.
+[[mod_function_hook]]
+addr = 0x0815BC94
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08132444
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x080197C0
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x081300E0
+mode = "thumb"
+
+# 0x0800CAEC(params, table) fills a 160-line HBlank scroll table: per line,
+# HOFS = params+0 + (sin(phase) >> params+0xA) on lines [params+4, params+6),
+# the phase starting at params+8 and stepping by params+9 (the opening's
+# wobbling fire, BG1). src/kol_scene_strip.cpp only records a copy of the
+# parameters per table, to carry the wave on past line 160 (the top screen's
+# extra rows and the second screen), and declines every call.
+[[mod_function_hook]]
+addr = 0x0800CAEC
+mode = "thumb"
+
+# World map event scripts (bank 0x08765D54): the interpreter 0x080213B4 calls
+# each op's routine through the table at 0x0815F75C (per op 0x6D-0x93: a
+# length byte, then a THUMB routine pointer), so none of the 39 routines is a
+# bl target and none was discovered. Reviewed 2026-09-30: every pointer is odd
+# (THUMB), in 0x08021111-0x08021AD1, and each starts a function (push/ldr).
+[[extra_func]]
+addr = 0x080213FC
+mode = "thumb"
+note = "world map event script op 0x6D (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x0802140C
+mode = "thumb"
+note = "world map event script op 0x6E (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021430
+mode = "thumb"
+note = "world map event script op 0x6F (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021454
+mode = "thumb"
+note = "world map event script op 0x70 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021490
+mode = "thumb"
+note = "world map event script op 0x71 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080214BC
+mode = "thumb"
+note = "world map event script op 0x72 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080214E4
+mode = "thumb"
+note = "world map event script op 0x73 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021518
+mode = "thumb"
+note = "world map event script op 0x74 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x0802153C
+mode = "thumb"
+note = "world map event script op 0x75 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080215A4
+mode = "thumb"
+note = "world map event script op 0x76 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080215CC
+mode = "thumb"
+note = "world map event script op 0x77 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080215F8
+mode = "thumb"
+note = "world map event script op 0x78 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021624
+mode = "thumb"
+note = "world map event script op 0x79 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021678
+mode = "thumb"
+note = "world map event script op 0x7A (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080216A4
+mode = "thumb"
+note = "world map event script op 0x7B (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080216A8
+mode = "thumb"
+note = "world map event script op 0x7C (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080216BC
+mode = "thumb"
+note = "world map event script op 0x7D (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080216EC
+mode = "thumb"
+note = "world map event script op 0x7E (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x0802171C
+mode = "thumb"
+note = "world map event script op 0x7F (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021750
+mode = "thumb"
+note = "world map event script op 0x80 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021784
+mode = "thumb"
+note = "world map event script op 0x81 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080217A8
+mode = "thumb"
+note = "world map event script op 0x82 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080217CC
+mode = "thumb"
+note = "world map event script op 0x83 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080217F0
+mode = "thumb"
+note = "world map event script op 0x84 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021814
+mode = "thumb"
+note = "world map event script op 0x85 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021838
+mode = "thumb"
+note = "world map event script op 0x86 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021110
+mode = "thumb"
+note = "world map event script op 0x87 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021878
+mode = "thumb"
+note = "world map event script op 0x88 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080218C8
+mode = "thumb"
+note = "world map event script op 0x89 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021908
+mode = "thumb"
+note = "world map event script op 0x8A (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021954
+mode = "thumb"
+note = "world map event script op 0x8B (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080219B8
+mode = "thumb"
+note = "world map event script op 0x8C (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x080219E4
+mode = "thumb"
+note = "world map event script op 0x8D (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021A08
+mode = "thumb"
+note = "world map event script op 0x8E (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021A40
+mode = "thumb"
+note = "world map event script op 0x8F (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021A70
+mode = "thumb"
+note = "world map event script op 0x90 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021A7C
+mode = "thumb"
+note = "world map event script op 0x91 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021AA4
+mode = "thumb"
+note = "world map event script op 0x92 (table 0x0815F75C)"
+
+[[extra_func]]
+addr = 0x08021AD0
+mode = "thumb"
+note = "world map event script op 0x93 (table 0x0815F75C)"
+
+# 0x08021A40(ctx, params) is the world map event scripts' random roll (op
+# 0x8F): when rand() % 101 > params[1] the script jumps by params[2]. Script
+# group 2 (ctx byte 0) is the random battles, a 20% roll each. With the debug
+# option "No random battles" on, src/kol_actions.cpp takes that jump for group
+# 2 as the game does when the roll fails; it declines every other call.
+[[mod_function_hook]]
+addr = 0x08021A40
+mode = "thumb"
+
+# 0x08118B4C(place, n) gives a world-map battle its map number (a table of
+# 12 a place at 0x08768BCC); its only caller is 0x0801FA78, the script op
+# that starts a battle, which Training uses too. With Debug > Battle Map set,
+# src/kol_actions.cpp answers that number (1..119) and returns; otherwise it
+# declines and the game picks as always.
+[[mod_function_hook]]
+addr = 0x08118B4C
+mode = "thumb"
+
+# 0x08021B68 is the map header parser every map load goes through (it reads
+# the map number at 0x02029D40): the battle's loading (0x08047ABA ..
+# 0x080488F0) and the story scene loader 0x0811C77C call it.
+# src/kol_actions.cpp counts the loads and declines: the wet look starts
+# over with each map, even the same one reopened.
+[[mod_function_hook]]
+addr = 0x08021B68
+mode = "thumb"
+
+# 0x0811C77C loads a story scene's map: it calls the header parser
+# 0x08021B68 (which reads the map number at 0x02029D40), then the BG setup
+# 0x0804B1FC / 0x0804B150. Called by BL from 0x08120B0A and 0x081275D0 (New
+# Game's opening scene runs through it); it starts push {r4, r5, lr} after a
+# literal pool, and was missing from the static build (nothing from
+# 0x0811C77C to 0x0811CBA0 had a symbol). With Debug > Battle Map set,
+# src/kol_actions.cpp writes the chosen map number before it runs and
+# declines, so the scene loads that map the game's own way.
+[[extra_func]]
+addr = 0x0811C77C
+mode = "thumb"
+note = "story scene map loader (callers 0x08120B0A, 0x081275D0)"
+
+[[mod_function_hook]]
+addr = 0x0811C77C
+mode = "thumb"
+
+# The story scenes' script ops: 122 {routine, argument count} pairs at
+# 0x08165020..0x081653F0 (THUMB pointers). None was in the static build, so
+# every story scene's script ran interpreted (232 dispatch misses from New
+# Game's opening alone; on Android, where nothing self-heals, permanently).
+# Each entry follows a return or a literal pool; 110 start with push, the
+# other 12 are leaf routines (ldrb/ldr/mov first). Found 2026-10-03 while
+# hooking the scene map loader (Debug > Battle Map).
+[[extra_func]]
+addr = 0x0811A288
+mode = "thumb"
+note = "story scene script op 0 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A2B8
+mode = "thumb"
+note = "story scene script op 1 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A2EC
+mode = "thumb"
+note = "story scene script op 2 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A304
+mode = "thumb"
+note = "story scene script op 3 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A324
+mode = "thumb"
+note = "story scene script op 4 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A344
+mode = "thumb"
+note = "story scene script op 5 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811933C
+mode = "thumb"
+note = "story scene script op 6 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x081193F0
+mode = "thumb"
+note = "story scene script op 7 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x081194A8
+mode = "thumb"
+note = "story scene script op 8 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A354
+mode = "thumb"
+note = "story scene script op 9 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119528
+mode = "thumb"
+note = "story scene script op 10 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A3C8
+mode = "thumb"
+note = "story scene script op 11 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x081195D0
+mode = "thumb"
+note = "story scene script op 12 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A40C
+mode = "thumb"
+note = "story scene script op 13 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A440
+mode = "thumb"
+note = "story scene script op 14 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A4A4
+mode = "thumb"
+note = "story scene script op 15 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811964C
+mode = "thumb"
+note = "story scene script op 16 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A504
+mode = "thumb"
+note = "story scene script op 17 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A588
+mode = "thumb"
+note = "story scene script op 18 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A5C0
+mode = "thumb"
+note = "story scene script op 19 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A628
+mode = "thumb"
+note = "story scene script op 20 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119700
+mode = "thumb"
+note = "story scene script op 21 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A684
+mode = "thumb"
+note = "story scene script op 22 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811978C
+mode = "thumb"
+note = "story scene script op 23 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A6BC
+mode = "thumb"
+note = "story scene script op 24 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A6E8
+mode = "thumb"
+note = "story scene script op 25 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A720
+mode = "thumb"
+note = "story scene script op 26 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119868
+mode = "thumb"
+note = "story scene script op 27 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A774
+mode = "thumb"
+note = "story scene script op 28 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A7C0
+mode = "thumb"
+note = "story scene script op 29 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119940
+mode = "thumb"
+note = "story scene script op 30 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A860
+mode = "thumb"
+note = "story scene script op 31 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A8CC
+mode = "thumb"
+note = "story scene script op 32 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A8E4
+mode = "thumb"
+note = "story scene script op 33 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A920
+mode = "thumb"
+note = "story scene script op 34 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A940
+mode = "thumb"
+note = "story scene script op 35 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x081199B8
+mode = "thumb"
+note = "story scene script op 36 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A950
+mode = "thumb"
+note = "story scene script op 37 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A9A0
+mode = "thumb"
+note = "story scene script op 38 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A9F0
+mode = "thumb"
+note = "story scene script op 39 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AA24
+mode = "thumb"
+note = "story scene script op 40 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AA3C
+mode = "thumb"
+note = "story scene script op 41 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AA5C
+mode = "thumb"
+note = "story scene script op 42 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AA70
+mode = "thumb"
+note = "story scene script op 43 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AA80
+mode = "thumb"
+note = "story scene script op 44 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119A50
+mode = "thumb"
+note = "story scene script op 45 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119ADC
+mode = "thumb"
+note = "story scene script op 46 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119B64
+mode = "thumb"
+note = "story scene script op 47 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119C14
+mode = "thumb"
+note = "story scene script op 48 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AAB4
+mode = "thumb"
+note = "story scene script op 49 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AAD4
+mode = "thumb"
+note = "story scene script op 50 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119CB8
+mode = "thumb"
+note = "story scene script op 51 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AB0C
+mode = "thumb"
+note = "story scene script op 52 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119D60
+mode = "thumb"
+note = "story scene script op 53 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119E14
+mode = "thumb"
+note = "story scene script op 54 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x08119EB4
+mode = "thumb"
+note = "story scene script op 55 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AB40
+mode = "thumb"
+note = "story scene script op 56 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AB54
+mode = "thumb"
+note = "story scene script op 57 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AB80
+mode = "thumb"
+note = "story scene script op 58 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811ABD0
+mode = "thumb"
+note = "story scene script op 59 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AC44
+mode = "thumb"
+note = "story scene script op 60 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A04C
+mode = "thumb"
+note = "story scene script op 61 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AC60
+mode = "thumb"
+note = "story scene script op 62 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AC78
+mode = "thumb"
+note = "story scene script op 63 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811ACA8
+mode = "thumb"
+note = "story scene script op 64 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A118
+mode = "thumb"
+note = "story scene script op 65 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811ACBC
+mode = "thumb"
+note = "story scene script op 66 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811ACE4
+mode = "thumb"
+note = "story scene script op 67 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AD10
+mode = "thumb"
+note = "story scene script op 68 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AD28
+mode = "thumb"
+note = "story scene script op 69 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AD58
+mode = "thumb"
+note = "story scene script op 70 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AD84
+mode = "thumb"
+note = "story scene script op 71 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811ADB4
+mode = "thumb"
+note = "story scene script op 72 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811ADDC
+mode = "thumb"
+note = "story scene script op 73 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AE54
+mode = "thumb"
+note = "story scene script op 74 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AEDC
+mode = "thumb"
+note = "story scene script op 75 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AF0C
+mode = "thumb"
+note = "story scene script op 76 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AF24
+mode = "thumb"
+note = "story scene script op 77 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AF38
+mode = "thumb"
+note = "story scene script op 78 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AF5C
+mode = "thumb"
+note = "story scene script op 79 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AF70
+mode = "thumb"
+note = "story scene script op 80 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AF88
+mode = "thumb"
+note = "story scene script op 81 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AFA8
+mode = "thumb"
+note = "story scene script op 82 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AFC4
+mode = "thumb"
+note = "story scene script op 83 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811AFE0
+mode = "thumb"
+note = "story scene script op 84 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B038
+mode = "thumb"
+note = "story scene script op 85 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B04C
+mode = "thumb"
+note = "story scene script op 86 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B064
+mode = "thumb"
+note = "story scene script op 87 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B080
+mode = "thumb"
+note = "story scene script op 88 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B0A8
+mode = "thumb"
+note = "story scene script op 89 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B100
+mode = "thumb"
+note = "story scene script op 90 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B144
+mode = "thumb"
+note = "story scene script op 91 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B16C
+mode = "thumb"
+note = "story scene script op 92 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B184
+mode = "thumb"
+note = "story scene script op 93 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B1B8
+mode = "thumb"
+note = "story scene script op 94 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B1E0
+mode = "thumb"
+note = "story scene script op 95 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B1FC
+mode = "thumb"
+note = "story scene script op 96 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B20C
+mode = "thumb"
+note = "story scene script op 97 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B228
+mode = "thumb"
+note = "story scene script op 98 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B25C
+mode = "thumb"
+note = "story scene script op 99 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B270
+mode = "thumb"
+note = "story scene script op 100 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B288
+mode = "thumb"
+note = "story scene script op 101 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B298
+mode = "thumb"
+note = "story scene script op 102 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B2D8
+mode = "thumb"
+note = "story scene script op 103 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B314
+mode = "thumb"
+note = "story scene script op 104 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B32C
+mode = "thumb"
+note = "story scene script op 105 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B34C
+mode = "thumb"
+note = "story scene script op 106 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811A1E0
+mode = "thumb"
+note = "story scene script op 107 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B388
+mode = "thumb"
+note = "story scene script op 108 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B3B8
+mode = "thumb"
+note = "story scene script op 109 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B3CC
+mode = "thumb"
+note = "story scene script op 110 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B3F4
+mode = "thumb"
+note = "story scene script op 111 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B41C
+mode = "thumb"
+note = "story scene script op 112 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B45C
+mode = "thumb"
+note = "story scene script op 113 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B48C
+mode = "thumb"
+note = "story scene script op 114 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B4B8
+mode = "thumb"
+note = "story scene script op 115 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B500
+mode = "thumb"
+note = "story scene script op 116 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B528
+mode = "thumb"
+note = "story scene script op 117 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B594
+mode = "thumb"
+note = "story scene script op 118 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B5C0
+mode = "thumb"
+note = "story scene script op 119 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B5F8
+mode = "thumb"
+note = "story scene script op 120 (table 0x08165020)"
+
+[[extra_func]]
+addr = 0x0811B628
+mode = "thumb"
+note = "story scene script op 121 (table 0x08165020)"
+
+# Scene op 23, 0x0811978C, walks an actor along routes it joins from the
+# scene's route records, and hangs on purpose (b . at 0x081197D2) when the
+# joined route passes 16 steps. Routes are found on the map, so on a map the
+# scene was not written for they overflow. With Debug > Battle Map set,
+# src/kol_actions.cpp answers 0x110, the op's own "no such actor" result:
+# the actor stays put and the script goes on.
+[[mod_function_hook]]
+addr = 0x0811978C
+mode = "thumb"
+
+
+# A unit's profile from the second screen's army list, on the world map: the
+# status window Organize opens on a unit, opened on the tapped unit directly.
+# 0x08128D9C is the world map's roaming task (state 4 reads the pad); for a
+# tap there, src/kol_actions.cpp does what its R branch (0x081292E8) does:
+# starts the command menu's task and suspends itself, two tail calls.
+# 0x08128220 is that command menu (state 1 reads the pad); the hook queues
+# Organize (11) behind the fade-out (15) as its A on Organize does. The
+# status task and roster task hooks above then open the window on the unit,
+# and B there closes the whole menu (the battle window's own branch).
+# KOL_NO_WORLD_PROFILE=1 (or KOL_NO_ACTIONS=1).
+[[mod_function_hook]]
+addr = 0x08128D9C
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08128220
+mode = "thumb"
+
+# A tap from roaming shows no command menu: 0x08127F7C draws the menu's
+# icons and label (OAM, every frame, from the command menu's states), and
+# the hook returns at once while the flow runs. Back from the window, the
+# command menu takes its own B (resume roaming) with its cancel sound,
+# 0x0814506C(0xB0), dropped: the window's B already made one.
+[[mod_function_hook]]
+addr = 0x08127F7C
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0814506C
+mode = "thumb"
+
+# 0x0803AD4C is the status window's key reader (the first new key in its
+# priority list). For Item, Spell or Class from the second screen's bar, the
+# hook answers R to the Organize grid's read and then A to its R menu's,
+# the menu's cursor on the item (src/kol_actions.cpp). Declines otherwise.
+[[mod_function_hook]]
+addr = 0x0803AD4C
+mode = "thumb"
+
+# 0x080414C0 draws the Organize grid's R menu screen (its icons, label and
+# hand, then the grid's sprites at 0x0804096C). While the second screen's
+# Item/Spell/Class pass through that menu (src/kol_actions.cpp), the hook
+# runs 0x0804096C alone: the menu is never seen. Declines otherwise.
+[[mod_function_hook]]
+addr = 0x080414C0
+mode = "thumb"
+
+# 0x0807EC78 is battle preparation's task (state byte [0x0202B2A8]+0x2052).
+# State 0 slides the unit list in; when it has, it opens the NAVI box "To form
+# an Attack Team, dispatch up to 5 characters." unless +0x2053, the game's
+# own "shown already" flag, is set or the Navigation option is off, and then
+# goes straight to state 2. On that last slide frame the hook sets the flag,
+# so the box is never opened, and the second screen shows the text instead
+# (src/kol_actions.cpp). The one-time tutorial box before it is left alone.
+# KOL_NO_SKIP_MOVE_NAVI=1 (or KOL_NO_ACTIONS=1).
+[[mod_function_hook]]
+addr = 0x0807EC78
+mode = "thumb"
+
+# 0x08015D50(box, ?, bank, index) fetches a text box's text. src/kol_actions.cpp
+# records the bank and index, to know which message a skipped box held, and
+# declines every call but one: battle preparation's warnings ("No more
+# characters can be dispatched.", fetched from 0x0807F1FC), which it skips,
+# so the box is never made (see 0x08019088 below).
+# KOL_NO_SKIP_MOVE_NAVI=1 (or KOL_NO_ACTIONS=1).
+[[mod_function_hook]]
+addr = 0x08015D50
+mode = "thumb"
+
+# 0x08019088(a, b) sets the text system up to show a box. Battle
+# preparation's warning path calls it from 0x0807F204, after the fetch
+# above; src/kol_actions.cpp skips that one call when it skipped the fetch.
+# The text-box poll hook (0x0801670C) then answers the warning's two polls,
+# so the task goes back to its preparation screen the next frame, and the
+# second screen shows the warning instead. Declines every other call.
+# KOL_NO_SKIP_MOVE_NAVI=1 (or KOL_NO_ACTIONS=1).
+[[mod_function_hook]]
+addr = 0x08019088
+mode = "thumb"
+
+# 0x080676EC(ctx) flips bit 0x40 of the unit record's +0x17 every frame in
+# battle preparation, which is the blink of the unit on a deployment square
+# (the map's draw list takes an object only while the bit is set).
+# src/kol_ghost.cpp clears the bit first so the flip always sets it, gives the
+# object the game's own semi-transparent flag (+0x78 |= 0x100), and, while the
+# game blends nothing, sets the BLDCNT/BLDALPHA copies at 0x03000E1A/E1C to
+# half and half. Declines every call. KOL_NO_GHOST=1.
+[[mod_function_hook]]
+addr = 0x080676EC
+mode = "thumb"
+
+# 0x0805A77C builds the map's unit draw list, once a frame. src/kol_ghost.cpp
+# puts back what it changed above once the flip has stopped running.
+# Declines every call. KOL_NO_GHOST=1.
+[[mod_function_hook]]
+addr = 0x0805A77C
+mode = "thumb"
+
+# 0x08124B94(?, state*, mover) moves a scene actor along its path (the base
+# at mover +0x0A/+0x0C/+0x0E plus each axis's curve). src/kol_gulls.cpp
+# moves the base of the harbour gulls' movers (map 97's boat scene) back
+# along their path once, so that they start off the wide view. Declines
+# every call. KOL_NO_GULL_SHIFT=1.
+[[mod_function_hook]]
+addr = 0x08124B94
+mode = "thumb"
+
+# 0x0811A248(ctx) steps a story scene script thread (ctx +0x00 s16 offset,
+# +0x10 the script; op table 0x0816501C, 8 bytes: s8 length, handler; ops
+# run until one waits). src/kol_gulls.cpp has map 97's boat scene's main
+# thread create the two people on the quay (06 05 ..., 06 75 ...) before it
+# spawns the gulls' threads and joins them, instead of after: they stand in
+# the wide view's right margin and appeared there once the gulls had gone.
+# Rewrites that thread's offset only; declines every call. KOL_NO_QUAY_EARLY=1.
+[[mod_function_hook]]
+addr = 0x0811A248
+mode = "thumb"
+
+# 0x080598DC(node, object) emits a map unit's shadow blob (descriptor
+# 0x0860EFBC: tiles 0x14B/0x14C), called from the sprite flush 0x0807690C for
+# the node the draw list 0x0805A77C registered. src/kol_gulls.cpp returns at
+# once for the street soldier of map 97's boat scene while he fades out (his
+# boots over a solid blob did not fade: our PPU does not blend a sprite over
+# another sprite); declines every other call. KOL_NO_LONG_WALK=1.
+[[mod_function_hook]]
+addr = 0x080598DC
+mode = "thumb"
+
+# 0x03005DE0(sx, sy, X, Y, [sp] Z, ..., [sp+0xC] out) works out the OBJ
+# priority of a map unit's four sprite quarters against the terrain in front
+# of it (IWRAM, the copy of ROM 0x087D58F8; called through the pointer at
+# 0x0860FC5C from the unit's slot routine, 0x0805A350, which stores the four
+# bytes at object +0x8C). Its X, Y, Z are the object's +0x16 (the place its
+# move started from). West of column 0 it takes the ground as height -255,
+# so the town's archers walking in off the grid (src/kol_gulls.cpp) had their
+# lower half put behind the edge column's terrain (priority 3) for their
+# last 22 px off the grid: half a body in the wide view. src/kol_gulls.cpp
+# makes that call again with X (or Z) put on the grid's edge, for those
+# actors only, and declines every other call. KOL_NO_ARCHER_WALK_IN=1.
+[[mod_function_hook]]
+addr = 0x03005DE0
+mode = "thumb"
+
+# 0x0815C4E8 is MP2K's m4aSongNumStart(song), which the game's sound routine
+# calls for music and effects alike (the song table at 0x08167BB8).
+# src/kol_rumble.cpp starts a rumble for the effects it lists (205: the
+# thunder) and declines every call. Options > Rumble Off: nothing plays.
+[[mod_function_hook]]
+addr = 0x0815C4E8
+mode = "thumb"
+
+# The left stick moves the battle map's hand cursor (src/kol_stick_cursor.cpp,
+# Options > Analog Cursor). 0x08056E90 is the cursor's task (cursor 0x03000FA0),
+# once a frame; with the cursor out (+0x35 = 1) and no direction held, the hook
+# moves a point by the stick and, when it crosses into another cell the step
+# 0x08056F90 would enter (flag 0x20), writes the cell as the step does (+0x44/
+# +0x48 the old u32s, +0x3C/+0x40 the new x, z). Declines every call.
+[[mod_function_hook]]
+addr = 0x08056E90
+mode = "thumb"
+
+# 0x08002394(def, x, y, ...) draws a sprite at a screen place; cursor_draw
+# 0x08057768 calls it for the floating hand (return 0x08057874). While the
+# point is off its cell's middle, src/kol_stick_cursor.cpp makes that one call
+# again with x, y moved by the point's offset (R15 = 0x08002394, LR kept) and
+# lets the repeated call run. Declines every other call.
+[[mod_function_hook]]
+addr = 0x08002394
+mode = "thumb"
+
+# 0x0807696C(routine, owner, X, Y, [sp] Z, [sp+4] key) emits a sprite slot at a
+# world point; cursor_draw calls it for the corner pieces (routine 0x08057AD5,
+# return 0x08057900). As above, that one call is made again with the point's
+# X, Y, Z, so the game projects and sorts it. Declines every other call.
+[[mod_function_hook]]
+addr = 0x0807696C
+mode = "thumb"
+
+# 0x0801FBAC answers whether the enemy side is out (battle slots 8-15 empty,
+# fallen or gone). Only the five battle-outcome routines call it (0x08020230,
+# 0x08020AB4, 0x0801FEA8, 0x0801FF74, 0x08020004, picked by story variable
+# 0xB4 in 0x08020E30). src/kol_auto_win.cpp answers 1 once Debug > Instant
+# Win has sent the battle task to its outcome check (below) and declines
+# every other call. KOL_NO_AUTO_WIN=1.
+# 0x0815B838 is MP2K's SoundMain, run once every frame in every scene.
+# src/kol_menu.cpp applies there the changes the second screen's options menu
+# queued for the game's own options (EWRAM 0x0200132C, eight bytes; also the
+# game's OPTION menu work copy at [0x02028950]+0x1194 while it is open).
+# Declines every call, except Fast Attacks' extra frames (below).
+# KOL_NO_MENU_OPTIONS=1.
+[[mod_function_hook]]
+addr = 0x0815B838
+mode = "thumb"
+
+# 0x0815BE18 is MP2K's SoundVSync, called from the VBlank handler
+# (0x080005A6) once a frame: it counts the sound DMA's frames. While a strike
+# plays with Options > Fast Attacks on, src/kol_fast_actions.cpp runs the
+# game two frames to a presented one; over every second frame it pauses the
+# sound hardware and returns to the handler without the routine (SoundMain
+# is skipped too, above), so the sound keeps its tempo. Declines every other
+# call.
+[[mod_function_hook]]
+addr = 0x0815BE18
+mode = "thumb"
+
+# 0x080020B8 is called by the VBlank handler right after it runs the game's
+# tasks (0x080005F4); it only flips the byte 0x030032B8. With a sound pending
+# from the second screen's menu button, src/kol_menu.cpp flips it itself and
+# runs the game's sound effect routine 0x0814506C(id) in its place, returning
+# to the handler. Declines every other call.
+[[mod_function_hook]]
+addr = 0x080020B8
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0801FBAC
+mode = "thumb"
+
+# 0x08060E54(task) is the battle task (0x0202A5B0), one case per state byte
+# +0x27E. With Debug > Instant Win on, src/kol_auto_win.cpp, at the first
+# unit's turn of a battle (state 0x00), pushes the pairs the game pushes
+# before its own outcome check after a kill ((sub, 0x31), (sub, 0x30) on the
+# stacks at +0x26E/+0x26D and +0x280/+0x27F) and sets state 0x2F, then
+# declines: the task runs the game's check, which the hook above answers.
+# Declines every other call. KOL_NO_AUTO_WIN=1.
+[[mod_function_hook]]
+addr = 0x08060E54
+mode = "thumb"
+
+
+# ── ROM -> IWRAM code copies (2026-09-22) ───────────────────────────
+# These three blocks CORRECT the claim made in the extra_func comment near
+# the top of this file, that IWRAM addresses like 0x03001110 belong to the
+# self-heal RAM-dispatch tier because "there is no fixed ROM byte range to
+# decode". There is. All six PCs the interpreter bridges every session are
+# byte-for-byte copies of ROM, and [[code_copy]] is the schema's mechanism
+# for exactly this: it keeps the RUNTIME pc while decoding the SOURCE bytes,
+# so PC-relative loads and the literal pool resolve correctly by construction.
+#
+# Why this matters more than it looks: the self-heal recompile tier CANNOT
+# run on Android (the platform blocks dlopen of an app-written .so), so those
+# PCs stayed interpreted forever there. Measured 2026-09-22 at a battle state:
+# the interpreter is ~3.5 ms of every frame at EVERY view size -- 53% of the
+# frame at 240x160 and 39% at 480x270 -- while the Thor sits at 99% of one
+# core. It is also why fast-forward does nothing: it needs N guest frames per
+# present and there is no spare CPU to run them.
+#
+# Evidence for each range: GBARECOMP_IWRAM_DUMP taken from four independent
+# in-play states (AF_world_map, AS_scroll_flash, AT_status_sheet,
+# S_move_highlight) plus a 400-frame cold boot, each compared byte-for-byte
+# against the ROM source below.
+
+[[code_copy]]
+runtime_start = 0x03001110
+source_start  = 0x080000FC
+size          = 0x00000160
+name          = "iwram_arm_helpers"
+note          = "ARM. Holds the hottest bridged PC by far: 0x03001110, 126434 calls per 600 frames (~211/frame), plus 0x030011D8. Byte-identical to ROM in all five dumps INCLUDING cold boot, so it is resident from startup."
+
+# Found by the SECOND pass: once 0x03001110 was native, the bridge reported
+# 0x03001270 x125834 -- the same call count, one byte past the end of the block
+# above. The two are adjacent in IWRAM but come from ROM addresses 6 MiB apart,
+# so they are separate copies and the first block's size could not simply grow.
+[[code_copy]]
+runtime_start = 0x03001270
+source_start  = 0x0806E208
+size          = 0x00000060
+name          = "iwram_thumb_1270"
+note          = "THUMB. Byte-identical to ROM in all five dumps including cold boot. The 48-byte signature occurs exactly once in the 8 MiB ROM."
+
+[[code_copy]]
+runtime_start = 0x030035D8
+source_start  = 0x0815B8BC
+size          = 0x00000380
+name          = "iwram_thumb_mid"
+note          = "THUMB. Covers bridged PC 0x030035D8 (600 calls per 600 frames, once a frame). Byte-identical to ROM in all five dumps including cold boot."
+
+[[code_copy]]
+runtime_start = 0x03005240
+source_start  = 0x087D4D58
+size          = 0x00002818
+name          = "iwram_sound_driver"
+note          = "THUMB. Covers bridged PCs 0x03005758 (5400 calls per 600 frames, ~9/frame -- M4A mixer shape), 0x03006328 and 0x03006D48. NOT resident at cold boot: the region is all zeros at 400 frames and is copied in once audio starts, so this one is loaded later rather than at startup. Single fixed source -- the 64-byte signature at 0x03005758 occurs EXACTLY ONCE in the 8 MiB ROM -- and all four in-play dumps agree on it. Leading bytes of the declared range are padding that is zero in both ROM and IWRAM."
+
+# The six runtime entry points inside those copies. [[code_copy]] declares the
+# byte mapping but creates no functions on its own (TOML_SCHEMA.md), and
+# nothing in ROM branches to these addresses directly -- the callers reach them
+# through function pointers -- so the discovery walk cannot find them. Each is
+# a PC the interpreter bridge actually reported, with its call count from a
+# 600-frame battle run; source_addr gives the finder the immutable ROM backing.
+
+[[extra_func]]
+addr        = 0x03001110
+source_addr = 0x080000FC
+mode        = "arm"
+name        = "iwram_helper_1110"
+note        = "bridged x126434 per 600 frames -- the single hottest interpreted PC in the game"
+
+[[extra_func]]
+addr        = 0x030011D8
+source_addr = 0x080001C4
+mode        = "arm"
+name        = "iwram_helper_11d8"
+note        = "bridged x600 per 600 frames"
+
+[[extra_func]]
+addr        = 0x030035D8
+source_addr = 0x0815B8BC
+mode        = "thumb"
+name        = "iwram_thumb_35d8"
+note        = "bridged x600 per 600 frames"
+
+[[extra_func]]
+addr        = 0x03005758
+source_addr = 0x087D5270
+mode        = "thumb"
+name        = "iwram_sound_5758"
+note        = "bridged x5400 per 600 frames (~9/frame)"
+
+[[extra_func]]
+addr        = 0x03006328
+source_addr = 0x087D5E40
+mode        = "thumb"
+name        = "iwram_sound_6328"
+note        = "bridged x600 per 600 frames"
+
+[[extra_func]]
+addr        = 0x03006D48
+source_addr = 0x087D6860
+mode        = "thumb"
+name        = "iwram_sound_6d48"
+note        = "bridged x600 per 600 frames"
+
+[[extra_func]]
+addr        = 0x03001270
+source_addr = 0x0806E208
+mode        = "thumb"
+name        = "iwram_thumb_1270"
+note        = "bridged x125834 per 600 frames on the second pass -- the tail of iwram_helper_1110, reached by a direct branch the finder could not follow across the copy boundary"
+
+# Two more copies, found 2026-10-06 by a sweep of all 170 saved states (600
+# frames each, self-heal off, as on Android). Rarely entered, but each entry ran
+# ~30,000 interpreted instructions: 0x030012D0 x103 on EX (map 100 viewer,
+# ~5,100 interpreted instructions a frame), x8 on BL_enemy_turn; 0x03001550 on
+# the Training path. They continue the IWRAM run after iwram_thumb_1270
+# (0x030012D0 is exactly its end), but from two other ROM sources. Evidence:
+# GBARECOMP_IWRAM_DUMP of all 169 loadable states at 200 frames plus a
+# 400-frame cold boot, both ranges byte-identical to ROM in all 170: resident
+# from startup, never replaced.
+[[code_copy]]
+runtime_start = 0x030012D0
+source_start  = 0x08025FE4
+size          = 0x00000280
+name          = "iwram_thumb_12d0"
+note          = "THUMB. Starts with push {r4-r7,lr}. Byte-identical to ROM in 170 dumps including cold boot."
+
+[[code_copy]]
+runtime_start = 0x03001550
+source_start  = 0x08022438
+size          = 0x00000200
+name          = "iwram_thumb_1550"
+note          = "THUMB. Starts with push {r4-r7,lr}. Byte-identical to ROM in 170 dumps including cold boot."
+
+[[extra_func]]
+addr        = 0x030012D0
+source_addr = 0x08025FE4
+mode        = "thumb"
+name        = "iwram_thumb_12d0"
+note        = "bridged x103 per 600 frames on EX, ~30,000 interpreted instructions per entry"
+
+[[extra_func]]
+addr        = 0x03001550
+source_addr = 0x08022438
+mode        = "thumb"
+name        = "iwram_thumb_1550"
+note        = "bridged on the Training path (README 'Debug: any battle map')"
+
+[[extra_func]]
+addr        = 0x030061C8
+source_addr = 0x087D5CE0
+mode        = "thumb"
+name        = "iwram_sound_61c8"
+note        = "bridged x2400 per 600 frames on the second pass. Already inside the iwram_sound_driver copy; only the entry point was missing, since nothing branches to it statically."
+
+[[extra_func]]
+addr        = 0x03005B24
+source_addr = 0x087D563C
+mode        = "thumb"
+name        = "iwram_sound_5b24"
+note        = "bridged x7200 per 600 frames on the third pass (~12/frame). Inside the iwram_sound_driver copy; entry point only."
+
+# The sound driver produced a NEW interior PC on every pass -- 0x030061C8,
+# then 0x03005B24, then 0x03005AC0, each "near gf_tfunc_03005A94" and each
+# appearing only once the previous was native. They are asynchronous IRQ
+# returns landing inside the driver, which is exactly the case the schema
+# says to answer with a bounded resume_range rather than by listing one
+# reactive [[extra_func]] per observed interrupt timing. static_resume_all
+# already covers interior PCs of EMITTED bodies; these land past the end of a
+# function the finder bounded short, so they were not covered.
+[[resume_range]]
+start = 0x03005A94
+end   = 0x03006A94
+mode  = "thumb"
+note  = "M4A-shaped IWRAM sound driver: IRQ returns at many interior instructions. 0x1000 is the schema cap."
+
+# Functions placed right after a literal pool or a return, reached only
+# through pointers, so discovery never saw them as entries; found 2026-10-06
+# from the Mac self-heal cache (recomp_cache/: every PC healed in development
+# play since 09-17, 159 still missing from the dispatch table) and a sweep of
+# all saved states. Each starts with a push or is a short leaf after a return
+# or a pool. Four of them were entered every frame in battle (0x08007698,
+# 0x080079D0, 0x080124BC, 0x08076524: ~117 interpreted instructions a frame).
+# Most of the cache's 105 interior PCs lie inside these bodies and are covered
+# by their resume entries. 0x08000808 (recorded as ARM in Thumb code, 09-17
+# bring-up) is left out.
+[[extra_func]]
+addr = 0x08000F70
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x08007698
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x08007914
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x080079D0
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x080079DC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x080079E0
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08007A10
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08007A1C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x08007A54
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0800DA34
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x08010F20
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x08010F68
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x080124BC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x080124DC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0801348C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806855C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806C9F0
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806CC14
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806CC24
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E45C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E488
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E4A4
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E558
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E57C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E59C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E66C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E6CC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E6F8
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E7EC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E824
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E854
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806E898
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806EAFC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806EB6C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806F148
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0806F17C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806F2AC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0806F31C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08076524
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08076528
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08076554
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0807658C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x081449DC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08145120
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0814515C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x081590AC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x081591D4
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x08159518
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x081595B4
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x081595EC
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x0815960C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x08159638
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), leaf after a pool or return"
+
+[[extra_func]]
+addr = 0x0815974C
+mode = "thumb"
+note = "self-heal miss (cache/sweep 2026-10-06), push after a pool or return"
+# A switch the finder's auto_jt did not size: `cmp r3, #0x80; bls; ldr r0,
+# =0x080735A0; add r0, r8 (r3*4); ldr r0, [r0]; mov pc, r0` at 0x08073582..96.
+# The table address comes from the literal pool, not from pc. 129 absolute
+# Thumb targets (index 0..0x80), all inside this function. Two of its cases
+# (0x0807384E, 0x08073852) and 0x08073864, which those cases branch to, were
+# in the Mac self-heal cache (2026-10-06).
+[[jump_table]]
+addr         = 0x080735A0
+stride       = 4
+count        = 129
+format       = "abs32"
+entries_mode = "thumb"
+name         = "switch_08073596"
+note         = "mov pc switch, index bounded by cmp r3, #0x80"
+
+# Two more pointer-only entries in the enemy's turn (BL_enemy_turn past 600
+# frames, 2026-10-06): 0x081096A0 was entered 174 times in 1,800 frames.
+[[extra_func]]
+addr = 0x080AF61C
+mode = "thumb"
+note = "self-heal miss (BL_enemy_turn 1800 frames, 2026-10-06), push after a pool or return"
+
+[[extra_func]]
+addr = 0x081096A0
+mode = "thumb"
+note = "self-heal miss (BL_enemy_turn 1800 frames, 2026-10-06), push after a pool or return"
+
+# Fast Loading (src/kol_fast_load.cpp, Options > Advanced; off by default).
+# Coming back to the battle map from View List the game rebuilds the screen
+# over ~54 frames inside its VBlank handler. Two of its steps have exact
+# native equivalents: 0x08004990, the A7 asset decoder (transcribed and
+# verified in src/kol_a7.cpp), and 0x08002F92, a byte-at-a-time memset
+# (strb; r0++; r1--; while r1 > 0). With the setting on the hooks do the work
+# natively and return as the routine would; off, they decline.
+[[mod_function_hook]]
+addr = 0x08004990
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08002F92
+mode = "thumb"
+
+# ... and three pure steps of that rebuild, memoised (kol_fast_load.cpp): the
+# per-cell composer 0x080221B4 (16 frames), the grid builder 0x0802714C and the
+# units' table 0x0805D6E4, with the function entries their callers continue
+# at (the rebuild from View List, 0x080485xx; the battle's first build,
+# 0x080481xx / 0x08047Dxx; the deployment's unit changes, 0x0805FE3A), where
+# the recording of a run ends.
+[[mod_function_hook]]
+addr = 0x080221B4
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0804862C
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0802714C
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08048552
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0805D6E4
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08048658
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08048198
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08048152
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08047D0A
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x08047D1C
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0805FE3A
+mode = "thumb"
+
+# Fast Walking / Quick Enemy Turns (src/kol_fast_actions.cpp, README "Fast
+# walking and quick enemy turns"). The battle's phase task (0x0202A5B0) is
+# stepped once a frame by 0x0806B640, which switches on its mode byte to one
+# of eight handlers (the table at 0x0806B75C): case 4 0x0806AA44 is the
+# enemy AI (it decides over ~100 frames, about a tenth of a frame each),
+# case 6 0x08065B20 the action executor (a unit walking: phase byte
+# 0x0202A82E = 0x15, 2 world units a frame). Each case is `adds r0, r2, #0;
+# bl handler; b exit`; these are the resume entries after the two bl's. The
+# hook declines, or (in those phases) sends R15 back to the case's own
+# `adds` (0x0806B79C, 0x0806B7AC) with r2 = the task, so the game itself
+# calls the handler again in the same frame, the guest clock held.
+[[mod_function_hook]]
+addr = 0x0806B7A2
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0806B7B2
+mode = "thumb"
+
+# 0x080286EC loads a room's palette set (rows 0-3, then 12 on) into the
+# palette buffer 0x02002400, the set picked by its callers from the map header
+# by the time of day (0x020021BC). src/kol_actions.cpp, on map 77 outside the
+# Original preset, swaps a later set (header +0x24 / +0x28, the evening's
+# purple floor after the flashback, states/thor/0157) for the day's (+0x20)
+# and makes the call again. Declines every other call. KOL_NO_DAY_PALETTE=1.
+[[mod_function_hook]]
+addr = 0x080286EC
+mode = "thumb"
+
+# ── Thor misses, 2026-10-06 .. 2026-11-16 (pass 1, 2026-11-16 night) ─────
+# The Thor's files/misses (408 sessions) named 6,615 ROM PCs run by the
+# interpreter. Each is grouped to the function holding it: the nearest
+# push {.., lr} at or before it, every one after a return, a branch, padding
+# or a literal pool. Interior PCs are covered by the entries' resume points.
+# Fields: interpreted instructions summed over all sessions, missed PCs inside.
+
+[[extra_func]]
+addr = 0x080081FC
+mode = "thumb"
+note = "Thor miss: 20464 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080086E4
+mode = "thumb"
+note = "Thor miss: 25528868 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08008718
+mode = "thumb"
+note = "Thor miss: 32312 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08009B1C
+mode = "thumb"
+note = "Thor miss: 1836 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08009BD4
+mode = "thumb"
+note = "Thor miss: 11299 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08009C8C
+mode = "thumb"
+note = "Thor miss: 1428 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800A308
+mode = "thumb"
+note = "Thor miss: 729 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800A344
+mode = "thumb"
+note = "Thor miss: 3191 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800B454
+mode = "thumb"
+note = "Thor miss: 6842 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x0800B5C4
+mode = "thumb"
+note = "Thor miss: 72 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x0800B788
+mode = "thumb"
+note = "Thor miss: 392 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0800B89C
+mode = "thumb"
+note = "Thor miss: 86420 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800BA40
+mode = "thumb"
+note = "Thor miss: 5631 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800BC58
+mode = "thumb"
+note = "Thor miss: 427187 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0800C034
+mode = "thumb"
+note = "Thor miss: 36750313 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x0800C284
+mode = "thumb"
+note = "Thor miss: 22815477 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0800CA98
+mode = "thumb"
+note = "Thor miss: 883995 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800CCC8
+mode = "thumb"
+note = "Thor miss: 43216994 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x0800CE88
+mode = "thumb"
+note = "Thor miss: 141124 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0800CED4
+mode = "thumb"
+note = "Thor miss: 112022 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0800CF28
+mode = "thumb"
+note = "Thor miss: 304 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800CFFC
+mode = "thumb"
+note = "Thor miss: 294 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D074
+mode = "thumb"
+note = "Thor miss: 99163 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D1B4
+mode = "thumb"
+note = "Thor miss: 74 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D240
+mode = "thumb"
+note = "Thor miss: 15 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D510
+mode = "thumb"
+note = "Thor miss: 47158157 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D5EC
+mode = "thumb"
+note = "Thor miss: 16248597 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x0800D718
+mode = "thumb"
+note = "Thor miss: 55571 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D7A4
+mode = "thumb"
+note = "Thor miss: 1547416 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D838
+mode = "thumb"
+note = "Thor miss: 1279 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D860
+mode = "thumb"
+note = "Thor miss: 90000 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800D950
+mode = "thumb"
+note = "Thor miss: 40225468 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0800E0C4
+mode = "thumb"
+note = "Thor miss: 197302 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0800EE74
+mode = "thumb"
+note = "Thor miss: 1675382 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08010020
+mode = "thumb"
+note = "Thor miss: 2504 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x08010FBC
+mode = "thumb"
+note = "Thor miss: 4073 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08013028
+mode = "thumb"
+note = "Thor miss: 40 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08028B24
+mode = "thumb"
+note = "Thor miss: 103652 insns interpreted, 32 PCs"
+
+[[extra_func]]
+addr = 0x080686AC
+mode = "thumb"
+note = "Thor miss: 10549 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x08068840
+mode = "thumb"
+note = "Thor miss: 13437 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x08068B38
+mode = "thumb"
+note = "Thor miss: 68031 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x0806C5BC
+mode = "thumb"
+note = "Thor miss: 8833 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0806C7C4
+mode = "thumb"
+note = "Thor miss: 1216 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0806C7F4
+mode = "thumb"
+note = "Thor miss: 7011 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0806CA08
+mode = "thumb"
+note = "Thor miss: 517 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0806CBA4
+mode = "thumb"
+note = "Thor miss: 42 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0806CBDC
+mode = "thumb"
+note = "Thor miss: 168 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0806D7A0
+mode = "thumb"
+note = "Thor miss: 300 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0806D994
+mode = "thumb"
+note = "Thor miss: 120288 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0806DCD4
+mode = "thumb"
+note = "Thor miss: 500 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0806DCF0
+mode = "thumb"
+note = "Thor miss: 2400 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080800A4
+mode = "thumb"
+note = "Thor miss: 1032 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x0808C91C
+mode = "thumb"
+note = "Thor miss: 1081 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0808D0C0
+mode = "thumb"
+note = "Thor miss: 14454 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0808D104
+mode = "thumb"
+note = "Thor miss: 9285 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A3794
+mode = "thumb"
+note = "Thor miss: 5845 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080A3DD8
+mode = "thumb"
+note = "Thor miss: 1008 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A3E70
+mode = "thumb"
+note = "Thor miss: 432 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A4F28
+mode = "thumb"
+note = "Thor miss: 7008659 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080A5F84
+mode = "thumb"
+note = "Thor miss: 55440 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080A630C
+mode = "thumb"
+note = "Thor miss: 314755 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A6700
+mode = "thumb"
+note = "Thor miss: 2345 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080A7040
+mode = "thumb"
+note = "Thor miss: 75306 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A71F4
+mode = "thumb"
+note = "Thor miss: 2436 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A738C
+mode = "thumb"
+note = "Thor miss: 12939 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080A746C
+mode = "thumb"
+note = "Thor miss: 220 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A74F4
+mode = "thumb"
+note = "Thor miss: 18798 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A7640
+mode = "thumb"
+note = "Thor miss: 8038 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A7668
+mode = "thumb"
+note = "Thor miss: 213270 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A76C0
+mode = "thumb"
+note = "Thor miss: 966 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A76D8
+mode = "thumb"
+note = "Thor miss: 524 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A76F8
+mode = "thumb"
+note = "Thor miss: 3660 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080A77A8
+mode = "thumb"
+note = "Thor miss: 12748 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080A7830
+mode = "thumb"
+note = "Thor miss: 1386 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A78C4
+mode = "thumb"
+note = "Thor miss: 3777 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080A7964
+mode = "thumb"
+note = "Thor miss: 1026 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A7B50
+mode = "thumb"
+note = "Thor miss: 51474 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A7BE0
+mode = "thumb"
+note = "Thor miss: 3505023 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A7C6C
+mode = "thumb"
+note = "Thor miss: 13320 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A7E00
+mode = "thumb"
+note = "Thor miss: 1638 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A7E3C
+mode = "thumb"
+note = "Thor miss: 25328 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A7F34
+mode = "thumb"
+note = "Thor miss: 180 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A7FE8
+mode = "thumb"
+note = "Thor miss: 162 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A8004
+mode = "thumb"
+note = "Thor miss: 7070 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A8208
+mode = "thumb"
+note = "Thor miss: 14562 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A8280
+mode = "thumb"
+note = "Thor miss: 37 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A82FC
+mode = "thumb"
+note = "Thor miss: 900 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A8350
+mode = "thumb"
+note = "Thor miss: 249 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080A8530
+mode = "thumb"
+note = "Thor miss: 164 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A85D8
+mode = "thumb"
+note = "Thor miss: 320 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A8834
+mode = "thumb"
+note = "Thor miss: 2827 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080A8A18
+mode = "thumb"
+note = "Thor miss: 2848 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A8C38
+mode = "thumb"
+note = "Thor miss: 1725048 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A8D04
+mode = "thumb"
+note = "Thor miss: 2973382 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080A8E5C
+mode = "thumb"
+note = "Thor miss: 922980 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080A9178
+mode = "thumb"
+note = "Thor miss: 6334118 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080A9E3C
+mode = "thumb"
+note = "Thor miss: 192368 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080A9EBC
+mode = "thumb"
+note = "Thor miss: 20096 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A9F38
+mode = "thumb"
+note = "Thor miss: 1657 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A9F98
+mode = "thumb"
+note = "Thor miss: 2234 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A9FB8
+mode = "thumb"
+note = "Thor miss: 370 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A9FD8
+mode = "thumb"
+note = "Thor miss: 3102 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080A9FEC
+mode = "thumb"
+note = "Thor miss: 5226 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AA00C
+mode = "thumb"
+note = "Thor miss: 2944 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AA03C
+mode = "thumb"
+note = "Thor miss: 5339 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080AA090
+mode = "thumb"
+note = "Thor miss: 10277 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AA0BC
+mode = "thumb"
+note = "Thor miss: 45 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AA2C0
+mode = "thumb"
+note = "Thor miss: 1742510 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080AA350
+mode = "thumb"
+note = "Thor miss: 759173 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080AA628
+mode = "thumb"
+note = "Thor miss: 1128640 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080AA6F8
+mode = "thumb"
+note = "Thor miss: 1407876 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x080AA980
+mode = "thumb"
+note = "Thor miss: 2293192 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080AAAB8
+mode = "thumb"
+note = "Thor miss: 1470863 insns interpreted, 24 PCs"
+
+[[extra_func]]
+addr = 0x080AB638
+mode = "thumb"
+note = "Thor miss: 4048 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AB788
+mode = "thumb"
+note = "Thor miss: 869 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AB804
+mode = "thumb"
+note = "Thor miss: 3922 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AB8DC
+mode = "thumb"
+note = "Thor miss: 56 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AB9C4
+mode = "thumb"
+note = "Thor miss: 59704 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AB9E4
+mode = "thumb"
+note = "Thor miss: 64 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABA08
+mode = "thumb"
+note = "Thor miss: 147 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABA24
+mode = "thumb"
+note = "Thor miss: 58 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABA3C
+mode = "thumb"
+note = "Thor miss: 336 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABA58
+mode = "thumb"
+note = "Thor miss: 2297 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABA70
+mode = "thumb"
+note = "Thor miss: 12 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABA8C
+mode = "thumb"
+note = "Thor miss: 306 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ABAD0
+mode = "thumb"
+note = "Thor miss: 72 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AC87C
+mode = "thumb"
+note = "Thor miss: 5494 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080AC8F4
+mode = "thumb"
+note = "Thor miss: 118781 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080ACA34
+mode = "thumb"
+note = "Thor miss: 94698 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080ACB78
+mode = "thumb"
+note = "Thor miss: 836950 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080ACE20
+mode = "thumb"
+note = "Thor miss: 238896 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080ACEEC
+mode = "thumb"
+note = "Thor miss: 650400 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080AD74C
+mode = "thumb"
+note = "Thor miss: 24704 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x080AD970
+mode = "thumb"
+note = "Thor miss: 28574 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ADA24
+mode = "thumb"
+note = "Thor miss: 13410 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ADA54
+mode = "thumb"
+note = "Thor miss: 2592 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ADAE4
+mode = "thumb"
+note = "Thor miss: 13200 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ADB7C
+mode = "thumb"
+note = "Thor miss: 100464 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ADCA4
+mode = "thumb"
+note = "Thor miss: 368 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080ADD10
+mode = "thumb"
+note = "Thor miss: 94008 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080AE570
+mode = "thumb"
+note = "Thor miss: 1446973 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080AE718
+mode = "thumb"
+note = "Thor miss: 62 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080AE8C8
+mode = "thumb"
+note = "Thor miss: 22 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AE8FC
+mode = "thumb"
+note = "Thor miss: 2408 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AEA1C
+mode = "thumb"
+note = "Thor miss: 1353 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AEA80
+mode = "thumb"
+note = "Thor miss: 2263 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AEAC0
+mode = "thumb"
+note = "Thor miss: 1568 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080AEF40
+mode = "thumb"
+note = "Thor miss: 294395 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x080AF140
+mode = "thumb"
+note = "Thor miss: 22120 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080AF33C
+mode = "thumb"
+note = "Thor miss: 7420 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080AF3F0
+mode = "thumb"
+note = "Thor miss: 19487 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080AFB24
+mode = "thumb"
+note = "Thor miss: 14603 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080AFCB0
+mode = "thumb"
+note = "Thor miss: 928 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080B0038
+mode = "thumb"
+note = "Thor miss: 21206 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B0290
+mode = "thumb"
+note = "Thor miss: 2575 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B0558
+mode = "thumb"
+note = "Thor miss: 82880 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B05B8
+mode = "thumb"
+note = "Thor miss: 42392 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080B0650
+mode = "thumb"
+note = "Thor miss: 377 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080B074C
+mode = "thumb"
+note = "Thor miss: 2899 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B0784
+mode = "thumb"
+note = "Thor miss: 369050 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B07AC
+mode = "thumb"
+note = "Thor miss: 12677 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B07EC
+mode = "thumb"
+note = "Thor miss: 11812 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B0818
+mode = "thumb"
+note = "Thor miss: 35228 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080B08B0
+mode = "thumb"
+note = "Thor miss: 12566 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080B08F4
+mode = "thumb"
+note = "Thor miss: 1824 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B0AD8
+mode = "thumb"
+note = "Thor miss: 243 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B0B28
+mode = "thumb"
+note = "Thor miss: 438485 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080B0B80
+mode = "thumb"
+note = "Thor miss: 9475 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080B0CC0
+mode = "thumb"
+note = "Thor miss: 5923 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B0E40
+mode = "thumb"
+note = "Thor miss: 96 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B109C
+mode = "thumb"
+note = "Thor miss: 390 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B10D8
+mode = "thumb"
+note = "Thor miss: 820 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B1114
+mode = "thumb"
+note = "Thor miss: 98 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B1144
+mode = "thumb"
+note = "Thor miss: 210 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B11B4
+mode = "thumb"
+note = "Thor miss: 1387 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B11E4
+mode = "thumb"
+note = "Thor miss: 686 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B121C
+mode = "thumb"
+note = "Thor miss: 259 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B12C0
+mode = "thumb"
+note = "Thor miss: 3184 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B12F4
+mode = "thumb"
+note = "Thor miss: 57 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B1380
+mode = "thumb"
+note = "Thor miss: 316 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B157C
+mode = "thumb"
+note = "Thor miss: 2322 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080B163C
+mode = "thumb"
+note = "Thor miss: 268361 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080B1710
+mode = "thumb"
+note = "Thor miss: 242506 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080B182C
+mode = "thumb"
+note = "Thor miss: 2089 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B184C
+mode = "thumb"
+note = "Thor miss: 130 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B1888
+mode = "thumb"
+note = "Thor miss: 1440 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B1920
+mode = "thumb"
+note = "Thor miss: 7728 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B195C
+mode = "thumb"
+note = "Thor miss: 335 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B19A0
+mode = "thumb"
+note = "Thor miss: 1600 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080B2AC0
+mode = "thumb"
+note = "Thor miss: 409200 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x080B2C40
+mode = "thumb"
+note = "Thor miss: 510176 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080B2DEC
+mode = "thumb"
+note = "Thor miss: 319844 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080B336C
+mode = "thumb"
+note = "Thor miss: 1914650 insns interpreted, 41 PCs"
+
+[[extra_func]]
+addr = 0x080B4BE4
+mode = "thumb"
+note = "Thor miss: 429003 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x080B4E74
+mode = "thumb"
+note = "Thor miss: 93912 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x080B5240
+mode = "thumb"
+note = "Thor miss: 14937 insns interpreted, 32 PCs"
+
+[[extra_func]]
+addr = 0x080B5DD0
+mode = "thumb"
+note = "Thor miss: 7168 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x080B6814
+mode = "thumb"
+note = "Thor miss: 10890 insns interpreted, 25 PCs"
+
+[[extra_func]]
+addr = 0x080B6E74
+mode = "thumb"
+note = "Thor miss: 17151 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x080B7294
+mode = "thumb"
+note = "Thor miss: 5698 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080B7344
+mode = "thumb"
+note = "Thor miss: 10828 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080B85B0
+mode = "thumb"
+note = "Thor miss: 32393 insns interpreted, 65 PCs"
+
+[[extra_func]]
+addr = 0x080BC598
+mode = "thumb"
+note = "Thor miss: 30958 insns interpreted, 34 PCs"
+
+[[extra_func]]
+addr = 0x080BEC60
+mode = "thumb"
+note = "Thor miss: 369008 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x080BEDD8
+mode = "thumb"
+note = "Thor miss: 38714 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080BF0D8
+mode = "thumb"
+note = "Thor miss: 761263 insns interpreted, 30 PCs"
+
+[[extra_func]]
+addr = 0x080BF5F0
+mode = "thumb"
+note = "Thor miss: 37585 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x080C1150
+mode = "thumb"
+note = "Thor miss: 11893 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080C132C
+mode = "thumb"
+note = "Thor miss: 34711 insns interpreted, 80 PCs"
+
+[[extra_func]]
+addr = 0x080C1EE8
+mode = "thumb"
+note = "Thor miss: 6595 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x080C43E8
+mode = "thumb"
+note = "Thor miss: 290480 insns interpreted, 34 PCs"
+
+[[extra_func]]
+addr = 0x080C48AC
+mode = "thumb"
+note = "Thor miss: 588294 insns interpreted, 34 PCs"
+
+[[extra_func]]
+addr = 0x080C5F1C
+mode = "thumb"
+note = "Thor miss: 95469 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x080C6284
+mode = "thumb"
+note = "Thor miss: 76173 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080C6504
+mode = "thumb"
+note = "Thor miss: 170869 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080C6ACC
+mode = "thumb"
+note = "Thor miss: 140659 insns interpreted, 37 PCs"
+
+[[extra_func]]
+addr = 0x080C7240
+mode = "thumb"
+note = "Thor miss: 9390 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080C74EC
+mode = "thumb"
+note = "Thor miss: 31250 insns interpreted, 51 PCs"
+
+[[extra_func]]
+addr = 0x080CA25C
+mode = "thumb"
+note = "Thor miss: 56 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080CA344
+mode = "thumb"
+note = "Thor miss: 28994 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080CA3E8
+mode = "thumb"
+note = "Thor miss: 12112 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080CA4FC
+mode = "thumb"
+note = "Thor miss: 8542 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x080CA6D8
+mode = "thumb"
+note = "Thor miss: 26688 insns interpreted, 44 PCs"
+
+[[extra_func]]
+addr = 0x080CACA0
+mode = "thumb"
+note = "Thor miss: 35256 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x080CAED4
+mode = "thumb"
+note = "Thor miss: 195784 insns interpreted, 111 PCs"
+
+[[extra_func]]
+addr = 0x080CEEBC
+mode = "thumb"
+note = "Thor miss: 73 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080CEFA4
+mode = "thumb"
+note = "Thor miss: 93442 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080CF080
+mode = "thumb"
+note = "Thor miss: 29714 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x080CF2A8
+mode = "thumb"
+note = "Thor miss: 12724 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080CF448
+mode = "thumb"
+note = "Thor miss: 10804 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080CF604
+mode = "thumb"
+note = "Thor miss: 122339 insns interpreted, 37 PCs"
+
+[[extra_func]]
+addr = 0x080D49B8
+mode = "thumb"
+note = "Thor miss: 25916 insns interpreted, 33 PCs"
+
+[[extra_func]]
+addr = 0x080D4E28
+mode = "thumb"
+note = "Thor miss: 12 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080D4E84
+mode = "thumb"
+note = "Thor miss: 530192 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080D5508
+mode = "thumb"
+note = "Thor miss: 848 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080D5BD8
+mode = "thumb"
+note = "Thor miss: 56697 insns interpreted, 38 PCs"
+
+[[extra_func]]
+addr = 0x080D9700
+mode = "thumb"
+note = "Thor miss: 24313 insns interpreted, 29 PCs"
+
+[[extra_func]]
+addr = 0x080DA018
+mode = "thumb"
+note = "Thor miss: 23716 insns interpreted, 23 PCs"
+
+[[extra_func]]
+addr = 0x080DA310
+mode = "thumb"
+note = "Thor miss: 17731 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080DA73C
+mode = "thumb"
+note = "Thor miss: 20760 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x080DA89C
+mode = "thumb"
+note = "Thor miss: 47321 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080DAD24
+mode = "thumb"
+note = "Thor miss: 140319 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x080DB024
+mode = "thumb"
+note = "Thor miss: 106488 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080DB184
+mode = "thumb"
+note = "Thor miss: 408636 insns interpreted, 57 PCs"
+
+[[extra_func]]
+addr = 0x080DB8D0
+mode = "thumb"
+note = "Thor miss: 19318 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x080DBB0C
+mode = "thumb"
+note = "Thor miss: 207845 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x080DBD3C
+mode = "thumb"
+note = "Thor miss: 353662 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x080DC0D4
+mode = "thumb"
+note = "Thor miss: 8035 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080DC49C
+mode = "thumb"
+note = "Thor miss: 3434 insns interpreted, 25 PCs"
+
+[[extra_func]]
+addr = 0x080DC7B8
+mode = "thumb"
+note = "Thor miss: 8912 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x080DCAB0
+mode = "thumb"
+note = "Thor miss: 27268 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x080DD088
+mode = "thumb"
+note = "Thor miss: 41047 insns interpreted, 30 PCs"
+
+[[extra_func]]
+addr = 0x080DF478
+mode = "thumb"
+note = "Thor miss: 218552 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x080DF698
+mode = "thumb"
+note = "Thor miss: 33892 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080DF8A8
+mode = "thumb"
+note = "Thor miss: 221605 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x080DFA7C
+mode = "thumb"
+note = "Thor miss: 126950 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080DFC24
+mode = "thumb"
+note = "Thor miss: 26244 insns interpreted, 31 PCs"
+
+[[extra_func]]
+addr = 0x080E0088
+mode = "thumb"
+note = "Thor miss: 45450 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x080E021C
+mode = "thumb"
+note = "Thor miss: 77078 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x080E0754
+mode = "thumb"
+note = "Thor miss: 43275 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x080E0A54
+mode = "thumb"
+note = "Thor miss: 31464 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080E0BE0
+mode = "thumb"
+note = "Thor miss: 137832 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x080E10A8
+mode = "thumb"
+note = "Thor miss: 15384 insns interpreted, 30 PCs"
+
+[[extra_func]]
+addr = 0x080E1F3C
+mode = "thumb"
+note = "Thor miss: 50765 insns interpreted, 24 PCs"
+
+[[extra_func]]
+addr = 0x080E2260
+mode = "thumb"
+note = "Thor miss: 79115 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x080E2444
+mode = "thumb"
+note = "Thor miss: 41935 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x080E26FC
+mode = "thumb"
+note = "Thor miss: 74384 insns interpreted, 23 PCs"
+
+[[extra_func]]
+addr = 0x080E2A78
+mode = "thumb"
+note = "Thor miss: 67095 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x080E2CD4
+mode = "thumb"
+note = "Thor miss: 363843 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x080E2F2C
+mode = "thumb"
+note = "Thor miss: 38268 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x080E3150
+mode = "thumb"
+note = "Thor miss: 22170 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x080E32F0
+mode = "thumb"
+note = "Thor miss: 77882 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x080E3554
+mode = "thumb"
+note = "Thor miss: 102067 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x080E3708
+mode = "thumb"
+note = "Thor miss: 161802 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080E3B40
+mode = "thumb"
+note = "Thor miss: 40522 insns interpreted, 77 PCs"
+
+[[extra_func]]
+addr = 0x080E45B0
+mode = "thumb"
+note = "Thor miss: 14889 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080E4704
+mode = "thumb"
+note = "Thor miss: 12841 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080E4B88
+mode = "thumb"
+note = "Thor miss: 25127 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x080E7E30
+mode = "thumb"
+note = "Thor miss: 54 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080E7EE4
+mode = "thumb"
+note = "Thor miss: 17814 insns interpreted, 23 PCs"
+
+[[extra_func]]
+addr = 0x080E81A8
+mode = "thumb"
+note = "Thor miss: 153508 insns interpreted, 41 PCs"
+
+[[extra_func]]
+addr = 0x080E8748
+mode = "thumb"
+note = "Thor miss: 55100 insns interpreted, 63 PCs"
+
+[[extra_func]]
+addr = 0x080E903C
+mode = "thumb"
+note = "Thor miss: 134 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080E9120
+mode = "thumb"
+note = "Thor miss: 6142 insns interpreted, 32 PCs"
+
+[[extra_func]]
+addr = 0x080E9448
+mode = "thumb"
+note = "Thor miss: 23272 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x080E96A0
+mode = "thumb"
+note = "Thor miss: 219134 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080E987C
+mode = "thumb"
+note = "Thor miss: 16986 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080E9A98
+mode = "thumb"
+note = "Thor miss: 128550 insns interpreted, 33 PCs"
+
+[[extra_func]]
+addr = 0x080EB254
+mode = "thumb"
+note = "Thor miss: 235455 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x080EB680
+mode = "thumb"
+note = "Thor miss: 44 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080EBE48
+mode = "thumb"
+note = "Thor miss: 15878 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080EC61C
+mode = "thumb"
+note = "Thor miss: 210478 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x080EC89C
+mode = "thumb"
+note = "Thor miss: 16828 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080ECB44
+mode = "thumb"
+note = "Thor miss: 74856 insns interpreted, 36 PCs"
+
+[[extra_func]]
+addr = 0x080ED640
+mode = "thumb"
+note = "Thor miss: 59220 insns interpreted, 23 PCs"
+
+[[extra_func]]
+addr = 0x080EDB88
+mode = "thumb"
+note = "Thor miss: 52598 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080EE754
+mode = "thumb"
+note = "Thor miss: 315285 insns interpreted, 52 PCs"
+
+[[extra_func]]
+addr = 0x080EEE28
+mode = "thumb"
+note = "Thor miss: 85950 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x080EF52C
+mode = "thumb"
+note = "Thor miss: 38795 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x080EF7D4
+mode = "thumb"
+note = "Thor miss: 109941 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080EF888
+mode = "thumb"
+note = "Thor miss: 339602 insns interpreted, 28 PCs"
+
+[[extra_func]]
+addr = 0x080EFE5C
+mode = "thumb"
+note = "Thor miss: 11514 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080EFFEC
+mode = "thumb"
+note = "Thor miss: 17612 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080F0148
+mode = "thumb"
+note = "Thor miss: 945 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x080F0338
+mode = "thumb"
+note = "Thor miss: 47594 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x080F06E4
+mode = "thumb"
+note = "Thor miss: 112909 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x080F0B68
+mode = "thumb"
+note = "Thor miss: 82624 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080F0DAC
+mode = "thumb"
+note = "Thor miss: 448 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080F0E64
+mode = "thumb"
+note = "Thor miss: 417 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F0E84
+mode = "thumb"
+note = "Thor miss: 453 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F0ECC
+mode = "thumb"
+note = "Thor miss: 73 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F0F18
+mode = "thumb"
+note = "Thor miss: 935 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080F2D1C
+mode = "thumb"
+note = "Thor miss: 146 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080F2E04
+mode = "thumb"
+note = "Thor miss: 251510 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080F300C
+mode = "thumb"
+note = "Thor miss: 649295 insns interpreted, 41 PCs"
+
+[[extra_func]]
+addr = 0x080F3730
+mode = "thumb"
+note = "Thor miss: 186053 insns interpreted, 37 PCs"
+
+[[extra_func]]
+addr = 0x080F5848
+mode = "thumb"
+note = "Thor miss: 224 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080F5954
+mode = "thumb"
+note = "Thor miss: 6100 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080F5A30
+mode = "thumb"
+note = "Thor miss: 13619 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x080F5E08
+mode = "thumb"
+note = "Thor miss: 22292 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080F5F3C
+mode = "thumb"
+note = "Thor miss: 646749 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080F605C
+mode = "thumb"
+note = "Thor miss: 200883 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080F6260
+mode = "thumb"
+note = "Thor miss: 424313 insns interpreted, 76 PCs"
+
+[[extra_func]]
+addr = 0x080F6E24
+mode = "thumb"
+note = "Thor miss: 103562 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080F6EE8
+mode = "thumb"
+note = "Thor miss: 287 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080F7034
+mode = "thumb"
+note = "Thor miss: 2280 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080F7078
+mode = "thumb"
+note = "Thor miss: 52 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F70AC
+mode = "thumb"
+note = "Thor miss: 12365 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F70D8
+mode = "thumb"
+note = "Thor miss: 98 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F7100
+mode = "thumb"
+note = "Thor miss: 40 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F714C
+mode = "thumb"
+note = "Thor miss: 68 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080F7170
+mode = "thumb"
+note = "Thor miss: 75 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x080F727C
+mode = "thumb"
+note = "Thor miss: 9017 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x080F79B4
+mode = "thumb"
+note = "Thor miss: 9989 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x080F7C90
+mode = "thumb"
+note = "Thor miss: 4033 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x080F7D48
+mode = "thumb"
+note = "Thor miss: 15495 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x080F7F4C
+mode = "thumb"
+note = "Thor miss: 4799 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x080F8144
+mode = "thumb"
+note = "Thor miss: 7223 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x080F84C0
+mode = "thumb"
+note = "Thor miss: 28458 insns interpreted, 38 PCs"
+
+[[extra_func]]
+addr = 0x080F8928
+mode = "thumb"
+note = "Thor miss: 290 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x080F89F0
+mode = "thumb"
+note = "Thor miss: 265405 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x080F8BC0
+mode = "thumb"
+note = "Thor miss: 74199 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x080F8E10
+mode = "thumb"
+note = "Thor miss: 133692 insns interpreted, 32 PCs"
+
+[[extra_func]]
+addr = 0x080F9410
+mode = "thumb"
+note = "Thor miss: 137487 insns interpreted, 24 PCs"
+
+[[extra_func]]
+addr = 0x080F98A8
+mode = "thumb"
+note = "Thor miss: 21890 insns interpreted, 29 PCs"
+
+[[extra_func]]
+addr = 0x080F9CC0
+mode = "thumb"
+note = "Thor miss: 69184 insns interpreted, 47 PCs"
+
+[[extra_func]]
+addr = 0x080FA3C0
+mode = "thumb"
+note = "Thor miss: 9988 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080FA970
+mode = "thumb"
+note = "Thor miss: 40973 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080FAE30
+mode = "thumb"
+note = "Thor miss: 52830 insns interpreted, 47 PCs"
+
+[[extra_func]]
+addr = 0x080FB438
+mode = "thumb"
+note = "Thor miss: 6361 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x080FB8C8
+mode = "thumb"
+note = "Thor miss: 18136 insns interpreted, 37 PCs"
+
+[[extra_func]]
+addr = 0x080FBE34
+mode = "thumb"
+note = "Thor miss: 30473 insns interpreted, 49 PCs"
+
+[[extra_func]]
+addr = 0x080FCDA8
+mode = "thumb"
+note = "Thor miss: 1842 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x080FD0D0
+mode = "thumb"
+note = "Thor miss: 3562 insns interpreted, 23 PCs"
+
+[[extra_func]]
+addr = 0x080FD39C
+mode = "thumb"
+note = "Thor miss: 44128 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x080FD4F8
+mode = "thumb"
+note = "Thor miss: 4091 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x080FD86C
+mode = "thumb"
+note = "Thor miss: 6448 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080FDA40
+mode = "thumb"
+note = "Thor miss: 23538 insns interpreted, 62 PCs"
+
+[[extra_func]]
+addr = 0x080FE168
+mode = "thumb"
+note = "Thor miss: 5074 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x080FE304
+mode = "thumb"
+note = "Thor miss: 35044 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x080FE5E8
+mode = "thumb"
+note = "Thor miss: 45164 insns interpreted, 47 PCs"
+
+[[extra_func]]
+addr = 0x080FED44
+mode = "thumb"
+note = "Thor miss: 8550 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x080FEF9C
+mode = "thumb"
+note = "Thor miss: 4562 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x080FF220
+mode = "thumb"
+note = "Thor miss: 55200 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x080FF3B0
+mode = "thumb"
+note = "Thor miss: 35385 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x080FF698
+mode = "thumb"
+note = "Thor miss: 39939 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x080FF7B8
+mode = "thumb"
+note = "Thor miss: 121 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080FF800
+mode = "thumb"
+note = "Thor miss: 44 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080FF860
+mode = "thumb"
+note = "Thor miss: 155 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080FF890
+mode = "thumb"
+note = "Thor miss: 60 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x080FF8E0
+mode = "thumb"
+note = "Thor miss: 134 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x081012F0
+mode = "thumb"
+note = "Thor miss: 1788347 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x08101594
+mode = "thumb"
+note = "Thor miss: 1346932 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0810162C
+mode = "thumb"
+note = "Thor miss: 1105980 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x081019FC
+mode = "thumb"
+note = "Thor miss: 113988 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x08101B08
+mode = "thumb"
+note = "Thor miss: 755217 insns interpreted, 49 PCs"
+
+[[extra_func]]
+addr = 0x0810258C
+mode = "thumb"
+note = "Thor miss: 83140 insns interpreted, 24 PCs"
+
+[[extra_func]]
+addr = 0x081028F8
+mode = "thumb"
+note = "Thor miss: 81860 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x08103388
+mode = "thumb"
+note = "Thor miss: 364146 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x0810362C
+mode = "thumb"
+note = "Thor miss: 319986 insns interpreted, 40 PCs"
+
+[[extra_func]]
+addr = 0x08103A84
+mode = "thumb"
+note = "Thor miss: 24224 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08103B5C
+mode = "thumb"
+note = "Thor miss: 152658 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x08103D90
+mode = "thumb"
+note = "Thor miss: 82008 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x08104010
+mode = "thumb"
+note = "Thor miss: 170068 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x08104170
+mode = "thumb"
+note = "Thor miss: 94074 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x081042C8
+mode = "thumb"
+note = "Thor miss: 280245 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x081044C4
+mode = "thumb"
+note = "Thor miss: 249688 insns interpreted, 44 PCs"
+
+[[extra_func]]
+addr = 0x0810494C
+mode = "thumb"
+note = "Thor miss: 669 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x08104A10
+mode = "thumb"
+note = "Thor miss: 115469 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x08104D20
+mode = "thumb"
+note = "Thor miss: 66125 insns interpreted, 31 PCs"
+
+[[extra_func]]
+addr = 0x08105104
+mode = "thumb"
+note = "Thor miss: 201362 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x081051B8
+mode = "thumb"
+note = "Thor miss: 175566 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x081053E4
+mode = "thumb"
+note = "Thor miss: 3419860 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x08105798
+mode = "thumb"
+note = "Thor miss: 662034 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x08105A18
+mode = "thumb"
+note = "Thor miss: 494367 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x08105B74
+mode = "thumb"
+note = "Thor miss: 1527688 insns interpreted, 45 PCs"
+
+[[extra_func]]
+addr = 0x08106080
+mode = "thumb"
+note = "Thor miss: 67254 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x081062BC
+mode = "thumb"
+note = "Thor miss: 295938 insns interpreted, 45 PCs"
+
+[[extra_func]]
+addr = 0x0810670C
+mode = "thumb"
+note = "Thor miss: 84569 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x08106900
+mode = "thumb"
+note = "Thor miss: 53941 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x08106A5C
+mode = "thumb"
+note = "Thor miss: 233867 insns interpreted, 50 PCs"
+
+[[extra_func]]
+addr = 0x08106F2C
+mode = "thumb"
+note = "Thor miss: 163392 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x08107204
+mode = "thumb"
+note = "Thor miss: 281264 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x08107400
+mode = "thumb"
+note = "Thor miss: 649286 insns interpreted, 52 PCs"
+
+[[extra_func]]
+addr = 0x0810788C
+mode = "thumb"
+note = "Thor miss: 242592 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08107A70
+mode = "thumb"
+note = "Thor miss: 79044 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x08107C0C
+mode = "thumb"
+note = "Thor miss: 16905 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x08107D94
+mode = "thumb"
+note = "Thor miss: 61860 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x08107E84
+mode = "thumb"
+note = "Thor miss: 215324 insns interpreted, 67 PCs"
+
+[[extra_func]]
+addr = 0x08108604
+mode = "thumb"
+note = "Thor miss: 200983 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x081087B4
+mode = "thumb"
+note = "Thor miss: 113796 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x081088A8
+mode = "thumb"
+note = "Thor miss: 442912 insns interpreted, 41 PCs"
+
+[[extra_func]]
+addr = 0x08109B08
+mode = "thumb"
+note = "Thor miss: 4920 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x08109C68
+mode = "thumb"
+note = "Thor miss: 33149 insns interpreted, 64 PCs"
+
+[[extra_func]]
+addr = 0x0810A274
+mode = "thumb"
+note = "Thor miss: 18704 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x0810A528
+mode = "thumb"
+note = "Thor miss: 3296 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x0810A730
+mode = "thumb"
+note = "Thor miss: 14464 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x0810A874
+mode = "thumb"
+note = "Thor miss: 27372 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x0810A9BC
+mode = "thumb"
+note = "Thor miss: 20483 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x0810AAA8
+mode = "thumb"
+note = "Thor miss: 15460 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x0810ADDC
+mode = "thumb"
+note = "Thor miss: 10977 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x0810AEDC
+mode = "thumb"
+note = "Thor miss: 29231 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x0810B028
+mode = "thumb"
+note = "Thor miss: 62763 insns interpreted, 87 PCs"
+
+[[extra_func]]
+addr = 0x0810C488
+mode = "thumb"
+note = "Thor miss: 46480 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x0810C558
+mode = "thumb"
+note = "Thor miss: 173328 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x0810C64C
+mode = "thumb"
+note = "Thor miss: 101407 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x0810C900
+mode = "thumb"
+note = "Thor miss: 20109 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x0810C9F8
+mode = "thumb"
+note = "Thor miss: 50722 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x0810CBCC
+mode = "thumb"
+note = "Thor miss: 140253 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x0810CE10
+mode = "thumb"
+note = "Thor miss: 174693 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x0810D1E8
+mode = "thumb"
+note = "Thor miss: 17485 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x0810D314
+mode = "thumb"
+note = "Thor miss: 1652 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x0810D448
+mode = "thumb"
+note = "Thor miss: 22288 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x0810D6DC
+mode = "thumb"
+note = "Thor miss: 9720 insns interpreted, 19 PCs"
+
+[[extra_func]]
+addr = 0x0810D8A8
+mode = "thumb"
+note = "Thor miss: 42838 insns interpreted, 35 PCs"
+
+[[extra_func]]
+addr = 0x0810DC90
+mode = "thumb"
+note = "Thor miss: 65042 insns interpreted, 27 PCs"
+
+[[extra_func]]
+addr = 0x0810DFB4
+mode = "thumb"
+note = "Thor miss: 43860 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x0810E208
+mode = "thumb"
+note = "Thor miss: 93366 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x0810E344
+mode = "thumb"
+note = "Thor miss: 21670 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x0810E4A4
+mode = "thumb"
+note = "Thor miss: 20020 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x0810E5B8
+mode = "thumb"
+note = "Thor miss: 135489 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x0810EA48
+mode = "thumb"
+note = "Thor miss: 195197 insns interpreted, 50 PCs"
+
+[[extra_func]]
+addr = 0x0810F598
+mode = "thumb"
+note = "Thor miss: 6372 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x0810F788
+mode = "thumb"
+note = "Thor miss: 240293 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x0810F8A0
+mode = "thumb"
+note = "Thor miss: 244 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0810F8E8
+mode = "thumb"
+note = "Thor miss: 295 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0810F91C
+mode = "thumb"
+note = "Thor miss: 11558 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x0810FA90
+mode = "thumb"
+note = "Thor miss: 11192 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x0810FBBC
+mode = "thumb"
+note = "Thor miss: 7932 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0810FC28
+mode = "thumb"
+note = "Thor miss: 11774 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x0810FE08
+mode = "thumb"
+note = "Thor miss: 7989 insns interpreted, 16 PCs"
+
+[[extra_func]]
+addr = 0x081100D4
+mode = "thumb"
+note = "Thor miss: 4512 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x0811026C
+mode = "thumb"
+note = "Thor miss: 2736 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08110388
+mode = "thumb"
+note = "Thor miss: 7946 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x08110560
+mode = "thumb"
+note = "Thor miss: 87327 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x0811088C
+mode = "thumb"
+note = "Thor miss: 27800 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08110A84
+mode = "thumb"
+note = "Thor miss: 40388 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x08110E78
+mode = "thumb"
+note = "Thor miss: 27825 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08110F74
+mode = "thumb"
+note = "Thor miss: 14488 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08111070
+mode = "thumb"
+note = "Thor miss: 22608 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08111268
+mode = "thumb"
+note = "Thor miss: 11748 insns interpreted, 43 PCs"
+
+[[extra_func]]
+addr = 0x08111608
+mode = "thumb"
+note = "Thor miss: 18894 insns interpreted, 40 PCs"
+
+[[extra_func]]
+addr = 0x08111AFC
+mode = "thumb"
+note = "Thor miss: 5018 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x08111BE4
+mode = "thumb"
+note = "Thor miss: 18965 insns interpreted, 23 PCs"
+
+[[extra_func]]
+addr = 0x08111DFC
+mode = "thumb"
+note = "Thor miss: 257953 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x08112010
+mode = "thumb"
+note = "Thor miss: 873709 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x081123A0
+mode = "thumb"
+note = "Thor miss: 259129 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x081124C0
+mode = "thumb"
+note = "Thor miss: 84742 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08112510
+mode = "thumb"
+note = "Thor miss: 440255 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x0811277C
+mode = "thumb"
+note = "Thor miss: 355692 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08112894
+mode = "thumb"
+note = "Thor miss: 536805 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x081129AC
+mode = "thumb"
+note = "Thor miss: 2432550 insns interpreted, 31 PCs"
+
+[[extra_func]]
+addr = 0x08112EB4
+mode = "thumb"
+note = "Thor miss: 36487 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x08112F2C
+mode = "thumb"
+note = "Thor miss: 1134037 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x081131C4
+mode = "thumb"
+note = "Thor miss: 8818 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x0811332C
+mode = "thumb"
+note = "Thor miss: 38 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x081133D8
+mode = "thumb"
+note = "Thor miss: 144 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0811346C
+mode = "thumb"
+note = "Thor miss: 53444 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x081135DC
+mode = "thumb"
+note = "Thor miss: 91512 insns interpreted, 24 PCs"
+
+[[extra_func]]
+addr = 0x081138C4
+mode = "thumb"
+note = "Thor miss: 2400 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x081139B0
+mode = "thumb"
+note = "Thor miss: 725344 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x08113BA0
+mode = "thumb"
+note = "Thor miss: 68918 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x08113CEC
+mode = "thumb"
+note = "Thor miss: 21088 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x08113E8C
+mode = "thumb"
+note = "Thor miss: 614 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x08113F94
+mode = "thumb"
+note = "Thor miss: 19358 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x08114020
+mode = "thumb"
+note = "Thor miss: 85680 insns interpreted, 39 PCs"
+
+[[extra_func]]
+addr = 0x08114400
+mode = "thumb"
+note = "Thor miss: 36179 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x081144F8
+mode = "thumb"
+note = "Thor miss: 468777 insns interpreted, 51 PCs"
+
+[[extra_func]]
+addr = 0x08114BA4
+mode = "thumb"
+note = "Thor miss: 168792 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x08114C78
+mode = "thumb"
+note = "Thor miss: 247251 insns interpreted, 17 PCs"
+
+[[extra_func]]
+addr = 0x08114DF4
+mode = "thumb"
+note = "Thor miss: 119999 insns interpreted, 6 PCs"
+
+[[extra_func]]
+addr = 0x08114FD4
+mode = "thumb"
+note = "Thor miss: 108828 insns interpreted, 12 PCs"
+
+[[extra_func]]
+addr = 0x08115130
+mode = "thumb"
+note = "Thor miss: 77748 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x0811528C
+mode = "thumb"
+note = "Thor miss: 7264960 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x0811539C
+mode = "thumb"
+note = "Thor miss: 2991762 insns interpreted, 11 PCs"
+
+[[extra_func]]
+addr = 0x08115728
+mode = "thumb"
+note = "Thor miss: 216054 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x081158B0
+mode = "thumb"
+note = "Thor miss: 333773 insns interpreted, 14 PCs"
+
+[[extra_func]]
+addr = 0x08115B20
+mode = "thumb"
+note = "Thor miss: 152071 insns interpreted, 8 PCs"
+
+[[extra_func]]
+addr = 0x08115C0C
+mode = "thumb"
+note = "Thor miss: 962289 insns interpreted, 40 PCs"
+
+[[extra_func]]
+addr = 0x081160BC
+mode = "thumb"
+note = "Thor miss: 210596 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x0811637C
+mode = "thumb"
+note = "Thor miss: 140850 insns interpreted, 26 PCs"
+
+[[extra_func]]
+addr = 0x08116670
+mode = "thumb"
+note = "Thor miss: 271588 insns interpreted, 22 PCs"
+
+[[extra_func]]
+addr = 0x08116910
+mode = "thumb"
+note = "Thor miss: 172065 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08117354
+mode = "thumb"
+note = "Thor miss: 146880 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x0811753C
+mode = "thumb"
+note = "Thor miss: 116910 insns interpreted, 9 PCs"
+
+[[extra_func]]
+addr = 0x08117640
+mode = "thumb"
+note = "Thor miss: 117403 insns interpreted, 10 PCs"
+
+[[extra_func]]
+addr = 0x08117798
+mode = "thumb"
+note = "Thor miss: 567897 insns interpreted, 20 PCs"
+
+[[extra_func]]
+addr = 0x081179F4
+mode = "thumb"
+note = "Thor miss: 87653 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x08117A80
+mode = "thumb"
+note = "Thor miss: 525537 insns interpreted, 18 PCs"
+
+[[extra_func]]
+addr = 0x08117C84
+mode = "thumb"
+note = "Thor miss: 1197393 insns interpreted, 21 PCs"
+
+[[extra_func]]
+addr = 0x08117F0C
+mode = "thumb"
+note = "Thor miss: 149791 insns interpreted, 13 PCs"
+
+[[extra_func]]
+addr = 0x08118108
+mode = "thumb"
+note = "Thor miss: 191908 insns interpreted, 15 PCs"
+
+[[extra_func]]
+addr = 0x08137BA4
+mode = "thumb"
+note = "Thor miss: 2656418 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08137E50
+mode = "thumb"
+note = "Thor miss: 158684 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08137F34
+mode = "thumb"
+note = "Thor miss: 139097 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08137FE0
+mode = "thumb"
+note = "Thor miss: 38843 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x081381C0
+mode = "thumb"
+note = "Thor miss: 5339 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x08138268
+mode = "thumb"
+note = "Thor miss: 1309 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x0813831C
+mode = "thumb"
+note = "Thor miss: 5236 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x081383D0
+mode = "thumb"
+note = "Thor miss: 392 insns interpreted, 4 PCs"
+
+[[extra_func]]
+addr = 0x0814457C
+mode = "thumb"
+note = "Thor miss: 5247 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08144640
+mode = "thumb"
+note = "Thor miss: 236 insns interpreted, 7 PCs"
+
+[[extra_func]]
+addr = 0x08144794
+mode = "thumb"
+note = "Thor miss: 560 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x08144854
+mode = "thumb"
+note = "Thor miss: 4139 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x081448B4
+mode = "thumb"
+note = "Thor miss: 2778 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x08144914
+mode = "thumb"
+note = "Thor miss: 318 insns interpreted, 5 PCs"
+
+[[extra_func]]
+addr = 0x08144A70
+mode = "thumb"
+note = "Thor miss: 386 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08144AD0
+mode = "thumb"
+note = "Thor miss: 36 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08144B30
+mode = "thumb"
+note = "Thor miss: 858 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08144B68
+mode = "thumb"
+note = "Thor miss: 35 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08144BB0
+mode = "thumb"
+note = "Thor miss: 42 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08144BC8
+mode = "thumb"
+note = "Thor miss: 42 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08144BE4
+mode = "thumb"
+note = "Thor miss: 425 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08144C20
+mode = "thumb"
+note = "Thor miss: 28 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08144C5C
+mode = "thumb"
+note = "Thor miss: 76 insns interpreted, 1 PCs"
+
+[[extra_func]]
+addr = 0x08144C9C
+mode = "thumb"
+note = "Thor miss: 262 insns interpreted, 2 PCs"
+
+[[extra_func]]
+addr = 0x08144CB8
+mode = "thumb"
+note = "Thor miss: 302 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x08144CEC
+mode = "thumb"
+note = "Thor miss: 175 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0815AA40
+mode = "thumb"
+note = "Thor miss: 148 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0815B0A8
+mode = "thumb"
+note = "Thor miss: 186076 insns interpreted, 3 PCs"
+
+[[extra_func]]
+addr = 0x0815B3DC
+mode = "thumb"
+note = "Thor miss: 17685 insns interpreted, 3 PCs"
+
+# Pass 1's leftovers (2026-11-16 night). Two switches whose cases the Thor ran
+# interpreted: 0x0807C01A bounds its index with `cmp r0, #0x14` (21 cases; the
+# finder walked 18), 0x08156E9C with `cmp r5, #5` (6 cases).
+[[jump_table]]
+addr         = 0x0807C024
+stride       = 4
+count        = 21
+format       = "abs32"
+entries_mode = "thumb"
+name         = "switch_0807C01A"
+
+[[jump_table]]
+addr         = 0x08156EA8
+stride       = 4
+count        = 6
+format       = "abs32"
+entries_mode = "thumb"
+name         = "switch_08156E9C"
+
+# Leaf functions reached only through pointer tables (each found as a Thumb
+# pointer, address | 1, in a ROM data table).
+[[extra_func]]
+addr = 0x080079F0
+mode = "thumb"
+note = "Thor miss; pointer at 0x085F5EAC"
+
+[[extra_func]]
+addr = 0x08144B4C
+mode = "thumb"
+note = "Thor miss; pointer at 0x08626320"
+
+[[extra_func]]
+addr = 0x08144C7C
+mode = "thumb"
+note = "Thor miss; pointer at 0x0862637C"
+
+[[extra_func]]
+addr = 0x0806CC34
+mode = "thumb"
+note = "Thor miss; pointers at 0x0860FCD8 and four more"
+
+[[extra_func]]
+addr = 0x08002E74
+mode = "thumb"
+note = "Thor miss; pointers at 0x0815D918 and four more"

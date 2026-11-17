@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <!-- Options > Rumble: the device's vibrator (Rumble.java). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Options > Achievements: RetroAchievements (Cheevos.java). Only
+         retroachievements.org is contacted, only once a player logs in. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- The icon is the emblem medallion (res/mipmap-*; made by
+         koldecomp/medallion_detail/icon_render.py + icon_res.py). -->
+    <application
+        android:label="Knight of Lodis"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="true"
+        android:hardwareAccelerated="true"
+        android:supportsRtl="true">
+
+        <!-- Launcher entry: provisions the ROM and BIOS before any native code
+             runs. The runtime hash-verifies both at startup and refuses to
+             boot without them, so SDLActivity must not start first. -->
+        <activity
+            android:name=".SetupActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The game itself. Landscape: the GBA is 3:2 and the Thor is a
+             landscape handheld. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            />
+
+        <!-- Restarts the app (RestartActivity.java): its own process, so the
+             game's can end first. Invisible. -->
+        <activity
+            android:name=".RestartActivity"
+            android:exported="false"
+            android:process=":restart"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true" />
+    </application>
+</manifest>

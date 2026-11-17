@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KoL Map Editor</title>
+<style>
+:root {
+  --bg: #16181d; --panel: #1f2229; --line: #30343d; --text: #d9dce3; --dim: #8b919e;
+  --accent: #5fb3ff; --warn: #ffb35f; --ok: #7fd18b;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; overflow: hidden; }
+header { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+header .group { display: flex; gap: 4px; align-items: center; }
+header .label { color: var(--dim); margin-right: 2px; }
+button, select { font: inherit; color: var(--text); background: #2a2e37; border: 1px solid var(--line);
+  border-radius: 5px; padding: 4px 9px; cursor: pointer; }
+button:hover { border-color: #4a505c; }
+button.on { background: #24486b; border-color: var(--accent); }
+button.primary { background: #2c5a34; border-color: #3f8a4b; }
+label.chk { display: flex; align-items: center; gap: 4px; color: var(--text); cursor: pointer; user-select: none; }
+kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--dim); border: 1px solid var(--line);
+  border-radius: 3px; padding: 0 3px; margin-left: 3px; }
+main { display: grid; grid-template-columns: 1fr 544px; min-height: 0; }
+#wrap { position: relative; min-width: 0; min-height: 0; }
+#viewport { position: absolute; inset: 0; overflow: auto; background: #0e0f12; }
+#stage { position: relative; }
+#map { display: block; image-rendering: pixelated; }
+#over { position: absolute; left: 0; top: 0; pointer-events: none; }
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 10px 12px; }
+aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+  margin: 14px 0 6px; font-weight: 600; }
+aside h2:first-child { margin-top: 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+canvas.px { image-rendering: pixelated; background: #0e0f12; border: 1px solid var(--line); }
+#tiles { cursor: pointer; display: block; }
+.mono { font-family: ui-monospace, Menlo, monospace; }
+.help { color: var(--dim); font-size: 12px; }
+.help b { color: var(--text); font-weight: 600; }
+footer { display: flex; gap: 18px; padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line);
+  color: var(--dim); font: 12px ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; }
+#saveState.dirty { color: var(--warn); }
+#saveState.clean { color: var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <div class="group"><span class="label">Map</span><select id="mapSel"></select></div>
+  <div class="group">
+    <button data-tool="stamp" title="Stamp (S): Shift+drag to copy a block, click to paint it">Stamp<kbd>S</kbd></button>
+    <button data-tool="pencil" title="Pencil (P): one tile on the active layer; right-click clears">Pencil<kbd>P</kbd></button>
+    <button id="copyBtn" title="Copy (C): the next drag over the map copies a block (Shift+drag or right-drag do too)">Copy block<kbd>C</kbd></button>
+    <button data-tool="erase" title="Erase (E): drag a rectangle">Erase<kbd>E</kbd></button>
+    <button data-tool="pick" title="Pick (I): take a cell's tile for the pencil">Pick<kbd>I</kbd></button>
+  </div>
+  <div class="group">
+    <button id="ovBtn" title="Override (O): paint over the game's own art; Erase there restores the game's tiles">Override art<kbd>O</kbd></button>
+  </div>
+  <div class="group"><span class="label">Layer</span>
+    <button id="layer0" title="Active layer for the pencil (B toggles)">BG0</button>
+    <button id="layer1">BG1</button>
+  </div>
+  <div class="group"><span class="label">Snap</span>
+    <select id="snap" title="G toggles"><option value="iso">Iso grid (2×1)</option><option value="tile">Any tile</option></select>
+  </div>
+  <div class="group"><span class="label">Stamp writes</span>
+    <select id="stampLayers" title="Which layers a stamp paints (L cycles). One layer leaves the other as it is: put objects on BG1 over ground you painted on BG0.">
+      <option value="both">BG0 + BG1</option><option value="0">BG0 only</option><option value="1">BG1 only</option></select>
+  </div>
+  <div class="group"><span class="label">Zoom</span><select id="zoom">
+    <option value="1">1×</option><option value="2">2×</option><option value="3" selected>3×</option><option value="4">4×</option></select></div>
+  <div class="group"><span class="label">Frame</span><select id="frame" title="A view rectangle around the cursor">
+    <option value="">off</option><option value="384x216">384×216 (Thor)</option><option value="480x270">480×270</option></select></div>
+  <div class="group">
+    <label class="chk"><input type="checkbox" id="showBg0" checked>BG0</label>
+    <label class="chk"><input type="checkbox" id="showBg1" checked>BG1</label>
+    <label class="chk"><input type="checkbox" id="grid">Grid</label>
+    <label class="chk"><input type="checkbox" id="dim">Dim game art</label>
+    <label class="chk"><input type="checkbox" id="mark" checked>Tint painted</label>
+  </div>
+  <div class="group" style="margin-left:auto">
+    <button id="undo" title="⌘Z">Undo</button><button id="redo" title="⇧⌘Z">Redo</button>
+    <label class="chk" title="Also copy map_ext.cfg to the Thor's files/ on every save (adb)"><input type="checkbox" id="thor">Send to Thor</label>
+    <label class="chk" title="Save after every change, so a running game follows along"><input type="checkbox" id="auto">Auto-save</label>
+    <button id="save" class="primary" title="⌘S">Save</button>
+  </div>
+</header>
+<main>
+  <div id="wrap">
+    <div id="viewport"><div id="stage"><canvas id="map"></canvas></div></div>
+    <canvas id="over"></canvas>
+  </div>
+  <aside>
+    <h2>Stamp</h2>
+    <div class="row"><canvas id="stampPrev" class="px" width="1" height="1"></canvas></div>
+    <div class="row help" id="stampInfo">No stamp yet. Press <b>Copy block</b> (C) and drag over the town or your own painting.</div>
+    <div class="row"><button id="flipStamp" title="X">Mirror stamp<kbd>X</kbd></button></div>
+
+    <h2>Pencil tile</h2>
+    <div class="row">
+      <canvas id="tilePrev" class="px" width="8" height="8" style="width:48px;height:48px"></canvas>
+      <div>
+        <div class="mono" id="entryInfo">—</div>
+        <div class="row" style="margin:4px 0 0">
+          <span class="label help">Palette</span><select id="palSel"></select>
+          <label class="chk"><input type="checkbox" id="hflip">H flip</label>
+          <label class="chk"><input type="checkbox" id="vflip">V flip</label>
+        </div>
+      </div>
+    </div>
+    <h2>Tiles <span style="text-transform:none;letter-spacing:0;font-weight:400">· click: pencil · Shift+drag: stamp</span></h2>
+    <canvas id="tiles" class="px"></canvas>
+
+    <h2>Keys</h2>
+    <div class="help">
+      <b>S</b> stamp · <b>P</b> pencil · <b>E</b> erase · <b>I</b> pick (or <b>Alt+click</b>)<br>
+      <b>C</b> then drag (or <b>Shift+drag</b>, or right-drag) copy a block of the map · <b>X</b> mirror · <b>G</b> snap · <b>B</b> layer<br>
+      <b>L</b> stamp writes: both → BG0 only → BG1 only · <b>O</b> override art<br>
+      <b>Space+drag</b> or scroll to pan · <b>1–4</b> zoom · <b>Esc</b> cancel<br>
+      <b>⌘Z</b> / <b>⇧⌘Z</b> undo / redo · <b>⌘S</b> save<br><br>
+      BG1 draws over BG0, and its see-through pixels show BG0 below (or the sky where
+      BG0 is empty): paint the ground on BG0 first, then objects with <b>BG1 only</b>.<br><br>
+      Only cells where the game drew nothing can be painted; the yellow line is the edge
+      of the game's own art. A save writes <span class="mono">map_ext.cfg</span>, which a running
+      game re-reads within half a second.<br><br>
+      <b>Override art</b> (O) paints over the game's own tiles too (tinted magenta): the pencil sets
+      a tile on the active layer (right-click: no tile there), a stamp writes as usual, and
+      <b>Erase</b> gives a cell back to the game. An override shows only while the game's tile there is
+      the one it replaced, so the game's own changes (the move range) still show. To lift a
+      BG0 object: stamp a whole copy of it on <b>BG1 only</b>, then pencil the ground or wall behind it on BG0.
+    </div>
+  </aside>
+</main>
+<footer>
+  <span id="pos">—</span><span id="cellInfo"></span><span id="ovInfo"></span><span id="saveState" class="clean">no changes</span>
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+// The editor's grid is the guest's composed array (128 columns) with room
+// past it: PAD_L columns left of the array's column 0 and PAD_B rows below
+// its last row, where the game serves only painted cells (kol_map_source
+// kExtLeft). Cells are stored in grid columns; the file and the readout use
+// the array's own (col - PAD_L, negative on the left).
+const ARRAY_COLS = 128, PAD_L = 64, PAD_B = 32, COLS = PAD_L + ARRAY_COLS;
+const TILE_ROW = 32;   // the tiles' own layout in VRAM: art pieces are whole at 32 a row
+let M = null, ROWS = 0, N = 0;
+let game = [null, null], ext = [null, null], ov = [null, null], locked = null, tileBytes = null, pal = null, backdrop = "#000";
+let usage = null;          // most used palette bank per tile id
+let maxTile = 0, edgeSegs = [];
+const cache = new Map();
+const S = {
+  tool: "stamp", layer: 0, zoom: 3, snap: "iso", frame: null,
+  show: [true, true], grid: false, dim: false, mark: true,
+  stamp: null, stampLayers: "both", entry: 0, copyArmed: false, dirty: false, saving: false, override: false,
+  hover: null, drag: null, panning: false, spaceDown: false,
+};
+const undo = [], redo = [];
+
+// ── Tiles ────────────────────────────────────────────────────────────────
+function tileCanvas(e) {
+  let c = cache.get(e);
+  if (c) return c;
+  c = document.createElement("canvas");
+  c.width = c.height = 8;
+  const g = c.getContext("2d"), im = g.createImageData(8, 8);
+  const t = e & 0x3ff, hf = e & 0x400, vf = e & 0x800, pb = (e >> 12) * 16;
+  for (let y = 0; y < 8; y++)
+    for (let x = 0; x < 8; x++) {
+      const b = tileBytes[t * 32 + y * 4 + (x >> 1)];
+      const v = x & 1 ? b >> 4 : b & 15;
+      if (!v) continue;
+      const dx = hf ? 7 - x : x, dy = vf ? 7 - y : y, o = (dy * 8 + dx) * 4, col = pal[pb + v];
+      im.data[o] = col[0]; im.data[o + 1] = col[1]; im.data[o + 2] = col[2]; im.data[o + 3] = 255;
+    }
+  g.putImageData(im, 0, 0);
+  cache.set(e, c);
+  return c;
+}
+
+// ── The map canvas (1 px per pixel; zoom is CSS) ────────────────────────
+const mapC = $("map"), mctx = mapC.getContext("2d");
+function cellEntry(L, i) { return locked[i] ? (ov[L][i] >= 0 ? ov[L][i] : game[L][i]) : ext[L][i]; }
+function overridden(i) { return ov[0][i] >= 0 || ov[1][i] >= 0; }
+// A cell can take paint: past the art always, on it in Override mode.
+function editable(i) { return !locked[i] || S.override; }
+function drawCell(i) {
+  const x = (i % COLS) * 8, y = ((i / COLS) | 0) * 8;
+  mctx.fillStyle = backdrop;
+  mctx.fillRect(x, y, 8, 8);
+  for (let L = 0; L < 2; L++) {
+    if (!S.show[L]) continue;
+    const e = cellEntry(L, i);
+    if (e) mctx.drawImage(tileCanvas(e), x, y);
+  }
+  if (locked[i] && S.dim && !overridden(i)) { mctx.fillStyle = "rgba(0,0,0,0.5)"; mctx.fillRect(x, y, 8, 8); }
+  if (locked[i] && S.mark && overridden(i)) { mctx.fillStyle = "rgba(255,80,220,0.22)"; mctx.fillRect(x, y, 8, 8); }
+  if (!locked[i] && S.mark && (ext[0][i] || ext[1][i])) { mctx.fillStyle = "rgba(80,200,255,0.16)"; mctx.fillRect(x, y, 8, 8); }
+}
+function drawAll() { for (let i = 0; i < N; i++) drawCell(i); }
+function applyZoom(keepCenter = true) {
+  const vp = $("viewport");
+  const cx = (vp.scrollLeft + vp.clientWidth / 2) / (mapC.clientWidth || 1);
+  const cy = (vp.scrollTop + vp.clientHeight / 2) / (mapC.clientHeight || 1);
+  mapC.style.width = COLS * 8 * S.zoom + "px";
+  mapC.style.height = ROWS * 8 * S.zoom + "px";
+  if (keepCenter) {
+    vp.scrollLeft = cx * mapC.clientWidth - vp.clientWidth / 2;
+    vp.scrollTop = cy * mapC.clientHeight - vp.clientHeight / 2;
+  }
+  drawOverlay();
+}
+
+// ── Overlay: grid, art edge, ghosts, frame ──────────────────────────────
+const overC = $("over"), octx = overC.getContext("2d");
+function sizeOverlay() {
+  const vp = $("viewport"), dpr = window.devicePixelRatio || 1;
+  overC.width = vp.clientWidth * dpr; overC.height = vp.clientHeight * dpr;
+  overC.style.width = vp.clientWidth + "px"; overC.style.height = vp.clientHeight + "px";
+  drawOverlay();
+}
+let overlayQueued = false;
+function drawOverlay() {
+  if (overlayQueued) return;
+  overlayQueued = true;
+  requestAnimationFrame(() => { overlayQueued = false; paintOverlay(); });
+}
+function paintOverlay() {
+  if (!M) return;
+  const vp = $("viewport"), dpr = window.devicePixelRatio || 1, z = S.zoom * 8;
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, overC.width, overC.height);
+  octx.translate(-vp.scrollLeft, -vp.scrollTop);
+  const c0 = Math.max(0, Math.floor(vp.scrollLeft / z)), c1 = Math.min(COLS, Math.ceil((vp.scrollLeft + vp.clientWidth) / z));
+  const r0 = Math.max(0, Math.floor(vp.scrollTop / z)), r1 = Math.min(ROWS, Math.ceil((vp.scrollTop + vp.clientHeight) / z));
+  if (S.grid && S.zoom >= 2) {
+    octx.lineWidth = 1;
+    for (let c = c0; c <= c1; c++) {
+      octx.strokeStyle = c % 4 ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.18)";
+      octx.beginPath(); octx.moveTo(c * z + 0.5, r0 * z); octx.lineTo(c * z + 0.5, r1 * z); octx.stroke();
+    }
+    for (let r = r0; r <= r1; r++) {
+      octx.strokeStyle = r % 2 ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.18)";
+      octx.beginPath(); octx.moveTo(c0 * z, r * z + 0.5); octx.lineTo(c1 * z, r * z + 0.5); octx.stroke();
+    }
+  }
+  // The edge of the game's own art.
+  octx.strokeStyle = "#ffd65a"; octx.lineWidth = 2;
+  octx.beginPath();
+  for (const [x0, y0, x1, y1] of edgeSegs) { octx.moveTo(x0 * z, y0 * z); octx.lineTo(x1 * z, y1 * z); }
+  octx.stroke();
+
+  const h = S.hover;
+  if (h) {
+    if (S.drag && (S.drag.kind === "select" || S.drag.kind === "erase")) {
+      const a = S.drag.start, rr0 = Math.min(a.r, h.r), cc0 = Math.min(a.c, h.c);
+      const rr1 = Math.max(a.r, h.r), cc1 = Math.max(a.c, h.c);
+      octx.fillStyle = S.drag.kind === "erase" ? "rgba(255,90,90,0.18)" : "rgba(95,179,255,0.15)";
+      octx.strokeStyle = S.drag.kind === "erase" ? "#ff6b6b" : "#5fb3ff"; octx.lineWidth = 2;
+      octx.fillRect(cc0 * z, rr0 * z, (cc1 - cc0 + 1) * z, (rr1 - rr0 + 1) * z);
+      octx.strokeRect(cc0 * z, rr0 * z, (cc1 - cc0 + 1) * z, (rr1 - rr0 + 1) * z);
+    } else if (S.tool === "stamp" && S.stamp && !S.shiftDown && !S.copyArmed) {
+      const p = stampPlace(h);
+      octx.globalAlpha = 0.8; octx.imageSmoothingEnabled = false;
+      octx.drawImage(S.stamp.canvas, p.c * z, p.r * z, S.stamp.w * z, S.stamp.h * z);
+      octx.globalAlpha = 1; octx.strokeStyle = "#5fb3ff"; octx.lineWidth = 1.5;
+      octx.strokeRect(p.c * z, p.r * z, S.stamp.w * z, S.stamp.h * z);
+    } else if (S.tool === "pencil" && S.entry) {
+      octx.globalAlpha = 0.85; octx.imageSmoothingEnabled = false;
+      octx.drawImage(tileCanvas(S.entry), h.c * z, h.r * z, z, z);
+      octx.globalAlpha = 1;
+      octx.strokeStyle = editable(h.r * COLS + h.c) ? (locked[h.r * COLS + h.c] ? "#ff7ae0" : "#5fb3ff") : "#ff6b6b"; octx.lineWidth = 1.5;
+      octx.strokeRect(h.c * z, h.r * z, z, z);
+    } else {
+      octx.strokeStyle = "#ffffff"; octx.lineWidth = 1;
+      octx.strokeRect(h.c * z + 0.5, h.r * z + 0.5, z - 1, z - 1);
+    }
+    if (S.frame) {
+      const [fw, fh] = S.frame, px = S.zoom;
+      octx.strokeStyle = "rgba(255,255,255,0.9)"; octx.setLineDash([6, 4]); octx.lineWidth = 1.5;
+      octx.strokeRect(h.fx * px - fw * px / 2, h.fy * px - fh * px / 2, fw * px, fh * px);
+      octx.setLineDash([]);
+    }
+  }
+}
+
+// Where the stamp lands for a hover point: centred on the cursor, then moved
+// by a whole iso step (2 columns, 1 row; a step is legal when the row change
+// has the parity of half the column change) from where it was copied, so the
+// copy sits on the same diamond grid as its source.
+function stampPlace(h) {
+  const st = S.stamp;
+  const tc = h.fc / 8 - st.w / 2, tr = h.fy / 8 - st.h / 2;
+  if (S.snap !== "iso" || st.r === null) return { c: Math.round(tc), r: Math.round(tr) };
+  const dc = tc - st.c, dr = tr - st.r;
+  let best = null, bd = Infinity;
+  for (let a = Math.floor(dc / 2) - 1; a <= Math.floor(dc / 2) + 2; a++) {
+    const cc = a * 2;
+    for (let rr = Math.floor(dr) - 2; rr <= Math.floor(dr) + 3; rr++) {
+      if (((rr - a) % 2 + 2) % 2 !== 0) continue;
+      const d = (cc - dc) ** 2 + (rr - dr) ** 2;
+      if (d < bd) { bd = d; best = { c: st.c + cc, r: st.r + rr }; }
+    }
+  }
+  return best;
+}
+
+// ── Edits ────────────────────────────────────────────────────────────────
+function snapshot() { return [ext[0].slice(), ext[1].slice(), ov[0].slice(), ov[1].slice()]; }
+function pushUndo() {
+  undo.push(snapshot());
+  if (undo.length > 300) undo.shift();
+  redo.length = 0;
+}
+function markDirty() {
+  S.dirty = true;
+  const s = $("saveState"); s.textContent = "unsaved changes"; s.className = "dirty";
+  if ($("auto").checked) scheduleSave();
+}
+let autoTimer = 0;
+function scheduleSave() { clearTimeout(autoTimer); autoTimer = setTimeout(save, 400); }
+
+function setCell(r, c, e0, e1) {
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
+  const i = r * COLS + c;
+  if (!editable(i)) return false;
+  if (cellEntry(0, i) === e0 && cellEntry(1, i) === e1) return false;
+  if (locked[i]) {
+    // On the game's art: an override where it differs from the game's tile.
+    const v = [e0, e1];
+    for (let L = 0; L < 2; L++) ov[L][i] = v[L] === game[L][i] ? -1 : v[L];
+  } else {
+    ext[0][i] = e0; ext[1][i] = e1;
+  }
+  drawCell(i);
+  return true;
+}
+// Gives a cell back to the game (its overrides go), or clears a painted one.
+function eraseCell(r, c) {
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
+  const i = r * COLS + c;
+  if (locked[i]) {
+    if (!S.override || !overridden(i)) return false;
+    ov[0][i] = ov[1][i] = -1;
+    drawCell(i);
+    return true;
+  }
+  return setCell(r, c, 0, 0);
+}
+// The one layer a stamp writes, or -1 for both. A stamp from the tile sheet
+// always writes one: "BG0 + BG1" falls back to the active layer for it.
+function stampLayer() {
+  if (S.stampLayers !== "both") return Number(S.stampLayers);
+  return S.stamp && S.stamp.fromTiles ? S.layer : -1;
+}
+function placeStamp(p) {
+  const st = S.stamp, L = stampLayer();
+  let any = false;
+  for (let j = 0; j < st.h; j++)
+    for (let k = 0; k < st.w; k++) {
+      const s = st.cells[j * st.w + k];
+      const r = p.r + j, c = p.c + k;
+      if (L < 0) {
+        if (!s[0] && !s[1]) continue;        // an empty cell of the stamp leaves what is there
+        any = setCell(r, c, s[0], s[1]) || any;
+      } else {
+        // One layer: its empty cells leave what is there, and the other
+        // layer is never touched (the ground under an object stays).
+        if (!s[L] || r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+        const i = r * COLS + c, v = [cellEntry(0, i), cellEntry(1, i)];
+        v[L] = s[L];
+        any = setCell(r, c, v[0], v[1]) || any;
+      }
+    }
+  return any;
+}
+function takeStamp(a, b) {
+  const r0 = Math.min(a.r, b.r), c0 = Math.min(a.c, b.c), r1 = Math.max(a.r, b.r), c1 = Math.max(a.c, b.c);
+  const w = c1 - c0 + 1, h = r1 - r0 + 1, cells = [];
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) { const i = r * COLS + c; cells.push([cellEntry(0, i), cellEntry(1, i)]); }
+  S.stamp = { w, h, r: r0, c: c0, cells, mirrored: false };
+  buildStampCanvas();
+}
+function mirrorStamp() {
+  const st = S.stamp;
+  if (!st) return;
+  const cells = [];
+  for (let j = 0; j < st.h; j++)
+    for (let k = 0; k < st.w; k++) {
+      const s = st.cells[j * st.w + (st.w - 1 - k)];
+      cells.push(s.map((e) => (e ? e ^ 0x400 : 0)));
+    }
+  st.cells = cells; st.mirrored = !st.mirrored;
+  buildStampCanvas();
+}
+function buildStampCanvas() {
+  const st = S.stamp, c = document.createElement("canvas");
+  c.width = st.w * 8; c.height = st.h * 8;
+  const g = c.getContext("2d");
+  const only = stampLayer();
+  st.cells.forEach((s, i) => {
+    const x = (i % st.w) * 8, y = ((i / st.w) | 0) * 8;
+    for (let L = 0; L < 2; L++)
+      if (s[L] && (only < 0 || only === L)) g.drawImage(tileCanvas(s[L]), x, y);
+  });
+  st.canvas = c;
+  const pv = $("stampPrev"), sc = Math.max(1, Math.min(3, Math.floor(380 / c.width), Math.floor(260 / c.height)));
+  pv.width = c.width; pv.height = c.height;
+  pv.style.width = c.width * sc + "px"; pv.style.height = c.height * sc + "px";
+  const pg = pv.getContext("2d"); pg.fillStyle = backdrop; pg.fillRect(0, 0, c.width, c.height); pg.drawImage(c, 0, 0);
+  const from = st.fromTiles ? "from the tile sheet" : `from row ${st.r}, col ${st.c}`;
+  const L = stampLayer(), onto = L < 0 ? "BG0 + BG1" : `BG${L} only`;
+  $("stampInfo").textContent = `${st.w}×${st.h} tiles ${from}${st.mirrored ? ", mirrored" : ""}, painting ${onto}. Click to paint; drag to repeat.`;
+  drawOverlay();
+}
+
+// ── Pencil tile ─────────────────────────────────────────────────────────
+function setEntry(e) {
+  S.entry = e & 0xffff;
+  $("palSel").value = String(S.entry >> 12);
+  $("hflip").checked = !!(S.entry & 0x400); $("vflip").checked = !!(S.entry & 0x800);
+  const pv = $("tilePrev").getContext("2d");
+  pv.fillStyle = backdrop; pv.fillRect(0, 0, 8, 8); pv.drawImage(tileCanvas(S.entry), 0, 0);
+  $("entryInfo").textContent = `tile ${S.entry & 0x3ff} · bank ${S.entry >> 12} · ${S.entry.toString(16).padStart(4, "0")}`;
+  drawOverlay();
+}
+function entryFromControls() {
+  return (S.entry & 0x3ff) | (Number($("palSel").value) << 12) | ($("hflip").checked ? 0x400 : 0) | ($("vflip").checked ? 0x800 : 0);
+}
+function drawTilePalette() {
+  const per = TILE_ROW, sc = 2, n = maxTile + 1, rows = Math.ceil(n / per), c = $("tiles");
+  c.width = per * 8; c.height = rows * 8;
+  c.style.width = per * 8 * sc + "px"; c.style.height = rows * 8 * sc + "px";
+  const g = c.getContext("2d");
+  g.fillStyle = backdrop; g.fillRect(0, 0, c.width, c.height);
+  for (let t = 0; t < n; t++) {
+    const x = (t % per) * 8, y = ((t / per) | 0) * 8;
+    g.globalAlpha = usage[t] >= 0 ? 1 : 0.35;
+    g.drawImage(tileCanvas(t | (Math.max(0, usage[t]) << 12)), x, y);
+  }
+  g.globalAlpha = 1;
+}
+
+// ── Mouse ────────────────────────────────────────────────────────────────
+function hoverAt(ev) {
+  const vp = $("viewport"), rect = vp.getBoundingClientRect();
+  const fx = (ev.clientX - rect.left + vp.scrollLeft) / S.zoom, fy = (ev.clientY - rect.top + vp.scrollTop) / S.zoom;
+  const c = Math.floor(fx / 8), r = Math.floor(fy / 8);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return null;
+  return { c, r, fx, fy, fc: fx };
+}
+function showInfo(h) {
+  if (!h) { $("pos").textContent = "—"; $("cellInfo").textContent = ""; return; }
+  const i = h.r * COLS + h.c, hex = (e) => e.toString(16).padStart(4, "0");
+  $("pos").textContent = `row ${h.r} col ${h.c - PAD_L}`;
+  const kind = locked[i] ? (overridden(i) ? "game art, overridden" : "game art") : ext[0][i] || ext[1][i] ? "painted" : "empty";
+  $("cellInfo").textContent = `${kind} · BG0 ${hex(cellEntry(0, i))} · BG1 ${hex(cellEntry(1, i))}`;
+}
+function pick(h) {
+  const i = h.r * COLS + h.c;
+  let L = S.layer, e = cellEntry(L, i);
+  if (!e && cellEntry(L ^ 1, i)) { L ^= 1; e = cellEntry(L, i); setLayer(L); }
+  if (e) { setEntry(e); setTool("pencil"); }
+}
+function pencilAt(h, clear) {
+  const i = h.r * COLS + h.c;
+  if (!editable(i)) return false;
+  const e = clear ? 0 : S.entry;
+  const v = [cellEntry(0, i), cellEntry(1, i)]; v[S.layer] = e;
+  return setCell(h.r, h.c, v[0], v[1]);
+}
+
+const vpEl = $("viewport");
+vpEl.addEventListener("contextmenu", (ev) => ev.preventDefault());
+vpEl.addEventListener("mousedown", (ev) => {
+  const h = hoverAt(ev);
+  if (S.spaceDown || ev.button === 1) {
+    S.panning = { x: ev.clientX, y: ev.clientY, l: vpEl.scrollLeft, t: vpEl.scrollTop };
+    ev.preventDefault(); return;
+  }
+  if (!h) return;
+  ev.preventDefault();
+  if (ev.altKey || S.tool === "pick") { pick(h); return; }
+  if (S.tool === "stamp") {
+    if (ev.shiftKey || !S.stamp || S.copyArmed || ev.button === 2) {
+      S.drag = { kind: "select", start: h }; drawOverlay(); return;
+    }
+    pushUndo();
+    const p = stampPlace(h);
+    const changed = placeStamp(p);
+    S.drag = { kind: "stamp", last: p, changed };
+  } else if (S.tool === "pencil") {
+    pushUndo();
+    S.drag = { kind: "pencil", clear: ev.button === 2, changed: pencilAt(h, ev.button === 2) };
+  } else if (S.tool === "erase") {
+    S.drag = { kind: "erase", start: h };
+  }
+  drawOverlay();
+});
+window.addEventListener("mousemove", (ev) => {
+  if (S.panning) {
+    vpEl.scrollLeft = S.panning.l - (ev.clientX - S.panning.x);
+    vpEl.scrollTop = S.panning.t - (ev.clientY - S.panning.y);
+    return;
+  }
+  const h = hoverAt(ev);
+  S.shiftDown = ev.shiftKey;
+  if (h) S.hover = h;
+  showInfo(h);
+  const d = S.drag;
+  if (d && h) {
+    if (d.kind === "stamp") {
+      const p = stampPlace(h);
+      if (Math.abs(p.c - d.last.c) >= S.stamp.w || Math.abs(p.r - d.last.r) >= S.stamp.h) {
+        d.changed = placeStamp(p) || d.changed; d.last = p;
+      }
+    } else if (d.kind === "pencil") d.changed = pencilAt(h, d.clear) || d.changed;
+  }
+  drawOverlay();
+});
+window.addEventListener("mouseup", () => {
+  if (S.panning) { S.panning = false; return; }
+  const d = S.drag, h = S.hover;
+  S.drag = null;
+  if (!d) return;
+  if (d.kind === "select" && h) { takeStamp(d.start, h); armCopy(false); }
+  else if (d.kind === "erase" && h) {
+    pushUndo();
+    let any = false;
+    for (let r = Math.min(d.start.r, h.r); r <= Math.max(d.start.r, h.r); r++)
+      for (let c = Math.min(d.start.c, h.c); c <= Math.max(d.start.c, h.c); c++) any = eraseCell(r, c) || any;
+    if (any) markDirty(); else undo.pop();
+  } else if (d.kind === "stamp" || d.kind === "pencil") {
+    if (d.changed) markDirty(); else undo.pop();
+  }
+  drawOverlay();
+});
+vpEl.addEventListener("mouseleave", () => { S.hover = null; showInfo(null); drawOverlay(); });
+vpEl.addEventListener("scroll", drawOverlay);
+window.addEventListener("resize", sizeOverlay);
+
+// ── Keys and controls ────────────────────────────────────────────────────
+function setTool(t) {
+  S.tool = t;
+  document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t));
+  vpEl.style.cursor = t === "pick" ? "copy" : "crosshair";
+  drawOverlay();
+}
+function armCopy(on) {
+  S.copyArmed = on;
+  $("copyBtn").classList.toggle("on", on);
+  if (on) setTool("stamp");
+  drawOverlay();
+}
+function setOverride(on) {
+  S.override = on;
+  $("ovBtn").classList.toggle("on", on);
+  $("ovInfo").textContent = on ? "OVERRIDE: painting over the game's art" : "";
+  $("ovInfo").style.color = on ? "#ff7ae0" : "";
+  drawOverlay();
+}
+function setLayer(L) { S.layer = L; $("layer0").classList.toggle("on", L === 0); $("layer1").classList.toggle("on", L === 1); }
+function doUndo(from, to) {
+  if (!from.length) return;
+  to.push(snapshot());
+  [ext[0], ext[1], ov[0], ov[1]] = from.pop();
+  drawAll(); markDirty();
+}
+document.querySelectorAll("[data-tool]").forEach((b) => b.addEventListener("click", () => { armCopy(false); setTool(b.dataset.tool); }));
+$("copyBtn").onclick = () => armCopy(!S.copyArmed);
+$("ovBtn").onclick = () => setOverride(!S.override);
+$("layer0").onclick = () => setLayer(0);
+$("layer1").onclick = () => setLayer(1);
+$("snap").onchange = (e) => { S.snap = e.target.value; drawOverlay(); };
+function setStampLayers(v) {
+  S.stampLayers = v; $("stampLayers").value = v;
+  if (S.stamp) buildStampCanvas(); else drawOverlay();
+}
+$("stampLayers").onchange = (e) => setStampLayers(e.target.value);
+$("zoom").onchange = (e) => { S.zoom = Number(e.target.value); applyZoom(); };
+$("frame").onchange = (e) => { S.frame = e.target.value ? e.target.value.split("x").map(Number) : null; drawOverlay(); };
+$("showBg0").onchange = (e) => { S.show[0] = e.target.checked; drawAll(); };
+$("showBg1").onchange = (e) => { S.show[1] = e.target.checked; drawAll(); };
+$("grid").onchange = (e) => { S.grid = e.target.checked; drawOverlay(); };
+$("dim").onchange = (e) => { S.dim = e.target.checked; drawAll(); };
+$("mark").onchange = (e) => { S.mark = e.target.checked; drawAll(); };
+$("undo").onclick = () => doUndo(undo, redo);
+$("redo").onclick = () => doUndo(redo, undo);
+$("save").onclick = save;
+$("flipStamp").onclick = mirrorStamp;
+["palSel", "hflip", "vflip"].forEach((id) => ($(id).onchange = () => setEntry(entryFromControls())));
+// Tiles: a click takes a tile for the pencil; Shift+drag takes a block of
+// them as a stamp on the active layer (each tile in its usual palette bank).
+function tileAt(ev) {
+  const c = $("tiles"), r = c.getBoundingClientRect(), sc = r.width / c.width;
+  const tc = Math.floor((ev.clientX - r.left) / sc / 8), tr = Math.floor((ev.clientY - r.top) / sc / 8);
+  return { tc: Math.max(0, Math.min(TILE_ROW - 1, tc)), tr: Math.max(0, tr) };
+}
+let tileDrag = null;
+$("tiles").addEventListener("mousedown", (ev) => {
+  ev.preventDefault();
+  const a = tileAt(ev);
+  if (ev.shiftKey) { tileDrag = { a, b: a }; drawTileSel(); return; }
+  const t = a.tr * TILE_ROW + a.tc;
+  if (t > maxTile) return;
+  setEntry(t | (Math.max(0, usage[t]) << 12) | ($("hflip").checked ? 0x400 : 0) | ($("vflip").checked ? 0x800 : 0));
+  setTool("pencil");
+});
+window.addEventListener("mousemove", (ev) => { if (tileDrag) { tileDrag.b = tileAt(ev); drawTileSel(); } });
+window.addEventListener("mouseup", () => {
+  if (!tileDrag) return;
+  const { a, b } = tileDrag;
+  tileDrag = null;
+  drawTilePalette();
+  const r0 = Math.min(a.tr, b.tr), r1 = Math.max(a.tr, b.tr), c0 = Math.min(a.tc, b.tc), c1 = Math.max(a.tc, b.tc);
+  const cells = [];
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      const t = r * TILE_ROW + c, e = t <= maxTile ? t | (Math.max(0, usage[t]) << 12) : 0;
+      cells.push([e, e]);
+    }
+  S.stamp = { w: c1 - c0 + 1, h: r1 - r0 + 1, r: null, c: null, cells, mirrored: false, fromTiles: true };
+  buildStampCanvas();
+  setTool("stamp");
+});
+function drawTileSel() {
+  drawTilePalette();
+  const { a, b } = tileDrag, g = $("tiles").getContext("2d");
+  g.strokeStyle = "#5fb3ff"; g.lineWidth = 1;
+  g.strokeRect(Math.min(a.tc, b.tc) * 8 + 0.5, Math.min(a.tr, b.tr) * 8 + 0.5,
+               (Math.abs(a.tc - b.tc) + 1) * 8 - 1, (Math.abs(a.tr - b.tr) + 1) * 8 - 1);
+}
+window.addEventListener("keydown", (ev) => {
+  const k = ev.key.toLowerCase(), cmd = ev.metaKey || ev.ctrlKey;
+  if (cmd && k === "z") { ev.preventDefault(); ev.shiftKey ? doUndo(redo, undo) : doUndo(undo, redo); return; }
+  if (cmd && k === "s") { ev.preventDefault(); save(); return; }
+  if (cmd) return;
+  if (k === " ") { S.spaceDown = true; vpEl.style.cursor = "grab"; ev.preventDefault(); return; }
+  if (k === "shift") { S.shiftDown = true; drawOverlay(); return; }
+  if (k === "s") setTool("stamp");
+  else if (k === "p") setTool("pencil");
+  else if (k === "e") setTool("erase");
+  else if (k === "i") setTool("pick");
+  else if (k === "x") { if (S.tool === "pencil") { $("hflip").checked = !$("hflip").checked; setEntry(entryFromControls()); } else mirrorStamp(); }
+  else if (k === "y" && S.tool === "pencil") { $("vflip").checked = !$("vflip").checked; setEntry(entryFromControls()); }
+  else if (k === "g") { S.snap = S.snap === "iso" ? "tile" : "iso"; $("snap").value = S.snap; drawOverlay(); }
+  else if (k === "b") { setLayer(S.layer ^ 1); if (S.stamp && S.stamp.fromTiles) buildStampCanvas(); }
+  else if (k === "l") setStampLayers({ both: "0", 0: "1", 1: "both" }[S.stampLayers]);
+  else if (k === "c") armCopy(!S.copyArmed);
+  else if (k === "o") setOverride(!S.override);
+  else if (k === "escape") { S.drag = null; armCopy(false); }
+  else if ("1234".includes(k)) { S.zoom = Number(k); $("zoom").value = k; applyZoom(); }
+});
+window.addEventListener("keyup", (ev) => {
+  if (ev.key === " ") { S.spaceDown = false; setTool(S.tool); }
+  if (ev.key === "Shift") { S.shiftDown = false; drawOverlay(); }
+});
+// A clicked control gives the keys back to the map at once.
+document.addEventListener("change", (ev) => { if (ev.target.blur) ev.target.blur(); });
+document.addEventListener("click", (ev) => { if (ev.target.tagName === "BUTTON") ev.target.blur(); });
+window.addEventListener("beforeunload", (ev) => { if (S.dirty) { ev.preventDefault(); ev.returnValue = ""; } });
+
+// ── Load and save ────────────────────────────────────────────────────────
+async function save() {
+  if (!M || S.saving) return;
+  S.saving = true;
+  const lines = [];
+  for (let L = 0; L < 2; L++)
+    for (let i = 0; i < N; i++)
+      if (ext[L][i] && !locked[i])
+        lines.push(`${M.map} ${L} ${(i / COLS) | 0} ${(i % COLS) - PAD_L} ${ext[L][i].toString(16).padStart(4, "0")}`);
+  const hex = (e) => e.toString(16).padStart(4, "0");
+  for (let L = 0; L < 2; L++)
+    for (let i = 0; i < N; i++)
+      if (locked[i] && ov[L][i] >= 0)
+        lines.push(`ov ${M.map} ${L} ${(i / COLS) | 0} ${(i % COLS) - PAD_L} ${hex(ov[L][i])} ${hex(game[L][i])}`);
+  const s = $("saveState");
+  try {
+    const r = await fetch(`/ext?map=${M.map}&thor=${$("thor").checked ? 1 : 0}`, { method: "POST", body: lines.join("\n") + "\n" });
+    const msg = await r.text();
+    if (!r.ok) throw new Error(msg);
+    S.dirty = false;
+    s.textContent = `${msg} · ${new Date().toLocaleTimeString()}`;
+    s.className = msg.includes("FAILED") ? "dirty" : "clean";
+  } catch (e) {
+    s.textContent = "save failed: " + e.message; s.className = "dirty";
+  } finally { S.saving = false; }
+}
+
+async function loadMap(name) {
+  if (S.dirty && !confirm("Unsaved changes on this map. Switch anyway?")) { $("mapSel").value = M && `map${M.map}.json`; return; }
+  M = await (await fetch("maps/" + name, { cache: "no-store" })).json();
+  ROWS = M.rows + PAD_B; N = ROWS * COLS;
+  game = [new Uint16Array(N), new Uint16Array(N)];
+  for (let r = 0; r < M.rows; r++)
+    for (let c = 0; c < ARRAY_COLS; c++) {
+      game[0][r * COLS + c + PAD_L] = M.bg0[r * ARRAY_COLS + c];
+      game[1][r * COLS + c + PAD_L] = M.bg1[r * ARRAY_COLS + c];
+    }
+  ext = [new Uint16Array(N), new Uint16Array(N)];
+  ov = [new Int32Array(N).fill(-1), new Int32Array(N).fill(-1)];
+  locked = new Uint8Array(N);
+  for (let i = 0; i < N; i++) locked[i] = game[0][i] || game[1][i] ? 1 : 0;
+  tileBytes = Uint8Array.from(atob(M.tiles), (ch) => ch.charCodeAt(0));
+  pal = M.palette;
+  backdrop = `rgb(${pal[0].join(",")})`;
+  cache.clear(); undo.length = 0; redo.length = 0; S.stamp = null; S.dirty = false;
+
+  // Each tile's usual palette bank, from the game's own use of it.
+  const counts = new Map();
+  maxTile = 0;
+  for (let L = 0; L < 2; L++)
+    for (const e of game[L]) {
+      if (!e) continue;
+      const t = e & 0x3ff, k = t * 16 + (e >> 12);
+      counts.set(k, (counts.get(k) || 0) + 1);
+      maxTile = Math.max(maxTile, t);
+    }
+  usage = new Int8Array(1024).fill(-1);
+  const best = new Int32Array(1024);
+  for (const [k, n] of counts) { const t = k >> 4; if (n > best[t]) { best[t] = n; usage[t] = k & 15; } }
+  maxTile = Math.min(1023, Math.max(maxTile, 32 * Math.ceil((maxTile + 1) / 32) - 1));
+
+  // The art's edge, as cell-side segments between locked and free cells.
+  edgeSegs = [];
+  const L_ = (r, c) => r >= 0 && r < ROWS && c >= 0 && c < COLS && locked[r * COLS + c];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      if (!L_(r, c)) continue;
+      if (!L_(r - 1, c)) edgeSegs.push([c, r, c + 1, r]);
+      if (!L_(r + 1, c)) edgeSegs.push([c, r + 1, c + 1, r + 1]);
+      if (!L_(r, c - 1)) edgeSegs.push([c, r, c, r + 1]);
+      if (!L_(r, c + 1)) edgeSegs.push([c + 1, r, c + 1, r + 1]);
+    }
+
+  // The saved extension.
+  const txt = await (await fetch(`/ext?map=${M.map}`, { cache: "no-store" })).text();
+  let n = 0, nov = 0, stale = 0;
+  for (const line of txt.split("\n")) {
+    const p = line.trim().split(/\s+/);
+    if (p[0] === "ov" && p.length === 7 && Number(p[1]) === M.map) {
+      const L = Number(p[2]), r = Number(p[3]), c = Number(p[4]) + PAD_L, e = parseInt(p[5], 16), o = parseInt(p[6], 16);
+      if (L < 0 || L > 1 || r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+      const i = r * COLS + c;
+      if (!locked[i] || game[L][i] !== o) { stale++; continue; }   // the art changed since: dropped
+      ov[L][i] = e; nov++;
+      continue;
+    }
+    if (p.length !== 5 || p[0].startsWith("#") || Number(p[0]) !== M.map) continue;
+    const L = Number(p[1]), r = Number(p[2]), c = Number(p[3]) + PAD_L, e = parseInt(p[4], 16);
+    if (L < 0 || L > 1 || r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+    ext[L][r * COLS + c] = e; n++;
+  }
+
+  mapC.width = COLS * 8; mapC.height = ROWS * 8;
+  drawAll();
+  drawTilePalette();
+  const pals = [...new Set([...usage].filter((p) => p >= 0))].sort((a, b) => a - b);
+  $("palSel").innerHTML = [...Array(16).keys()].map((p) => `<option value="${p}">${p}${pals.includes(p) ? "" : " (unused)"}</option>`).join("");
+  setEntry(0);
+  $("stampPrev").width = 1; $("stampPrev").height = 1;
+  $("stampInfo").innerHTML = "No stamp yet. Press <b>Copy block</b> (C) and drag over the town or your own painting.";
+  $("saveState").textContent = (n || nov ? `${n} painted cells, ${nov} overrides loaded` : "nothing painted yet") +
+    (stale ? ` (${stale} overrides no longer match the exported art: dropped on the next save)` : "");
+  $("saveState").className = "clean";
+  document.title = `KoL Map Editor · map ${M.map}`;
+
+  // Start centred on the art.
+  let c0 = COLS, c1 = 0, r0 = ROWS, r1 = 0;
+  for (let i = 0; i < N; i++) if (locked[i]) { const r = (i / COLS) | 0, c = i % COLS; c0 = Math.min(c0, c); c1 = Math.max(c1, c); r0 = Math.min(r0, r); r1 = Math.max(r1, r); }
+  applyZoom(false);
+  sizeOverlay();
+  vpEl.scrollLeft = ((c0 + c1 + 1) / 2) * 8 * S.zoom - vpEl.clientWidth / 2;
+  vpEl.scrollTop = ((r0 + r1 + 1) / 2) * 8 * S.zoom - vpEl.clientHeight / 2;
+}
+
+(async () => {
+  setTool("stamp"); setLayer(0);
+  const names = await (await fetch("/maps", { cache: "no-store" })).json();
+  if (!names.length) { $("saveState").textContent = "no exported maps: run tools/map_editor/export_map.py first"; return; }
+  $("mapSel").innerHTML = names.map((n) => `<option value="${n}">${n.replace(/\.json$/, "").replace("map", "map ")}</option>`).join("");
+  $("mapSel").onchange = (e) => loadMap(e.target.value);
+  const first = names.includes("map89.json") ? "map89.json" : names[0];
+  $("mapSel").value = first;
+  await loadMap(first);
+})();
+</script>
+</body>
+</html>

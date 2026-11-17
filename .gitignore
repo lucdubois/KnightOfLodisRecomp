@@ -1,0 +1,74 @@
+# Player-supplied, copyrighted — never committed.
+totkol.gba
+*.gba
+/bios/
+
+# Derivative of the copyrighted ROM — regenerate locally with
+# gba_recompile (see README.md). Never hand-edited, never committed.
+/generated/
+recompile.log
+recomp_master_misses*.toml.frag
+recomp_seed_proposals.toml
+recomp_coverage_*.json
+recomp_cache/
+hang_dump.log
+hang_trace.csv
+hang_fp_tail.csv
+
+# Debug frame dumps / screenshots from headless runs (derivative of the
+# copyrighted game's own art). Kept locally for reference, not committed.
+*.bmp
+/shots/
+
+# Build output.
+/build/
+/framework/
+
+# Vendored framework headers re-copied by tooling; sourced from the
+# gbarecomp submodule, not authored here.
+/external/arm-recomp-core/profiles/armv4t_gba/runtime_arm_types.h
+
+.DS_Store
+__pycache__/
+/diagnostics_*/
+
+# Save states contain the copyrighted game's own RAM/VRAM contents — same
+# reasoning as the .bmp dumps above. Kept locally (states/), never committed.
+/states/
+*.state
+*.state[0-9]
+
+# Android: build outputs and the vendored SDL2 checkout. SDL2 is fetched, not
+# authored here — see README.md "Android" for the exact command.
+/build-android/
+/android/app/jni/SDL/
+/android/app/build/
+/android/app/.cxx/
+/android/.gradle/
+/android/build/
+/android/local.properties
+
+# The map editor's exports hold the cartridge's tiles and palette.
+/tools/map_editor/maps/
+
+# HD instruments: the soundfont is fetched (tools/hd_audio/get_soundfont.sh)
+# and the bank built from it (tools/hd_audio/build_bank.py), not committed.
+/tools/hd_audio/FluidR3_GM.sf2
+*.bank
+
+# Release signing: passwords and keystore path, local only (the keystore
+# itself lives outside the repo, ../../release-keys).
+/android/keystore.properties
+*.jks
+*.keystore
+
+# RetroAchievements login token (kol_cheevos.cpp): personal, never committed.
+retroachievements.cfg
+badges/
+totkol.sav
+totkol-*.sav
+# Mods (ROM patches and their notes) are the player's files, never committed.
+/mods/
+*.ips
+*.ups
+*.bps

@@ -1,0 +1,123 @@
+plugins { id 'com.android.application' }
+
+// The HD instruments (Options > Sound: HD): the bank build_bank.py writes to
+// ../build/hd_instruments.bank (generated, ~30-60 MB, never committed), copied
+// in as an asset. Without it the APK still builds, and HD plays as HQ
+// (kol_hd_audio.cpp logs it). The copy is redone when the bank changes.
+def hdAssetDir = layout.buildDirectory.dir('generated/hd_assets').get().asFile
+def hdBank = file("${rootDir}/../build/hd_instruments.bank")
+def copyHdBank = tasks.register('copyHdBank') {
+    inputs.property('bank', hdBank.exists() ? "${hdBank.length()}:${hdBank.lastModified()}" : 'none')
+    outputs.dir(hdAssetDir)
+    doLast {
+        project.delete(hdAssetDir)
+        hdAssetDir.mkdirs()
+        if (hdBank.exists()) {
+            project.copy { from hdBank; into hdAssetDir }
+        } else {
+            logger.warn("No ${hdBank}: the APK has no HD instruments (HD plays as HQ).")
+        }
+    }
+}
+
+android {
+    namespace 'com.koldecomp.game'
+    compileSdk 34
+    ndkVersion '27.3.13750724'
+
+    defaultConfig {
+        applicationId "com.koldecomp.game"
+        minSdk 24
+        targetSdk 34
+        versionCode 2
+        versionName "1.0"
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared',
+                          '-DGBARECOMP_BUILD_ORACLE=OFF',
+                          '-DCMAKE_BUILD_TYPE=Release'
+                // arm64 only: the Thor and every modern Android handheld is
+                // arm64-v8a, and each extra ABI means another full 40 MB
+                // build of 38,217 recompiled functions in the APK.
+                abiFilters 'arm64-v8a'
+                // Build only what the APK needs. Without this, AGP builds
+                // every CMake target, which includes gbarecomp's host-side
+                // test generators (gen_codegen_tests et al) — those get
+                // cross-compiled to arm64 and then cannot run on the build
+                // machine. SDL2 is still built, as `main` depends on it.
+                targets 'main'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // The release key (the public build's signature; every later version must
+    // carry the same one, or it cannot update an installed copy): its keystore and
+    // passwords from android/keystore.properties, which is never committed. Without
+    // that file the release APK is signed with the debug key, as before, and Gradle
+    // says so.
+    def ksFile = rootProject.file('keystore.properties')
+    def ks = new Properties()
+    if (ksFile.exists()) ksFile.withInputStream { ks.load(it) }
+    signingConfigs {
+        if (ksFile.exists()) {
+            release {
+                storeFile file(ks['storeFile'])
+                storePassword ks['storePassword']
+                keyAlias ks['keyAlias']
+                keyPassword ks['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        // The developer tools (src/kol_dev.h): in the debug APK, out of the
+        // release one (the public build).
+        debug {
+            externalNativeBuild { cmake { arguments '-DKOL_DEV_TOOLS=ON' } }
+        }
+        release {
+            minifyEnabled false
+            if (ksFile.exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                logger.warn('No android/keystore.properties: the release APK is signed with the DEBUG key.')
+                signingConfig signingConfigs.debug
+            }
+            externalNativeBuild { cmake { arguments '-DKOL_DEV_TOOLS=OFF' } }
+        }
+    }
+
+    // The recompiled .so is enormous and already compressed poorly; leaving it
+    // uncompressed lets Android mmap it straight from the APK.
+    packagingOptions { jniLibs { useLegacyPackaging false } }
+
+    // The HD instruments' bank as the asset hd_instruments.bank (above).
+    // 16-bit samples barely compress, and stored it reads without inflating.
+    sourceSets { main { assets { srcDir hdAssetDir } } }
+    androidResources { noCompress 'bank' }
+}
+
+preBuild.dependsOn copyHdBank
+
+// The public build's app id (the user, 2026-11-16, chose
+// com.totkol.game as the release's id). The dev app stays com.koldecomp.game: the two are separate apps
+// on a device, each with its own files, and the release key never meets the debug
+// key's install. The Java/JNI package (namespace com.koldecomp.game) is unchanged.
+androidComponents {
+    onVariants(selector().withBuildType('release')) { variant ->
+        variant.applicationId.set('com.totkol.game')
+    }
+}
+

@@ -1,0 +1,272 @@
+Licenses and notices
+====================
+
+Knight of Lodis Recomp
+----------------------
+
+This app runs the player's own copy of Tactics Ogre: The Knight of Lodis. The game, its ROM and the GBA BIOS are copyrighted by their respective owners and are not distributed with this app.
+
+Knight of Lodis Recomp is licensed under the PolyForm Noncommercial License 1.0.0 (https://polyformproject.org/licenses/noncommercial/1.0.0).
+Required Notice: Copyright (c) 2026 Knight of Lodis Recomp contributors
+
+gbarecomp (the GBA recompilation framework)
+-------------------------------------------
+
+PolyForm Noncommercial License 1.0.0
+
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
+
+Copyright (c) 2026 Matthew Stan
+
+## Acceptance
+
+In order to get any license under these terms, you must agree to them as
+both strict obligations and conditions to all your licenses.
+
+## Copyright License
+
+The licensor grants you a copyright license for the software to do
+everything you might otherwise need the licensor's permission to do. Your
+license covers distributing the software, making changes and new works
+based on it, and all other uses of the software, subject to the
+limitations and conditions in these terms.
+
+## Noncommercial Purposes
+
+Any noncommercial purpose is a permitted purpose.
+
+## Personal Uses
+
+Personal use for research, experiment, and testing for the benefit of
+public knowledge, personal study, private entertainment, hobby projects,
+amateur pursuits, or religious observance, without any anticipated
+commercial application, counts as use for a permitted purpose.
+
+## Noncommercial Organizations
+
+Use by any charitable organization, educational institution, public
+research organization, public safety or health organization, environmental
+protection organization, or government institution counts as use for a
+permitted purpose regardless of the source of funding or obligations
+resulting from the funding.
+
+## Fair Use
+
+You may have "fair use" rights for the software under the law. These
+terms do not limit them.
+
+## No Other Rights
+
+These terms do not allow you to sublicense or transfer any of your
+licenses to anyone else, or prevent the licensor from granting licenses to
+anyone else. These terms do not imply any other licenses.
+
+## Patent Defense
+
+If you make any written claim that the software infringes or contributes
+to infringement of any patent, your patent license for the software granted
+under these terms ends immediately. If your company makes such a claim,
+your patent license ends immediately for work on behalf of your company.
+
+## Violations
+
+The first time you are notified in writing that you have violated any of
+these terms, or done anything with the software not covered by your
+licenses, your licenses can nonetheless continue if you come into full
+compliance with these terms, and take practical steps to correct past
+violations, within 32 days of receiving notice. Otherwise, all your
+licenses end immediately.
+
+## No Liability
+
+As far as the law allows, the software comes as is, without any warranty
+or condition, and the licensor will not be liable to you for any damages
+arising out of these terms or the use or nature of the software, under any
+kind of legal claim.
+
+## Definitions
+
+The **licensor** is the individual or entity offering these terms, and the
+**software** is the software the licensor makes available under these
+terms.
+
+**You** refers to the individual or entity agreeing to these terms.
+
+**Your company** is any legal entity, sole proprietorship, or other kind
+of organization that you work for, plus all organizations that have control
+over, are under the control of, or are under common control with that
+organization. **Control** means ownership of substantially all the assets
+of an entity, or the power to direct its management and policies by vote,
+contract, or otherwise. Control can be direct or indirect.
+
+**Your licenses** are all the licenses granted to you for the software
+under these terms.
+
+**Use** means anything you do with the software requiring one of your
+licenses.
+
+---
+
+For the avoidance of doubt, the licensor's intent is to restrict uses where
+profit is derived from this software. Non-profit personal, educational,
+or community use is welcome regardless of organizational context.
+
+For commercial licensing inquiries, contact: https://1379.tech
+
+arm-recomp-core (part of gbarecomp)
+-----------------------------------
+
+MIT License
+
+Copyright (c) 2026 Matthew Stanley
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+JRickey/gba-recomp (ported into gbarecomp)
+------------------------------------------
+
+https://github.com/JRickey/gba-recomp, by Jrickey. License: MIT OR Apache-2.0. Ported: the MP2K sound driver detection, the screen colour profiles, the cartridge RTC and the idea of the high-quality MP2K re-render.
+
+mGBA (portions of gbarecomp's BIOS replacements)
+------------------------------------------------
+
+https://github.com/mgba-emu/mgba, by Jeffrey Pfau and contributors. License: Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/). gbarecomp's src/runtime/bios_hle.cpp derives in part from mGBA's src/gba/bios.c; that source is available from the mGBA repository.
+
+SDL (Simple DirectMedia Layer)
+------------------------------
+
+Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+  
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+  
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required. 
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+rcheevos (RetroAchievements)
+----------------------------
+
+MIT License
+
+Copyright (c) 2018 RetroAchievements.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+stb_image (achievement badges)
+------------------------------
+
+This software is available under 2 licenses -- choose whichever you prefer.
+------------------------------------------------------------------------------
+ALTERNATIVE A - MIT License
+Copyright (c) 2017 Sean Barrett
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+------------------------------------------------------------------------------
+ALTERNATIVE B - Public Domain (www.unlicense.org)
+This is free and unencumbered software released into the public domain.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+------------------------------------------------------------------------------
+
+FluidR3 GM soundfont (the HD instruments)
+-----------------------------------------
+
+FluidR3_GM.sf2 (the soundfont tools/hd_audio/build_bank.py reads, and so the
+instrument recordings in hd_instruments.bank), as distributed by Debian
+(package fluid-soundfont-gm, debian/copyright):
+
+Copyright: 2000-2002, 2008 Frank Wen <getfrank@gmail.com>
+           2008 Toby Smithe
+License: MIT
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+(The soundfont's own INFO chunk: "Frank Wen 2000-2002, 2008; Toby Smithe
+2008", "Licensed under the MIT License.")
