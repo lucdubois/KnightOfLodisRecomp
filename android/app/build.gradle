@@ -106,6 +106,13 @@ android {
     // The HD instruments' bank as the asset hd_instruments.bank (above).
     // 16-bit samples barely compress, and stored it reads without inflating.
     sourceSets { main { assets { srcDir hdAssetDir } } }
+
+    // The public build's file is named for the project, not "app-release.apk"
+    // (the dev build keeps its default name).
+    applicationVariants.all { variant ->
+        if (variant.buildType.name == 'release')
+            variant.outputs.all { outputFileName = "KnightOfLodisRecomp.apk" }
+    }
     androidResources { noCompress 'bank' }
 }
 

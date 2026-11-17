@@ -66,7 +66,7 @@ cmake --build build --target KnightOfLodisRecomp
 ./build/KnightOfLodisRecomp --rom totkol.gba --bios path/to/gba_bios.bin
 
 # 3b. Android (NDK r27, JDK 17; SDL2 2.32.10 unpacked at android/app/jni/SDL)
-cd android && ./gradlew assembleRelease
+cd android && ./gradlew assembleRelease   # -> app/build/outputs/apk/release/KnightOfLodisRecomp.apk
 ```
 
 `generated/` is never committed and must be regenerated whenever `game.toml`
