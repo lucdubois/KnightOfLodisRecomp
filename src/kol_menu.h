@@ -31,8 +31,9 @@ namespace kol {
 bool menu_is_open();
 // Opens or closes the menu (the corner button). Returns whether it is open.
 bool menu_toggle();
-// Opens the menu on Debug > Save States (the pad's L3 + R3), or closes it
-// when that page is already up. The second screen gets the image on its
+// Opens the menu on the Save States page, or closes it when that page is
+// already up (the desktop check's `states`; the pad has no shortcut for it,
+// the page is a row of the menu). The second screen gets the image on its
 // next tick (menu_take_dirty).
 void menu_open_states();
 

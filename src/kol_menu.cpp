@@ -1,5 +1,6 @@
 // kol_menu.cpp — see the header.
 
+#include "kol_desktop.h"
 #include "kol_dev.h"
 #include "kol_menu.h"
 
@@ -446,7 +447,7 @@ const Row kMain[] = {
     {Kind::Page, 2, "Audio", "Sound quality, volumes\nand effects."},
     {Kind::Page, 5, "Gameplay", "Controls, rumble and\nquicker battles."},
     {Kind::Page, 6, "Cheats", "Shortcuts past the\ngame's rules."},
-    {Kind::Page, 7, "Save States", "Every numbered state: tap one\nto load it. L3+R3 opens it."},
+    {Kind::Page, 7, "Save States", "Every numbered state:\ntap one to load it."},
     {Kind::Page, 8, "Achievements", "RetroAchievements: log in and\nsee what you have unlocked."},
     {Kind::Mod, 0, "Mod", "Load a mod file made\nfor this game."},
     {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
@@ -558,7 +559,7 @@ const Row kDebug[] = {
     {Kind::Page, 3, "Layers", "Hide the picture's layers\none by one."},
     {Kind::Setting, static_cast<int>(Setting::DebugNoMenuDim), "No Menu Dimming",
      "The top screen stays bright\nwhile this menu is open."},
-    {Kind::Page, 7, "Save States", "Every numbered state: tap one\nto load it. L3+R3 opens it."},
+    {Kind::Page, 7, "Save States", "Every numbered state:\ntap one to load it."},
     {Kind::Setting, static_cast<int>(Setting::DebugNoSecondScreen), "No Second Screen",
      "As a device with one screen:\nBACK pauses, this menu on top."},
     {Kind::UnlinkRom, 0, "Unlink ROM",
@@ -687,8 +688,8 @@ std::uint8_t g_pending_mask = 0;
 const Row* rows(int* n) {
     // A public build (kol_dev.h): no Debug row, and none of its pages (their
     // tables are then referenced nowhere and left out of the binary).
-    // Save States (page 7, L3+R3) is in both (the user, 2026-11-16, asked for L3 +
-    // R3 outside the dev build too).
+    // Save States (page 7) is in both (the user, 2026-11-16, asked for it
+    // outside the dev build too).
     if constexpr (kol::kDevTools) {
         if (g_page == 1) { *n = static_cast<int>(sizeof kDebug / sizeof kDebug[0]); return kDebug; }
         if (g_page == 3) { *n = static_cast<int>(sizeof kLayers / sizeof kLayers[0]); return kLayers; }
@@ -760,7 +761,7 @@ void follow_selection();
 // Back to the main page, the hand on the row that opened the page.
 void leave_page() {
     // Layers goes back to Debug; Save States to where it was opened from
-    // (Debug's row, else the main page's: its own row, or L3+R3).
+    // (Debug's row, else the main page's own row).
     if (kol::kDevTools && (g_page == 3 || (g_page == 7 && g_states_parent == 1))) {
         const int from = g_page;
         g_page = 1;
@@ -2321,7 +2322,7 @@ void menu_debug_frame() {
             std::sscanf(t.c_str() + 1, "%x", &bits);
             menu_filter_keys(static_cast<std::uint16_t>(~bits & 0x03FFu));
             menu_filter_keys(0x03FFu);
-        } else if (t == "states") {   // L3 + R3
+        } else if (t == "states") {   // the Save States page, opened directly
             menu_open_states();
         } else if (std::sscanf(t.c_str(), "drag%f", &y) == 1) {
             menu_touch(0, 120, 60);
@@ -2434,11 +2435,64 @@ void menu_mod_picked(const char* name, const char* error) {
     ask_restart("Restart to play " + n + "?");
 }
 
+// The game's own OPTION window, replaced by this menu (asked 2026-11-18: a
+// way into the menu that needs no button of its own, since this menu holds
+// the game's twelve options anyway). game.toml has the two routines. The
+// set-up hook opens this menu on its main page and returns to the caller; the
+// poll's answers 0 while the menu is open and 1 once it has closed, which is
+// what both callers wait for before they go back to their System menu (the
+// battle's frees the work area, the world map's draws its menu again).
+// Nothing of the game's window is set up, so there is nothing of it to take
+// down. In a speculative excursion the hooks answer the same way and leave
+// the menu alone.
+constexpr char kOptionInitHookId[] = "kol.game-option-init";
+constexpr char kOptionPollHookId[] = "kol.game-option-poll";
+constexpr std::uint32_t kGameOptionInit = 0x0801C970u, kGameOptionPoll = 0x0801D9C0u;
+std::atomic<bool> g_game_option{false};   // the game is waiting on its OPTION window: ours
+
+int on_game_option_init(std::uint32_t, int, ArmCpuState* cpu) {
+    if (!gbarecomp::runtime_excursion_active()) {
+        {
+            std::lock_guard<std::mutex> lock(g_mu);
+            g_open = true;
+            g_page = 0;
+            g_sel = 0;
+            g_scroll = 0;
+            g_value_help = false;
+            g_pressed = g_dragging = false;
+            g_sound_request.store(kSoundOpen);
+        }
+        g_dirty.store(true, std::memory_order_release);
+        g_game_option.store(true, std::memory_order_release);
+    }
+    cpu->R[15] = cpu->R[14] & ~1u;   // back to the caller, as its bl expects
+    return 1;
+}
+
+int on_game_option_poll(std::uint32_t, int, ArmCpuState* cpu) {
+    if (!g_game_option.load(std::memory_order_acquire)) return 0;   // (not ours: the game's own, KOL_GAME_OPTION)
+    bool open;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        open = g_open;
+    }
+    if (!open && !gbarecomp::runtime_excursion_active()) g_game_option.store(false, std::memory_order_release);
+    cpu->R[0] = open ? 0u : 1u;
+    cpu->R[15] = cpu->R[14] & ~1u;
+    return 1;
+}
+
 void menu_install() {
     static bool done = false;
     if (done) return;
     done = true;
     if (std::getenv("KOL_NO_MENU_OPTIONS")) return;
+    if (!std::getenv("KOL_GAME_OPTION") &&
+        (!gba_mod_register_function_entry_plugin(kOptionInitHookId, kGameOptionInit, 1, &on_game_option_init) ||
+         !gba_mod_set_function_hook_enabled(kOptionInitHookId, 1) ||
+         !gba_mod_register_function_entry_plugin(kOptionPollHookId, kGameOptionPoll, 1, &on_game_option_poll) ||
+         !gba_mod_set_function_hook_enabled(kOptionPollHookId, 1)))
+        std::fprintf(stderr, "menu: the game's OPTION hooks NOT installed\n");
     gbarecomp::g_host_keyinput_filter = &menu_filter_keys;
     if (!gba_mod_register_function_entry_plugin(kSoundHookId, kAfterTasks, 1, &on_after_tasks) ||
         !gba_mod_set_function_hook_enabled(kSoundHookId, 1))

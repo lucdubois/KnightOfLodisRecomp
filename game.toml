@@ -456,6 +456,22 @@ mode = "thumb"
 addr = 0x08034498
 mode = "thumb"
 
+# The game's OPTION window (R on an empty tile > System > Option in a battle,
+# System > Option on the world map): 0x0801C970 sets it up (r0 its work
+# area; called from 0x08048C22 and 0x08128920, the only two), 0x0801D9C0 runs
+# it once a frame and answers nonzero when it has closed (called from
+# 0x08048C34 and 0x08128954). src/kol_menu.cpp opens the recomp's own options
+# menu in its place (it holds the same twelve options): the set-up returns at
+# once, and the poll answers 0 while that menu is open, 1 when it has closed.
+# KOL_GAME_OPTION=1 leaves the game's window.
+[[mod_function_hook]]
+addr = 0x0801C970
+mode = "thumb"
+
+[[mod_function_hook]]
+addr = 0x0801D9C0
+mode = "thumb"
+
 # 0x0801670C polls a text box: it returns 0xFF once the text is out and A is
 # pressed. The move choice's NAVI prompt ("Choose where you want to move this
 # character.", NAVI bank 0x0875D99A entry 0x22, opened at 0x080662C4) waits on

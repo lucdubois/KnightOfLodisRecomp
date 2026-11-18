@@ -257,8 +257,8 @@ public final class SecondScreen {
         final StatsView v = target();
         if (v == null) return;
         if (single() && sActivity != null) {
-            // One screen: a menu opened from the pad (L3+R3's Save States)
-            // brings the overlay up; its closing puts it away (onMenuClosed).
+            // One screen: a menu opened from the native side brings the
+            // overlay up; its closing puts it away (onMenuClosed).
             sActivity.runOnUiThread(() -> {
                 v.setMenuImageFromNative(argb);
                 if (argb != null && sOverlay != null && sOverlay.getVisibility() != View.VISIBLE)

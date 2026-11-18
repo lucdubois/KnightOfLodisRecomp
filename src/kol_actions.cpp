@@ -1156,19 +1156,18 @@ constexpr int kPadX = 2, kPadY = 3;                  // SDL_CONTROLLER_BUTTON_X/
 constexpr int kPadA = 0, kPadB = 1;                  // SDL_CONTROLLER_BUTTON_A/B
 constexpr int kBitA = 0, kBitB = 1;                  // KEYINPUT bits
 std::atomic<bool> g_swap_face{false};   // Swap Face Buttons
-// L3 + R3 (the sticks pressed together) opens the Save States screen on
-// the second screen, or closes it (kol_menu, kol_states). Either may come
-// first; it fires once, when the second goes down.
+// The sticks' clicks. L3 is the host's state combos' (L3 + R saves, L3 + L
+// loads); the right stick's click alone opens the options menu on a desktop
+// (kol_desktop). The Save States page is a row of the menu and has no
+// shortcut of its own (the two sticks pressed together opened it until
+// 2026-11-18: taken out of every build, the user's call).
 constexpr int kPadL3 = 7, kPadR3 = 8;   // SDL_CONTROLLER_BUTTON_LEFTSTICK/RIGHTSTICK
-std::atomic<bool> g_l3{false}, g_r3{false};
+std::atomic<bool> g_l3{false};
 
 void on_pad_button(int button, int down) {
     if (down) g_key_presses.fetch_add(1, std::memory_order_relaxed);
     if (button == kPadL3 || button == kPadR3) {
-        std::atomic<bool>& self = button == kPadL3 ? g_l3 : g_r3;
-        std::atomic<bool>& other = button == kPadL3 ? g_r3 : g_l3;
-        self.store(down != 0, std::memory_order_relaxed);
-        if (down && other.load(std::memory_order_relaxed)) menu_open_states();
+        if (button == kPadL3) g_l3.store(down != 0, std::memory_order_relaxed);
         // A desktop has no second screen with a menu button: a click of the
         // right stick alone opens the options menu (kol_desktop).
         if (button == kPadR3) desktop_r3(down, g_l3.load(std::memory_order_relaxed));

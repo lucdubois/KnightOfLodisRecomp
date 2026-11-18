@@ -23176,13 +23176,63 @@ SDL_RENDER_DRIVER=software`, present dumps):
   - **Checked:** `KOL_PERSP_HASH` with the indexes and the ray's stop off and
     on, the same md5: the map 89 run (900 frames), and 200 frames each of
     EY (map 95), FC (map 89, the candle), FY (map 13), GM (map 6).
-- **"The menu does not display" (the user, 2026-11-18): not reproduced, by
-  me or by the user after.** Opened by script it draws on the Mac and on the
-  Deck's screen, at the title (240x160, the logical renderer) and in a battle
-  (320x200); with the click logged for one session, six clicks by the user
-  each arrived (100 to 186 ms) and opened and closed it in turn. The log
-  lines are out again (the user asked). If it comes back: what was done just
-  before, and whether the picture dims.
+- **L3 + R3 taken out, every build (2026-11-18, the user's call).** The two
+  sticks pressed together no longer open the Save States page: it is a row
+  of the options menu only (kol_actions `on_pad_button`; the row's help and
+  the comments no longer name the shortcut). The right stick's click alone
+  still opens the options menu on a desktop; on Android it does nothing, as
+  before. L3 + R and L3 + L (save, load) are the host's and unchanged.
+  `menu_open_states` stays for the desktop check's `states`. Left as they
+  are: `docs/RELEASE_1.0.1.md` and the published 1.0.1 notes, which describe
+  a build that has the shortcut.
+- **Start held to open the menu: built and taken out the same day
+  (2026-11-18).** A tap passed on at release, 500 ms held toggling the menu
+  (`desktop_start_hold` in the menu's key filter). On the Deck, holding
+  Start is Steam's own switch between the gamepad and desktop layouts: it
+  cannot be the game's. Removed whole. The right stick's click stays.
+- **The game's Option opens our menu (2026-11-18).** Asked: since the menu
+  copies the game's options anyway, could the game's own Option entry open
+  it. `game.toml` changed: regenerate `generated/` on a fresh tree.
+  - **The game's window:** one set-up routine, `0x0801C970` (r0 its work
+    area; found by a read watch on the option bytes 0x0200132C-33 from
+    states/DZ with A pressed: 8 reads at 0x08002FBA, lr 0x0801C9FF), called
+    from two places only (a search of the ROM's BLs): `0x08128920`, the world
+    map's command menu state 9 (then state 10), and `0x08048C22`, the
+    battle's System > Option (its state 0, then 1). Both then call
+    `0x0801D9C0` once a frame until it answers nonzero, and go back to their
+    System menu (the battle's frees the work area first).
+  - **The hooks** (kol_menu.cpp, two `[[mod_function_hook]]`s): the set-up's
+    opens our menu on its main page and returns to the caller; the poll's
+    answers 0 while our menu is open, 1 once it has closed. Nothing of the
+    game's window is set up. In an excursion they answer the same and leave
+    the menu alone. `KOL_GAME_OPTION=1`: the game's own window.
+  - **Checked on the Mac** (dummy window, input replay, the new
+    `KOL_DESKTOP_MENU_CLOSE_AT=<present>`): from DZ (the world map, A on
+    Option) and from B_rictor (R, Right x4, A, Right, A): our menu comes up
+    over the dimmed game; closed, the game is back on its System menu with
+    Option under the hand, as after its own window. Builds on the Deck and
+    Android; not tried on a device. Every build has it (Android too: its
+    menu is this one).
+- **"The menu does not display": found and fixed (2026-11-18).** Reported
+  twice; the second time after the view size was changed in the menu. The
+  Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu
+  open: the picture dimmed, no menu, so it was open and not drawn. Not
+  reproduced on the Mac starting at 432x270; reproduced on the Deck by script
+  (`KOL_DESKTOP_MENU_AT` + the new `KOL_DESKTOP_VIEW_CYCLE=<first>,<every>,
+  <count>`, a dump of every present, `~/kol/menu_seen.py` reading the
+  parchment's colour at the screen's middle): gone at the first change of
+  view size, for good. With the overlay's texture made anew every present
+  it stayed, so the texture was being lost.
+  - **The cause was mine:** when the overlays went into gbarecomp, their
+    textures' clean-up landed in `destroy_blur_chain` (the edit's anchor line
+    is there too), which runs at every change of the frame's size, and it
+    left the pointers in place: after any view-size change the overlay was
+    drawn from a freed texture. The game changes the view size itself between
+    scenes (240x160 to the widescreen size), which is the first report: a
+    menu opened once, then a scene change, then no menu. The clean-up is at
+    the window's close now, the entries cleared.
+  - Checked on the Deck: seven view-size changes with the menu open, the
+    menu in every dump (before: none after the first).
 - **Not measured or tried yet:** the pad in play, rumble, Gaming Mode,
   384x240 and 432x270.
 

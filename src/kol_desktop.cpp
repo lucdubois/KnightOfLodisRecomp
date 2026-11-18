@@ -70,6 +70,24 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
         }();
         static long presents = 0;
         if (++presents == at && !menu_is_open()) menu_toggle();
+        // KOL_DESKTOP_MENU_CLOSE_AT=<n>: closes it at the nth present.
+        static const long close_at = [] {
+            const char* e = std::getenv("KOL_DESKTOP_MENU_CLOSE_AT");
+            return e && *e ? std::atol(e) : -1L;
+        }();
+        if (presents == close_at && menu_is_open()) menu_toggle();
+        // KOL_DESKTOP_VIEW_CYCLE=<first>,<every>,<count>: from the first-th
+        // present, the next view size every `every` presents, `count` times
+        // (the menu reported gone after the view size was changed twice,
+        // 2026-11-18: the same without a hand on the pad).
+        static const char* const cyc = std::getenv("KOL_DESKTOP_VIEW_CYCLE");
+        static long c_first = 0, c_every = 0, c_count = 0;
+        static const bool c_read = cyc && std::sscanf(cyc, "%ld,%ld,%ld", &c_first, &c_every, &c_count) == 3;
+        if (c_read && c_every > 0 && presents >= c_first && (presents - c_first) % c_every == 0 &&
+            (presents - c_first) / c_every < c_count) {
+            const unsigned n = width_choice_count();
+            if (n > 0) width_choice_set((width_choice_current() + 1u) % n);
+        }
     }
     if (max < 1 || !menu_is_open()) return 0;
     menu_take_dirty();   // the second screen's cue; here every present redraws
@@ -114,7 +132,7 @@ void quit_game() {
 }
 
 // A click of the right stick: down and up within this, the left stick never
-// held meanwhile (L3 + R3 is the Save States page).
+// held meanwhile (L3 is the state combos' modifier).
 constexpr std::uint32_t kClickMs = 400;
 std::atomic<std::uint32_t> g_r3_down_at{0};
 std::atomic<bool> g_r3_click{false};

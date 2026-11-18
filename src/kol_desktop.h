@@ -24,6 +24,7 @@
 //    Without it the run is the developer's, exactly as before: no settings
 //    file, the switches from the environment.
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -41,7 +42,7 @@ bool desktop_player_mode();
 
 // The right stick's click, from kol_actions' pad hook (down 1, up 0), with
 // whether the left stick is held. A short click alone opens or closes the
-// options menu; with L3 it stays the Save States combo's.
+// options menu; with L3 held it is not a click (L3 is the state combos').
 void desktop_r3(int down, bool l3_held);
 
 }  // namespace kol

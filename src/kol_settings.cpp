@@ -664,7 +664,7 @@ bool setting_on(Setting s) {
     }();
     (void)env_done;
     const int i = static_cast<int>(s);
-    // Numbered states (L3+R saves one, L3+L loads the latest, L3+R3 lists them):
+    // Numbered states (L3+R saves one, L3+L loads the latest; the menu's Save States lists them):
     // always on, in every build, no menu row (the user, 2026-11-16, wanted it
     // fixed on: it is the players' only way to make states).
     if (s == Setting::DebugNumberedStates) return true;
