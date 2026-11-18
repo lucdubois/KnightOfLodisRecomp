@@ -1861,7 +1861,17 @@ void SceneBuild::cell_rules() {
 
 // Over the roofs with walls, or (open) the awnings.
 bool SceneBuild::roof_only_y(float X, float Z, float* y, bool open) {
-    for (std::size_t ri = 0; ri < roofs.size(); ++ri) {
+    // Only the roofs over the point's cell, in the roofs' order (the first
+    // that holds the point answers, as when every roof was asked): the shadow
+    // map asks at every step of every ray, and map 89 has 60 roofs: its first
+    // picture took 151 ms on the Mac in the map, 335 on the Steam Deck
+    // (2026-11-18, "loading stutter"). Off the grid, every roof.
+    const int pcx = static_cast<int>(std::floor(X / 32.0f)), pcz = static_cast<int>(std::floor(Z / 32.0f));
+    const bool indexed = roof_cell_at && in_grid(pcx, pcz);
+    const std::size_t n_roofs = indexed ? roof_cell_at[gi(pcx, pcz) + 1] - roof_cell_at[gi(pcx, pcz)] : roofs.size();
+    const std::uint16_t* const cell_roofs = indexed ? roof_cell_list + roof_cell_at[gi(pcx, pcz)] : nullptr;
+    for (std::size_t li = 0; li < n_roofs; ++li) {
+        const std::size_t ri = indexed ? cell_roofs[li] : li;
         const kol::TileRoof& r = roofs[ri];
         if (r.open != open) continue;
         const RoofExtent& ext = roof_ext[ri];
@@ -1905,7 +1915,14 @@ bool SceneBuild::roof_only_y(float X, float Z, float* y, bool open) {
 // The roof's height there, or a box's standing over it (the higher).
 bool SceneBuild::roof_y(float X, float Z, float* y) {
     bool any = roof_only_y(X, Z, y);
-    for (const Box& b : boxes) {
+    // (Only the boxes over the point's cell, as roof_only_y its roofs; the
+    // highest answers, whatever their order.)
+    const int pcx = static_cast<int>(std::floor(X / 32.0f)), pcz = static_cast<int>(std::floor(Z / 32.0f));
+    const bool indexed = box_cell_at && in_grid(pcx, pcz);
+    const std::size_t n_boxes = indexed ? box_cell_at[gi(pcx, pcz) + 1] - box_cell_at[gi(pcx, pcz)] : boxes.size();
+    const std::uint16_t* const cell_boxes = indexed ? box_cell_list + box_cell_at[gi(pcx, pcz)] : nullptr;
+    for (std::size_t li = 0; li < n_boxes; ++li) {
+        const Box& b = boxes[indexed ? cell_boxes[li] : li];
         if (X < b.X0 || X >= b.X1 || Z < b.Z0 || Z >= b.Z1) continue;
         const float v = box_h(b, X, Z);
         if (!any || v > *y) *y = v;
@@ -1996,10 +2013,65 @@ void SceneBuild::roofs_and_shade() {
     // Each roof's, once a frame (roof_only_y asks per step of a shadow ray).
     roof_ext.reserve(roofs.size());
     for (const kol::TileRoof& r : roofs) roof_ext.push_back(roof_extent(r, r.open ? awning_overhang() : 0.0f));
+    // Each cell's roofs (roof_only_y): every cell an extent reaches, its far
+    // edge's cell included (a point just short of X1 may lie in it).
+    // KOL_ROOF_NO_INDEX=1: every roof asked, as before.
+    {
+        static const bool no_index = kol::env_set("KOL_ROOF_NO_INDEX");
+        static thread_local std::vector<std::uint32_t> at_store;
+        static thread_local std::vector<std::uint16_t> list_store;
+        roof_cell_at = nullptr;
+        roof_cell_list = nullptr;
+        if (!no_index && !roofs.empty() && roofs.size() < 65535) {
+            constexpr int kCells = kGridSide * kGridSide;
+            at_store.assign(kCells + 1, 0);
+            auto each_cell = [&](const RoofExtent& x, auto&& fn) {
+                const int z0 = static_cast<int>(std::floor(x.Z0 / 32.0f)), z1 = static_cast<int>(std::floor(x.Z1 / 32.0f));
+                const int x0 = static_cast<int>(std::floor(x.X0 / 32.0f)), x1 = static_cast<int>(std::floor(x.X1 / 32.0f));
+                for (int cz = z0; cz <= z1; ++cz)
+                    for (int cx = x0; cx <= x1; ++cx)
+                        if (in_grid(cx, cz)) fn(gi(cx, cz));
+            };
+            for (const RoofExtent& x : roof_ext) each_cell(x, [&](int c) { ++at_store[c + 1]; });
+            for (int c = 0; c < kCells; ++c) at_store[c + 1] += at_store[c];
+            list_store.assign(at_store[kCells], 0);
+            std::vector<std::uint32_t> fill(at_store.begin(), at_store.end() - 1);
+            for (std::size_t ri = 0; ri < roof_ext.size(); ++ri)
+                each_cell(roof_ext[ri], [&](int c) { list_store[fill[c]++] = static_cast<std::uint16_t>(ri); });
+            roof_cell_at = at_store.data();
+            roof_cell_list = list_store.data();
+        }
+    }
     for (const kol::TileBox& b : kol::tile_edit_boxes(map)) {
         const float mx = 32.0f * b.x + 16.0f + 4.0f * b.dx8, mz = 32.0f * b.z + 16.0f + 4.0f * b.dz8;
         boxes.push_back({mx - 2.0f * b.size_x8, mx + 2.0f * b.size_x8, mz - 2.0f * b.size_z8, mz + 2.0f * b.size_z8,
                          8.0f * b.top2, 8.0f * std::max(b.top2, b.peak2), b.along_x, b.x, b.z});
+    }
+    {
+        static const bool no_index = kol::env_set("KOL_ROOF_NO_INDEX");
+        static thread_local std::vector<std::uint32_t> at_store;
+        static thread_local std::vector<std::uint16_t> list_store;
+        box_cell_at = nullptr;
+        box_cell_list = nullptr;
+        if (!no_index && !boxes.empty() && boxes.size() < 65535) {
+            constexpr int kCells = kGridSide * kGridSide;
+            at_store.assign(kCells + 1, 0);
+            auto each_cell = [&](const Box& b, auto&& fn) {
+                const int z0 = static_cast<int>(std::floor(b.Z0 / 32.0f)), z1 = static_cast<int>(std::floor(b.Z1 / 32.0f));
+                const int x0 = static_cast<int>(std::floor(b.X0 / 32.0f)), x1 = static_cast<int>(std::floor(b.X1 / 32.0f));
+                for (int cz = z0; cz <= z1; ++cz)
+                    for (int cx = x0; cx <= x1; ++cx)
+                        if (in_grid(cx, cz)) fn(gi(cx, cz));
+            };
+            for (const Box& b : boxes) each_cell(b, [&](int c) { ++at_store[c + 1]; });
+            for (int c = 0; c < kCells; ++c) at_store[c + 1] += at_store[c];
+            list_store.assign(at_store[kCells], 0);
+            std::vector<std::uint32_t> fill(at_store.begin(), at_store.end() - 1);
+            for (std::size_t bi = 0; bi < boxes.size(); ++bi)
+                each_cell(boxes[bi], [&](int c) { list_store[fill[c]++] = static_cast<std::uint16_t>(bi); });
+            box_cell_at = at_store.data();
+            box_cell_list = list_store.data();
+        }
     }
     for (const kol::TileRoof& r : roofs) any_open |= r.open;
     // The heights the cells are drawn at, once a frame, for the shadow map
@@ -2119,6 +2191,31 @@ void SceneBuild::roofs_and_shade() {
             // its own; the sunset's step every 6th frame was a multi-ms frame
             // on the Thor). under_roof is this thread's: read through a pointer.
             const std::uint8_t* const roofed = under_roof.data();
+            // The awnings' cells' bounds, and whether a ray at cell (qx, qz),
+            // going the sun's way (lx, lz), has left them behind for good: it
+            // moves one way along X and one along Z. Then no step further on
+            // can be over an awning, and the ray may stop once nothing
+            // higher is left, as on a map without one. (Map 89, one awning
+            // among 60 roofs: every ray of the map crossed the whole field;
+            // the map's first picture, 2026-11-18. KOL_SHADOW_OPEN_WHOLE=1:
+            // as before.)
+            static const bool open_whole = kol::env_set("KOL_SHADOW_OPEN_WHOLE");
+            int ob_x0 = INT_MAX, ob_x1 = INT_MIN, ob_z0 = INT_MAX, ob_z1 = INT_MIN;
+            for (std::size_t ri = 0; ri < roofs.size(); ++ri) {
+                if (!roofs[ri].open) continue;
+                const RoofExtent& x = roof_ext[ri];
+                ob_x0 = std::min(ob_x0, static_cast<int>(std::floor(x.X0 / 32.0f)));
+                ob_x1 = std::max(ob_x1, static_cast<int>(std::floor(x.X1 / 32.0f)));
+                ob_z0 = std::min(ob_z0, static_cast<int>(std::floor(x.Z0 / 32.0f)));
+                ob_z1 = std::max(ob_z1, static_cast<int>(std::floor(x.Z1 / 32.0f)));
+            }
+            auto open_past = [&](int qx, int qz) {
+                if (open_whole) return false;
+                const bool past_x = lx > 0.0f ? qx > ob_x1 : lx < 0.0f ? qx < ob_x0 : (qx < ob_x0 || qx > ob_x1);
+                const bool past_z = lz > 0.0f ? qz > ob_z1 : lz < 0.0f ? qz < ob_z0 : (qz < ob_z0 || qz > ob_z1);
+                return past_x || past_z;
+            };
+            wt.lap("shade.map");
             kol::parallel_rows(shh, 8, [&](int, int r0, int r1) {
             for (int sz = sz0 + r0; sz < sz0 + r1; ++sz)
                 for (int sx = sx0; sx < sx0 + sw; ++sx) {
@@ -2136,15 +2233,20 @@ void SceneBuild::roofs_and_shade() {
                     float c_lo = 1.0e9f, c_hi = -1.0e9f;
                     for (std::size_t e = 0; e < path.size(); ++e) {
                         const float t = path[e].t;
-                        if (!any_open && 16.0f * top - t * rise <= shade) break;   // nothing higher left
                         const int qx = cx + path[e].dx, qz = cz + path[e].dz;
+                        // (With an awning on the map a ray went its whole way
+                        // for the awning's sake. Past the awnings' cells, the
+                        // way the ray travels, there is none left to meet:
+                        // open_past.)
+                        const bool no_awning_left = !any_open || open_past(qx, qz);
+                        if (no_awning_left && 16.0f * top - t * rise <= shade) break;   // nothing higher left
                         // Past the cells that exist nothing casts a shadow.
                         if (qx < field_x0 || qz < field_z0 || qx > field_x1 || qz > field_z1) break;
                         const int hq = heights[gi(qx, qz)];
                         if (roofed[gi(qx, qz)]) {
                             // A roof's slope: every step in the cell.
                             for (float u = t; u < path[e + 1].t; u += 2.0f) {
-                                if (!any_open && 16.0f * top - u * rise <= shade) break;
+                                if (no_awning_left && 16.0f * top - u * rise <= shade) break;
                                 float ry = 0.0f;
                                 if (any_open && roof_only_y(px + u * lx, pz + u * lz, &ry, true)) {
                                     c_lo = std::min(c_lo, ry - u * rise);
@@ -2173,6 +2275,7 @@ void SceneBuild::roofs_and_shade() {
             });
             // The edge places: where a place's ground and its neighbour's (as
             // high) differ in shadow, grown by the softest blur (in places).
+            wt.lap("shade.edge");
             g_shadow_edge.clear();
             if (terrain_soft() > 0.0f) {
                 const std::size_t np = static_cast<std::size_t>(sw) * shh;
@@ -2225,6 +2328,7 @@ void SceneBuild::roofs_and_shade() {
     // sheet's own surface: stripes.)
     // (The map's place and size read once: this runs per pixel. The field's
     // origin is a whole number of places, so it comes off after the floor.)
+    wt.lap("setup.roofs+shade");
     sh_ox = g_shadow_x0 + kFieldOrigin * kShadowSub / 32;
     sh_oz = g_shadow_z0 + kFieldOrigin * kShadowSub / 32;
     sh_w = g_shadow_w;
@@ -3762,9 +3866,13 @@ void SceneBuild::rest() {
 
 bool SceneBuild::run() {
     if (!camera_and_units()) return false;
+    wt.lap("setup.cells");
     cell_rules();
+    wt.lap("setup.roofs+shade");
     roofs_and_shade();
+    wt.lap("setup.lamps");
     gather_lamps();
+    wt.lap("setup.key");
     terrain_pass();
     glow_pass();
     roofs_pass();

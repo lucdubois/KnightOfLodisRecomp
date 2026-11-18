@@ -45,13 +45,28 @@ long g_worker_jobs = 0;
 long long worker_now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+// One job's own sections, for KOL_WORKER_SLOW=<ms>: a job that took longer
+// than that from its first timer to its end is printed by section (the
+// first picture of a map, a view that changes size: the means over 300 jobs
+// hide them).
+WorkerSec g_job_secs[48];
+int g_job_nsec = 0;
+long long g_job_t0 = 0;
 void worker_time_add(const char* name, long long ns) {
+    {
+        int i = 0;
+        for (; i < g_job_nsec; ++i)
+            if (std::strcmp(g_job_secs[i].name, name) == 0) { g_job_secs[i].ms += ns / 1e6; break; }
+        if (i == g_job_nsec && g_job_nsec < 48) g_job_secs[g_job_nsec++] = {name, ns / 1e6};
+    }
     for (int i = 0; i < g_worker_nsec; ++i)
         if (std::strcmp(g_worker_secs[i].name, name) == 0) { g_worker_secs[i].ms += ns / 1e6; return; }
     if (g_worker_nsec < 48) g_worker_secs[g_worker_nsec++] = {name, ns / 1e6};
 }
 }  // namespace
-WorkerTimer::WorkerTimer(const char* section) : name(section), t0(worker_time_on() ? worker_now_ns() : 0) {}
+WorkerTimer::WorkerTimer(const char* section) : name(section), t0(worker_time_on() ? worker_now_ns() : 0) {
+    if (t0 && !g_job_t0) g_job_t0 = t0;
+}
 WorkerTimer::~WorkerTimer() {
     if (t0) worker_time_add(name, worker_now_ns() - t0);
 }
@@ -64,6 +79,19 @@ void WorkerTimer::lap(const char* next) {
 }
 void worker_time_job_done() {
     if (!worker_time_on()) return;
+    static const float slow_ms = kol::env_num_or("KOL_WORKER_SLOW", 0.0f);
+    if (slow_ms > 0.0f && g_job_t0) {
+        const double wall = (worker_now_ns() - g_job_t0) / 1e6;
+        if (wall > slow_ms) {
+            std::sort(g_job_secs, g_job_secs + g_job_nsec, [](const WorkerSec& a, const WorkerSec& b) { return a.ms > b.ms; });
+            std::fprintf(stderr, "[worker-slow] job %ld took %.1f ms:", g_worker_jobs + 1, wall);
+            for (int i = 0; i < g_job_nsec && i < 14; ++i)
+                std::fprintf(stderr, " %s %.1f", g_job_secs[i].name, g_job_secs[i].ms);
+            std::fprintf(stderr, "\n");
+        }
+    }
+    g_job_nsec = 0;
+    g_job_t0 = 0;
     if (++g_worker_jobs % 300 != 0) return;
     std::sort(g_worker_secs, g_worker_secs + g_worker_nsec, [](const WorkerSec& a, const WorkerSec& b) { return a.ms > b.ms; });
     double total = 0.0;

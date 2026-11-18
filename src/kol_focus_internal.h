@@ -1709,6 +1709,14 @@ struct SceneBuild {
     std::vector<kol::TileRoof> roofs;
     struct RoofExtent { float X0, X1, Z0, Z1; int cx0, cx1, cz0, cz1; };
     std::vector<RoofExtent> roof_ext;
+    // The roofs over each cell, in the roofs' order (roofs_and_shade): cell gi's
+    // are roof_cell_list[roof_cell_at[gi] .. roof_cell_at[gi + 1]). roof_only_y
+    // asks only those (null: every roof, as before).
+    const std::uint32_t* roof_cell_at = nullptr;
+    const std::uint16_t* roof_cell_list = nullptr;
+    // The boxes over each cell, the same way (roof_y).
+    const std::uint32_t* box_cell_at = nullptr;
+    const std::uint16_t* box_cell_list = nullptr;
     // Boxes set with the editor (chimneys, dormers): footprint, walls to
     // `top`, a gable to `peak` with its ridge along X or Z.
     struct Box { float X0, X1, Z0, Z1, E, T; bool along_x; int x, z; };

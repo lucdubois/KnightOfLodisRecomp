@@ -23141,6 +23141,41 @@ SDL_RENDER_DRIVER=software`, present dumps):
     11.7 ms (its dip at 10-15 s not looked at). All five checks on, each
     scene: no difference. (A grep for "N of M" lines counted hd_audio's "21
     of 21 samples" as one: not a check's.)
+- **The stutter as a scene comes in (2026-11-18; asked to fix the loading
+  stutter).** The Deck, state 0003, frame by frame (GBARECOMP_FRAME_PHASE):
+  the first widescreen picture of the scene (frame +104 after the load) was
+  **one frame of 343 ms**, then 47 and 39; all of it in present, where the
+  first job is made in place.
+  - **What it was** (`KOL_WORKER_SLOW=<ms>`, new: a job longer than that is
+    printed by section; the scene build's first steps have their own timers
+    now, setup.cells / setup.roofs+shade / setup.lamps / setup.key,
+    shade.map / shade.edge): the map's shadow map, built once a map (and
+    again whenever the sun moves): 151-171 ms on the Mac, 213 on the Deck.
+    Every step of every ray under a roofed cell asked every roof and every
+    box for its height (map 89: 60 roofs), and with an awning on the map no
+    ray stopped before the field's end.
+  - **Three changes, the picture the same:**
+    `roof_only_y` asks only the roofs over the point's cell (a per-cell
+    list, in the roofs' order: the first that holds the point answers, as
+    before; `KOL_ROOF_NO_INDEX=1` old), `roof_y` the boxes the same way; a
+    shadow ray stops as on a map without an awning once it has left the
+    awnings' cells behind, the way it travels (`open_past`;
+    `KOL_SHADOW_OPEN_WHOLE=1` old). The Mac, shade.map: 171 -> 71 (roofs'
+    index) -> 49 (the rays) -> 12.7 ms (boxes' index). The Deck: 213 -> 26.6.
+  - gbarecomp: the disc blur's and the warp mesh's GL programs are built at
+    the first present on a GL renderer (the game's boot), not at the first
+    picture that uses them: 23 ms themselves, but that picture went 158 ->
+    64 ms with them out of it. (Built when a provider was first set, they
+    landed three frames before it, a 55 ms frame of their own.)
+  - **The Deck, the frames over 30 ms at the scene's start:** before, +104:
+    343, +105: 47, +106: 39. After: +0: 52-57 (the boot's first frame, the
+    programs), **+104: 49, +105: 47-49, +106: 36-46**. What is left in those
+    three: the first jobs themselves, ~40 ms each (the scene built twice in
+    the first present, by the focus and by the warp; whole terrain passes;
+    the water 6-8 ms; scene.setup 10.9 in the second).
+  - **Checked:** `KOL_PERSP_HASH` with the indexes and the ray's stop off and
+    on, the same md5: the map 89 run (900 frames), and 200 frames each of
+    EY (map 95), FC (map 89, the candle), FY (map 13), GM (map 6).
 - **"The menu does not display" (the user, 2026-11-18): not reproduced, by
   me or by the user after.** Opened by script it draws on the Mac and on the
   Deck's screen, at the title (240x160, the logical renderer) and in a battle
