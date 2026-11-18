@@ -3,6 +3,7 @@
 #include "kol_dev.h"
 #include "kol_menu.h"
 
+#include <cmath>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -423,7 +424,8 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Cheevo,     // the Achievements page's rows (page 8)
                                  Mod,        // a mod (a ROM patch): the platform's dialog
                                  UnlinkRom,     // Debug: back to the setup screen
-                                 Licenses };    // the third-party notices (the platform shows them)
+                                 Licenses,      // the third-party notices (the platform shows them)
+                                 Quit };        // a desktop: ends the game, after a question
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -448,6 +450,11 @@ const Row kMain[] = {
     {Kind::Page, 8, "Achievements", "RetroAchievements: log in and\nsee what you have unlocked."},
     {Kind::Mod, 0, "Mod", "Load a mod file made\nfor this game."},
     {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
+#if !defined(__ANDROID__)
+    // A computer with a controller has no gesture that closes the game (the
+    // Steam Deck in Desktop Mode); Android has its own.
+    {Kind::Quit, 0, "Quit Game", "Close the game. Save first:\nunsaved progress is lost."},
+#endif
 #if KOL_DEV_TOOLS
     {Kind::Page, 1, "Debug", "Tools for testing."},   // (a public build has no Debug page: kol_dev.h)
 #endif
@@ -825,6 +832,7 @@ Text value_text(const Art& a, const Row& r) {
         }
         case Kind::Page: return encode(">");
         case Kind::Licenses: return encode(">");
+        case Kind::Quit: return encode(">");
         case Kind::Mod: {   // the patch's name without its extension, cut to fit
             const char* m = rom_patch_name();
             if (!m) return encode("None");
@@ -999,6 +1007,12 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Licenses:
             if (g_platform.show_licenses) g_platform.show_licenses();
             else open_dialog("Licenses", "See android/app/src/main/assets/licenses.txt.", {"OK"}, 0, nullptr);
+            break;
+        case Kind::Quit:
+            open_dialog("Quit Game", "Close the game? Unsaved progress is lost.",
+                        {"Quit", "Cancel"}, 1, [](int b) {
+                            if (b == 0 && g_platform.quit) g_platform.quit();
+                        });
             break;
         case Kind::UnlinkRom:
             if constexpr (!kol::kDevTools) break;   // (a dev tool: its row is on the Debug page)

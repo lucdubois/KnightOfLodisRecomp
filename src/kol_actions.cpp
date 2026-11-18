@@ -48,6 +48,7 @@
 // re-points it at the new unit. KOL_NO_STATUS_SWITCH=1 turns this off.
 // See README "Next unit, inside the status window".
 
+#include "kol_desktop.h"
 #include "kol_shop_buy.h"
 #include "kol_actions.h"
 #include "kol_menu.h"
@@ -1168,6 +1169,10 @@ void on_pad_button(int button, int down) {
         std::atomic<bool>& other = button == kPadL3 ? g_r3 : g_l3;
         self.store(down != 0, std::memory_order_relaxed);
         if (down && other.load(std::memory_order_relaxed)) menu_open_states();
+        // A desktop has no second screen with a menu button: a click of the
+        // right stick alone opens the options menu (kol_desktop).
+        if (button == kPadR3) desktop_r3(down, g_l3.load(std::memory_order_relaxed));
+        else if (down) desktop_r3(0, true);   // L3 during the click: not a click
         return;
     }
     const bool swap = g_swap_face.load(std::memory_order_relaxed);

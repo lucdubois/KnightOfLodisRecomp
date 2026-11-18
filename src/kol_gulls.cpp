@@ -17,6 +17,7 @@
 // It reaches each point later by as much (and is still crossing when the
 // shot cuts). KOL_NO_GULL_SHIFT=1 leaves them.
 
+#include <cmath>
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>

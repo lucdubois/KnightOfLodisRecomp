@@ -151,6 +151,7 @@ struct MenuPlatform {
     void (*restart)() = nullptr;      // the app ends and starts again
     void (*unlink_rom)() = nullptr;   // the ROM copy set aside, then restart
     void (*show_licenses)() = nullptr;   // Options > Licenses: the app's notices (assets/licenses.txt)
+    void (*quit)() = nullptr;         // Options > Quit Game (a desktop: no system gesture closes the game)
 };
 void menu_set_platform(const MenuPlatform& p);
 // The picker's answer: the mod's name, or an error (name null).

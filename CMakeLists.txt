@@ -63,6 +63,7 @@ find_package(CURL REQUIRED)
 
 add_executable(KnightOfLodisRecomp
     src/main.cpp
+    src/kol_desktop.cpp
     src/kol_cheevos.cpp
     src/kol_cheevos_curl.cpp
     src/kol_widescreen.cpp

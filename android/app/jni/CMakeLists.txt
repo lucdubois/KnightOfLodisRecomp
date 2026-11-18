@@ -80,6 +80,7 @@ add_library(main SHARED
     "${KOL_ROOT}/src/kol_shop_buy.cpp"
     "${KOL_ROOT}/src/kol_scene_strip.cpp"
     "${KOL_ROOT}/src/kol_actions.cpp"
+    "${KOL_ROOT}/src/kol_desktop.cpp"
     "${KOL_ROOT}/src/kol_fast_load.cpp"
     "${KOL_ROOT}/src/kol_fast_actions.cpp"
     "${KOL_ROOT}/src/kol_ghost.cpp"

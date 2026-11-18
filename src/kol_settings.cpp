@@ -114,6 +114,7 @@ struct WidthChoice {
     unsigned width = 0;
     unsigned height = 160;
     char label[56] = {0};
+    bool whole = true;   // scales into the panel by a whole number (or the panel is unknown)
 };
 constexpr unsigned kMaxChoices = 8;
 // Mirrors GbaPpu::kMaxExtraY. A height the PPU would clamp must not be
@@ -130,6 +131,7 @@ void add_choice(unsigned width, unsigned height, const char* how) {
     WidthChoice& c = g_choices[g_choice_count++];
     c.width = width;
     c.height = height;
+    c.whole = std::strcmp(how, "uneven pixels") != 0;
     std::snprintf(c.label, sizeof c.label, "%ux%u   %s", width, height, how);
 }
 
@@ -148,6 +150,23 @@ void build_width_ladder(unsigned panel_w, unsigned panel_h) {
     if (panel_w != 0u && panel_h != 0u) {
         const unsigned w = panel_w > panel_h ? panel_w : panel_h;
         const unsigned h = panel_w > panel_h ? panel_h : panel_w;
+#if !defined(__ANDROID__)
+        // A 16:10 panel on a computer (the Steam Deck's 1280x800; asked
+        // 2026-11-18 for 16:10 on the Deck build): 16:10 sizes in place of the
+        // 16:9 ones (a size is known by its width, and 320 and 384 are in
+        // both), so the picture fills the panel. 320x200 is 4x on the Deck;
+        // 432x270 is the tallest the 16:9 list reaches, 280 the renderer's cap.
+        if (w * 10u == h * 16u) {
+            static constexpr Size kSizes1610[] = {{320u, 200u}, {384u, 240u}, {432u, 270u}};
+            for (const Size& z : kSizes1610) {
+                char how[40];
+                if (h % z.h == 0u) std::snprintf(how, sizeof how, "%ux", h / z.h);
+                else std::snprintf(how, sizeof how, "uneven pixels");
+                add_choice(z.w, z.h, how);
+            }
+            return;
+        }
+#endif
         if (w * 9u >= h * 16u) { bh = h; bw = h * 16u / 9u; }
         else { bw = w; bh = w * 9u / 16u; }
     }
@@ -512,7 +531,18 @@ constexpr unsigned kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
 // ladder has no 384) the widest for Enhanced.
 unsigned preset_width_choice(const Preset& p) {
     for (unsigned c = 0; c < g_choice_count; ++c)
-        if (g_choices[c].width == p.width) return c;
+        if (g_choices[c].width == p.width) {
+#if !defined(__ANDROID__)
+            // On a computer, a size that scales unevenly into the panel gives
+            // way to the widest one with whole pixels (the Deck: 384x240 is
+            // 3.33x, so Enhanced starts at 320x200, 4x). Android keeps the
+            // preset's own size, as shipped.
+            if (p.width > 240u && !g_choices[c].whole)
+                for (unsigned w = g_choice_count; w-- > 1u;)
+                    if (g_choices[w].whole) return w;
+#endif
+            return c;
+        }
     return p.width > 240u && g_choice_count > 0 ? g_choice_count - 1u : 0u;
 }
 // The preset's values into the settings, nothing applied or saved.
@@ -777,6 +807,21 @@ void settings_init(const char* dir, unsigned widescreen_width,
                     g_widescreen_height = g_choices[c].height;
                 }
     }
+    // KOL_SETTINGS_ON / KOL_SETTINGS_OFF over the file or the preset, for a
+    // test run in player mode (setting_on's own pass ran before the file was
+    // read, so the preset undid it: five Deck timing runs measured the same
+    // thing, 2026-11-18). Dev builds only.
+    if constexpr (kol::kDevTools)
+        for (const bool on : {true, false})
+            if (const char* e = std::getenv(on ? "KOL_SETTINGS_ON" : "KOL_SETTINGS_OFF"))
+                for (int k = 0; k < kCount; ++k) {
+                    const std::size_t n = std::strlen(kKeys[k]);
+                    for (const char* q = std::strstr(e, kKeys[k]); q; q = std::strstr(q + 1, kKeys[k]))
+                        if ((q == e || q[-1] == ',') && (q[n] == '\0' || q[n] == ',')) {
+                            g_on[k] = on;
+                            std::fprintf(stderr, "settings: %s forced %s\n", kKeys[k], on ? "on" : "off");
+                        }
+                }
     for (int i = 0; i < kCount; ++i) apply(static_cast<Setting>(i));
     apply_sound();
     gba::gba_audio_request_mix_volumes(static_cast<int>(g_music_volume * 10u),

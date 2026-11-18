@@ -18,13 +18,29 @@
 
 #include "runtime.h"
 
+#include <string>
+#include <vector>
+
+#include "kol_desktop.h"
 #include "kol_widescreen.h"
 
 int main(int argc, char** argv) {
+    // The desktop's player front end (kol_desktop.h): the options menu over
+    // the game, and in player mode (--data-dir, or a public build) the game's
+    // files and settings in one directory, as the Android app keeps them.
+    bool ok = true;
+    std::vector<std::string> args = kol::desktop_prepare(argc, argv, &ok);
+    if (!ok) return 1;
+    std::vector<char*> args_v;
+    for (auto& a : args) args_v.push_back(a.data());
+    args_v.push_back(nullptr);
+    argc = static_cast<int>(args.size());
+    argv = args_v.data();
+
     gbarecomp::RunOptions opts;
     opts.builtin_game_name = "Tactics Ogre: The Knight of Lodis";
     opts.builtin_rom_sha1 = "85a46320a31f16f5c6dda27fc094edd078dbe43d";
-    opts.show_fps_by_default = true;
+    opts.show_fps_by_default = !kol::desktop_player_mode();
     // Rewind on L2 (gbarecomp's default binding): 20 s kept, a state every
     // 15 frames; each press goes back a second, held it repeats. Off while
     // Debug > Tile Info or L2 Moves Sun has L2 (kol_widescreen).
