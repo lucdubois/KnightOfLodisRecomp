@@ -23213,6 +23213,14 @@ SDL_RENDER_DRIVER=software`, present dumps):
     Option under the hand, as after its own window. Builds on the Deck and
     Android; not tried on a device. Every build has it (Android too: its
     menu is this one).
+- **The right stick's click opens the menu on Android too (2026-11-18).**
+  Reported from the Thor: the click did nothing there (it was the desktop's
+  alone, `desktop_r3` a stub on Android). The click is common code now
+  (kol_desktop.cpp's end, std::chrono for its 400 ms) and goes through
+  `menu_pad_toggle`, which also raises the menu's dirty flag: the second
+  screen's thread then sends the picture, or null once it is closed, as for
+  a change made with the pad. Builds for Android; not tried on the Thor by
+  me.
 - **"The menu does not display": found and fixed (2026-11-18).** Reported
   twice; the second time after the view size was changed in the menu. The
   Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu

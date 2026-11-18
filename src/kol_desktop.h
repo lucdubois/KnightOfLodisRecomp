@@ -42,7 +42,9 @@ bool desktop_player_mode();
 
 // The right stick's click, from kol_actions' pad hook (down 1, up 0), with
 // whether the left stick is held. A short click alone opens or closes the
-// options menu; with L3 held it is not a click (L3 is the state combos').
+// options menu, on every platform (on Android the second screen, or the
+// overlay on a device with one, shows it); with L3 held it is not a click
+// (L3 is the state combos').
 void desktop_r3(int down, bool l3_held);
 
 }  // namespace kol

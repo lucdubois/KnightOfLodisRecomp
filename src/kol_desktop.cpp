@@ -131,12 +131,6 @@ void quit_game() {
     SDL_PushEvent(&e);
 }
 
-// A click of the right stick: down and up within this, the left stick never
-// held meanwhile (L3 is the state combos' modifier).
-constexpr std::uint32_t kClickMs = 400;
-std::atomic<std::uint32_t> g_r3_down_at{0};
-std::atomic<bool> g_r3_click{false};
-
 // ── Player mode ─────────────────────────────────────────────────────────
 
 std::string default_data_dir() {
@@ -163,17 +157,6 @@ bool exists(const std::string& p) {
 }  // namespace
 
 bool desktop_player_mode() { return g_player; }
-
-void desktop_r3(int down, bool l3_held) {
-    if (down) {
-        g_r3_click.store(!l3_held, std::memory_order_relaxed);
-        g_r3_down_at.store(SDL_GetTicks(), std::memory_order_relaxed);
-        return;
-    }
-    if (l3_held) g_r3_click.store(false, std::memory_order_relaxed);
-    if (!g_r3_click.exchange(false, std::memory_order_relaxed)) return;
-    if (SDL_GetTicks() - g_r3_down_at.load(std::memory_order_relaxed) <= kClickMs) menu_toggle();
-}
 
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;
@@ -263,7 +246,6 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
 
 namespace kol {
 bool desktop_player_mode() { return false; }
-void desktop_r3(int, bool) {}
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;
     return std::vector<std::string>(argv, argv + argc);
@@ -271,3 +253,34 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
 }  // namespace kol
 
 #endif
+
+// The right stick's click, on every platform (the Thor too, 2026-11-18: it
+// was the desktop's alone and the user expected it there). Down and up
+// within kClickMs with the left stick never held meanwhile (L3 is the state
+// combos' modifier) opens or closes the options menu.
+#include <atomic>
+#include <chrono>
+
+#include "kol_menu.h"
+
+namespace kol {
+namespace {
+constexpr long long kClickMs = 400;
+std::atomic<long long> g_r3_down_at{0};
+std::atomic<bool> g_r3_click{false};
+long long click_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
+void desktop_r3(int down, bool l3_held) {
+    if (down) {
+        g_r3_click.store(!l3_held, std::memory_order_relaxed);
+        g_r3_down_at.store(click_now_ms(), std::memory_order_relaxed);
+        return;
+    }
+    if (l3_held) g_r3_click.store(false, std::memory_order_relaxed);
+    if (!g_r3_click.exchange(false, std::memory_order_relaxed)) return;
+    if (click_now_ms() - g_r3_down_at.load(std::memory_order_relaxed) <= kClickMs) menu_pad_toggle();
+}
+}  // namespace kol

@@ -1474,6 +1474,12 @@ bool menu_toggle() {
     return g_open;
 }
 
+bool menu_pad_toggle() {
+    const bool open = menu_toggle();
+    g_dirty.store(true, std::memory_order_release);
+    return open;
+}
+
 void menu_touch(int action, float x, float y) {
     const Art& a = art();
     if (!a.ok) return;
