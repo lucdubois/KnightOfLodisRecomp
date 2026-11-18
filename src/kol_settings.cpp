@@ -196,8 +196,8 @@ const char* const kLabels[kCount] = {"See-through move range",
                                      "Torchlight (torches light the battlefield)",
                                      "Unit shadows (units cast shadows, no blob)",
                                      "Debug: L2 + right stick moves the sun across the sky",
-                                     "Lifted props (trees and statues stand off the ground)",
-                                     "Lifted walls (BG1 walls and pillars show what is behind)",
+                                     "Lifted props (trees and statues stand off the ground; heavy to run)",
+                                     "Lifted walls (BG1 walls and pillars show what is behind; heavy to run)",
                                      "Debug: tile info (target tile, heights, record)",
                                      "Debug: the main screen stays bright while the menu is open",
                                      "Fast loading (decompression runs natively; loads are shorter)",
@@ -497,8 +497,14 @@ struct Preset {
 // Special Effects on in Enhanced, off in Original (asked 2026-11-16: Enhanced is
 // the default, so special effects are on by default; it was in
 // no preset, so a fresh install had it off).
+// Lifted Props and Lifted Walls off in Enhanced, on every device (asked
+// 2026-11-18): the heaviest pair of switches (on the Steam Deck's map 100 the
+// present worker 14.6 -> 12.0 ms a job without them, frames over 20 ms 177 ->
+// 18 of 1201), and the Deck could not hold 60 with them. Their rows say they
+// are heavy. A device whose saved settings have them on keeps them (its
+// preset then reads Custom).
 const Preset kPresets[] = {
-    {"Enhanced", 384u, true, true, 1u, 1u, 1u, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 2},
+    {"Enhanced", 384u, true, true, 1u, 1u, 1u, true, true, false, false, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 2},
     {"Original", 240u, false, false, 1u, 0u, 0u, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 1},
 };
 constexpr unsigned kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
