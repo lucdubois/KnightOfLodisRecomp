@@ -2294,6 +2294,29 @@ void SceneBuild::terrain_pass() {
     mixf(ao_s); mixf(sh_s); mixf(ao_reach_v); mixf(sun_x); mixf(sun_z);
     mix(sh_s > 0.0f ? g_shadow_key : 0u);
     mix(1u | (world_on ? 2u : 0u) | (world_dirty ? 4u : 0u) | (shade_on ? 8u : 0u));
+    // The same, but for where the camera is (kx, ky): two pictures with this
+    // key in common show the same world, one moved over the other by whole
+    // pixels (the pass's shift, below).
+    std::uint32_t still_key = kol::kFnvBasis;
+    {
+        auto smix = [&still_key](std::uint32_t v) { kol::fnv_mix(still_key, v); };
+        auto smixf = [&smix](float f) {
+            std::uint32_t u;
+            std::memcpy(&u, &f, sizeof u);
+            smix(u);
+        };
+        kol::fnv_ints(still_key, {w, h, ox, oy});
+        for (std::size_t i = 0; i < static_cast<std::size_t>(kGameSide) * kGameSide * 4u; ++i)
+            smix(ew[e(kGrid) + i]);
+        smix(terrain_map);
+        smix(drawn_key);
+        smix(record_back ? 0x9E3779B9u : 0u);
+        smixf(ao_s); smixf(sh_s); smixf(ao_reach_v); smixf(sun_x); smixf(sun_z);
+        smix(sh_s > 0.0f ? g_shadow_key : 0u);
+        // (Not world_dirty: whether this pass writes the world places is the
+        // shift's own business, below.)
+        smix(1u | (world_on ? 2u : 0u) | (shade_on ? 8u : 0u));
+    }
     wt.lap("scene.terrain");
     const bool pass_hit = pass_cache && g_pass.valid && g_pass.key == pass_key;
     ++g_pass.frames;
@@ -2309,7 +2332,22 @@ void SceneBuild::terrain_pass() {
         chk.swap_globals();
         if (world_on) { g_wx.assign(chk.wx.begin(), chk.wx.end()); g_wz.assign(chk.wz.begin(), chk.wz.end()); }
     }
-    if (!pass_hit || checking) {
+    // The pass. `clear`: every buffer emptied first, and all of the picture
+    // drawn. Else (the shift, below) the buffers hold the last pass's pixels
+    // moved to their new place in the rectangle [rx0, rx1) x [ry0, ry1), and
+    // only the pixels outside it are drawn: each pixel is the last cell
+    // drawn over it, whatever is drawn beside it.
+    auto run_pass = [&](bool clear, int rx0, int rx1, int ry0, int ry1) {
+    // A column with a pixel to draw, a pixel to draw.
+    auto draw_col = [&](int px) {
+        if (px < 0 || px >= w) return false;
+        return clear || px < rx0 || px >= rx1 || ry0 > 0 || ry1 < h;
+    };
+    auto draw_at = [&](int px, int py) {
+        if (py < 0 || py >= h) return false;
+        return clear || px < rx0 || px >= rx1 || py < ry0 || py >= ry1;
+    };
+    if (clear) {
     // Each pixel's cell, face and occlusion start empty (on a hit the cache
     // restored them: a hit always holds the owners and faces, and the
     // occlusion exactly when shade_on, a bit of the key).
@@ -2335,6 +2373,7 @@ void SceneBuild::terrain_pass() {
         const std::int32_t xz = 4 * (py - oy - ky);
         std::fill_n(g_xz.begin() + static_cast<std::size_t>(py) * w, w, xz);
     }
+    }   // (clear)
     // The heights the pass draws with: a round tower's cells are the ground
     // at its foot (its lowest neighbour), its top the cells' stored height.
     static thread_local std::vector<int> round_top, round_base;
@@ -2520,7 +2559,7 @@ void SceneBuild::terrain_pass() {
         };
         for (int hx = hx0; hx <= hx1; ++hx) {
             const int px = hx + ox;
-            if (px < 0 || px >= w) continue;
+            if (!draw_col(px)) continue;
             const float u = 2.0f * (hx - kx) + 1.0f;   // X - Z at the column's middle
             // The front-most point: on the +X side, the +Z side, or an arc.
             float best = -1.0e9f, bx = 0.0f, bz = 0.0f, bnx = 0.0f, bnz = 0.0f;
@@ -2579,7 +2618,7 @@ void SceneBuild::terrain_pass() {
             const int rt1 = static_cast<int>(std::ceil((best - 2.0f * top_y) / 4.0f)) + ky;
             for (int r = rt0; r <= rt1; ++r) {
                 const int py = r + oy;
-                if (py < 0 || py >= h) continue;
+                if (!draw_at(px, py)) continue;
                 const float v = 4.0f * (r - ky) + 2.0f * top_y + 2.0f;   // the row's middle
                 const float X = 0.5f * (v + u), Z = 0.5f * (v - u);
                 if (!(inside(X, Z) || top_ring(X, Z)) || !over_cell(X, Z)) continue;
@@ -2591,7 +2630,7 @@ void SceneBuild::terrain_pass() {
             const int rs1 = static_cast<int>(std::floor((best - 2.0f * base_y) / 4.0f)) + ky;
             for (int r = rs0; r < rs1; ++r) {
                 const int py = r + oy;
-                if (py < 0 || py >= h) continue;
+                if (!draw_at(px, py)) continue;
                 const int y = static_cast<int>(std::lround((best - 4.0f * (r - ky)) / 2.0f));
                 if (outer && y < top_y - d.cornice) continue;   // only the cornice's rows
                 put(static_cast<std::size_t>(py) * w + px, bx, bz, y, false, bnx, bnz, r);
@@ -2732,7 +2771,7 @@ void SceneBuild::terrain_pass() {
             };
             for (int c = -16; c < 16; ++c) {
                 const int px = sx + c + ox;
-                if (px < 0 || px >= w) continue;
+                if (!draw_col(px)) continue;
                 const int half = (c >= 0 ? c : -c - 1) >> 1;
                 const int face_top = sy + half;
                 const int face_bottom = sy + 16 - half;
@@ -2740,7 +2779,7 @@ void SceneBuild::terrain_pass() {
                 const int wall_bottom = face_bottom + std::max(0, 8 * (ch - floor) + ((c >= 0 ? right_lw : left_lw) - lw) / 2);
                 for (int r = face_top; r < wall_bottom; ++r) {
                     const int py = r + oy;
-                    if (py < 0 || py >= h) continue;
+                    if (!draw_at(px, py)) continue;
                     if (nparts > 1) {   // (this part's pixels only)
                         // (Along Z: a top by its Z offset, the right wall by its own, the
                         // front wall the last part's. Along X: mirrored, the right wall the
@@ -2817,11 +2856,11 @@ void SceneBuild::terrain_pass() {
                 const int y_top = 16 * stored_h, y_bot = 16 * cell_ch - lower_of(cx, cy);
                 for (int X = split_x ? 32 * cy : 32 * cx; X < (split_x ? 32 * cy : 32 * cx) + 32; X += 2) {
                     const int px = (split_x ? Zf - X : X - Zf) / 2 + kx + ox;
-                    if (px < 0 || px >= w) continue;
+                    if (!draw_col(px)) continue;
                     for (int y = y_top; y > y_bot; y -= 2) {
                         const int r = static_cast<int>(std::floor((X + Zf - 2 * y) / 4.0)) + ky;
                         const int py = r + oy;
-                        if (py < 0 || py >= h) continue;
+                        if (!draw_at(px, py)) continue;
                         const std::size_t k = static_cast<std::size_t>(py) * w + px;
                         put_px(k, r, y, false, split_x ? 1 : 2, gi(cx, cy));
                         g_span_px[k] = 1;
@@ -2848,7 +2887,138 @@ void SceneBuild::terrain_pass() {
             if (const int ri = round_of[gi(cx, cy)]; ri >= 0) draw_round(ri, cx, cy);
         }
     }
-    }   // the pass
+    };   // run_pass
+
+    // The shift. A camera that pans gives a new key every picture, so the
+    // cache above never answers, and the pass drew the whole view again each
+    // time: 3.8 ms a job on the Steam Deck in map 89's opening pan, the
+    // largest piece of a job that ran over (2026-11-18). But a pan moves the
+    // still world over the picture by a whole number of pixels: with the same
+    // world, light and view size (still_key), every pixel the last pass drew
+    // is this pass's pixel (kx - last kx, ky - last ky) further on, byte for
+    // byte (a pixel's values come from its world point; its X + Z from its row
+    // less ky). So the last pass's buffers are put back moved, and the pass
+    // draws only the strips the move uncovered. The last pass's own buffers
+    // are kept for it each time (g_shift: a copy, since the passes after this
+    // one write into the globals).
+    // KOL_PASS_SHIFT=0: off. KOL_PASS_SHIFT_CHECK=1: the whole pass drawn too
+    // and compared (the world places only where a pixel is covered: the pass
+    // leaves the rest as they were).
+    static const bool shift_on = kol::env_not_zero("KOL_PASS_SHIFT");
+    static const bool shift_check = kol::env_true("KOL_PASS_SHIFT_CHECK");
+    struct ShiftKept {
+        PassBuffers buf;
+        unsigned parts = 0;
+        std::uint32_t still_key = 0;
+        int kx = 0, ky = 0;
+        bool valid = false;
+        // Its world places (wx, wz) are that pass's view's: it wrote them
+        // (world_dirty). A pass that does not leaves the globals as they
+        // were, and so does its shift.
+        bool wx_valid = false;
+        long shifts = 0, checked = 0, mismatched = 0;
+    };
+    static thread_local ShiftKept g_shift;
+    const unsigned parts_now = (world_on ? PassBuffers::kWxz : 0u) | (shade_on ? PassBuffers::kAo : 0u) |
+                               (record_back ? PassBuffers::kBack : 0u);
+    const int dx = kx - g_shift.kx, dy = ky - g_shift.ky;
+    const bool can_shift = shift_on && !pass_hit && g_shift.valid && g_shift.still_key == still_key &&
+                           g_shift.parts == parts_now && g_shift.buf.xz.size() == npix &&
+                           std::abs(dx) < w / 2 && std::abs(dy) < h / 2 &&
+                           (!world_on || !world_dirty || g_shift.wx_valid);
+    // (Not moved at all, dx and dy 0, is the same picture: the cache above
+    // keeps a pass only from the second time its key comes, so a camera that
+    // moves a pixel every other picture drew the whole pass every time.)
+    // KOL_PASS_SHIFT_LOG=1: why a pass that missed the cache was not shifted.
+    static const bool shift_log = kol::env_true("KOL_PASS_SHIFT_LOG");
+    if (shift_log && shift_on && !pass_hit && !can_shift)
+        std::fprintf(stderr, "pass-shift: no: kept %d, still key %s (%08x -> %08x), parts %u -> %u, moved %d, %d, world %d dirty %d kept's %d, shadow key %08x\n",
+                     g_shift.valid ? 1 : 0, g_shift.still_key == still_key ? "same" : "CHANGED", g_shift.still_key,
+                     still_key, g_shift.parts, parts_now, dx, dy, world_on ? 1 : 0, world_dirty ? 1 : 0,
+                     g_shift.wx_valid ? 1 : 0, sh_s > 0.0f ? g_shadow_key : 0u);
+    if (can_shift) {
+        // Pixel (x, y) takes the last pass's (x - dx, y - dy); a pixel with
+        // none starts as the pass's clear leaves it.
+        const int rx0 = std::max(0, dx), rx1 = std::min(w, w + dx), ry0 = std::max(0, dy), ry1 = std::min(h, h + dy);
+        auto moved = [&](auto& dst, const auto& src, int per, auto empty) {
+            dst.resize(npix * per);
+            for (int y = 0; y < h; ++y) {
+                auto* row = dst.data() + static_cast<std::size_t>(y) * w * per;
+                if (y < ry0 || y >= ry1) {
+                    std::fill_n(row, static_cast<std::size_t>(w) * per, empty);
+                    continue;
+                }
+                std::fill_n(row, static_cast<std::size_t>(rx0) * per, empty);
+                std::copy_n(src.data() + (static_cast<std::size_t>(y - dy) * w + (rx0 - dx)) * per,
+                            static_cast<std::size_t>(rx1 - rx0) * per, row + static_cast<std::size_t>(rx0) * per);
+                std::fill_n(row + static_cast<std::size_t>(rx1) * per, static_cast<std::size_t>(w - rx1) * per, empty);
+            }
+        };
+        const PassBuffers& B = g_shift.buf;
+        moved(g_cell_owner, B.owner, 1, static_cast<std::int16_t>(-1));
+        moved(g_span_px, B.span, 1, static_cast<std::uint8_t>(0));
+        moved(g_round_n, B.round_n, 2, static_cast<std::int8_t>(0));
+        moved(g_face, B.face, 1, static_cast<std::uint8_t>(0));
+        if (shade_on) moved(g_ao, B.ao, 1, static_cast<std::uint8_t>(255));
+        moved(g_xz, B.xz, 1, static_cast<std::int32_t>(0));
+        moved(g_y, B.y, 1, static_cast<std::int32_t>(0));
+        moved(g_covered, B.covered, 1, static_cast<std::uint8_t>(0));
+        moved(g_kind, B.kind, 1, static_cast<std::uint8_t>(kol::kSceneNone));
+        if (record_back) {
+            moved(g_back_xz, B.back_xz, 1, static_cast<std::int32_t>(0));
+            moved(g_back_y, B.back_y, 1, static_cast<std::int32_t>(0));
+            moved(g_back_kind, B.back_kind, 1, static_cast<std::uint8_t>(kol::kSceneNone));
+            if (shade_on) moved(g_back_ao, B.back_ao, 1, static_cast<std::uint8_t>(255));
+        }
+        if (world_on && world_dirty) {
+            moved(g_wx, B.wx, 1, static_cast<std::int16_t>(0));
+            moved(g_wz, B.wz, 1, static_cast<std::int16_t>(0));
+        }
+        // (The ground plane's X + Z where nothing is drawn, as the clear sets it.)
+        for (int py = 0; py < h; ++py) {
+            const std::int32_t xz = 4 * (py - oy - ky);
+            std::int32_t* row = g_xz.data() + static_cast<std::size_t>(py) * w;
+            if (py < ry0 || py >= ry1) { std::fill_n(row, w, xz); continue; }
+            std::fill_n(row, rx0, xz);
+            std::fill_n(row + rx1, w - rx1, xz);
+        }
+        if (dx != 0 || dy != 0) run_pass(false, rx0, rx1, ry0, ry1);
+        ++g_shift.shifts;
+        if (shift_check) {
+            PassBuffers whole;
+            const std::vector<std::uint8_t> span_shift = g_span_px;
+            whole.swap_globals();   // (the shifted pass set aside; the globals empty)
+            if (world_on) { g_wx.assign(whole.wx.begin(), whole.wx.end()); g_wz.assign(whole.wz.begin(), whole.wz.end()); }
+            run_pass(true, 0, 0, 0, 0);
+            bool same = whole.xz == g_xz && whole.y == g_y && whole.covered == g_covered && whole.kind == g_kind &&
+                        whole.owner == g_cell_owner && whole.face == g_face && whole.round_n == g_round_n &&
+                        span_shift == g_span_px && (!shade_on || whole.ao == g_ao) &&
+                        (!record_back || (whole.back_xz == g_back_xz && whole.back_y == g_back_y &&
+                                          whole.back_kind == g_back_kind && (!shade_on || whole.back_ao == g_back_ao)));
+            if (same && world_on && world_dirty)
+                for (std::size_t k = 0; k < npix && same; ++k)
+                    same = !g_covered[k] || (whole.wx[k] == g_wx[k] && whole.wz[k] == g_wz[k]);
+            ++g_shift.checked;
+            if (!same) ++g_shift.mismatched;
+            if (!same || g_shift.checked % 300 == 1)
+                std::fprintf(stderr, "pass-shift-check: %s, moved by %d, %d (%ld shifts, %ld checked, %ld with a difference)\n",
+                             same ? "the same" : "DIFFERENT", dx, dy, g_shift.shifts, g_shift.checked, g_shift.mismatched);
+            // (The frame goes on with the whole pass's, which the check trusts.)
+        }
+    } else if (!pass_hit || checking) {
+        run_pass(true, 0, 0, 0, 0);
+    }
+    // This pass's own pixels, for the next one's shift (not on a hit: the
+    // cache's are this view's, and the last kept are still the last pass's).
+    if (shift_on && !pass_hit && !checking) {
+        g_shift.buf.take(parts_now);
+        g_shift.parts = parts_now;
+        g_shift.still_key = still_key;
+        g_shift.kx = kx;
+        g_shift.ky = ky;
+        g_shift.valid = true;
+        g_shift.wx_valid = world_on && world_dirty;
+    }
     if (checking) {
         g_pass.count_check(chk.same(g_pass.parts), "pass");
         // The frame goes on with what the cache restored.

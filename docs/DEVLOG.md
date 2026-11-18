@@ -23068,6 +23068,47 @@ SDL_RENDER_DRIVER=software`, present dumps):
     and 22.0 s / 6.8 ms; six 27.3 and 26.4 s / 6.7 and 6.5 ms.** Two: 40% off
     the job for 4% more work. Six: 3% more off for a quarter more work. The
     desktop is back to 2 helpers, as Android.
+- **The terrain pass shifted in a pan (2026-11-18).** The user's state on the
+  Deck (`data/states/0003`, map 89, the opening scene, saved at its fade in:
+  "for about 10 seconds the framerate dips when the camera pans"). Measured
+  there second by second: 51 fps the first 2.5 s, **44-47 fps from 2.5 to 5
+  s (56-81 long frames of 150)**, 57-59 to 10 s, then 60. In the pan a job's
+  scene build was 11.3 ms: scene.terrain 3.8, scene.roofs 3.3, sun_cast 1.8,
+  warp.water 1.8, setup 1.1; the guest 13.6 ms in the worst window.
+  - **What was built** (`SceneBuild::terrain_pass`, kol_focus.cpp): the pass
+    is `run_pass(clear, rx0, rx1, ry0, ry1)` now, drawing either everything
+    or only the pixels outside a rectangle (its three column loops ask
+    `draw_col`, its four row loops `draw_at`). With the same world, light and
+    view size as the last pass (`still_key`: pass_key without kx, ky and
+    without world_dirty) the last pass's buffers, kept each time in
+    `g_shift`, are put back moved by (kx - last kx, ky - last ky) and only
+    the uncovered strips drawn. A pixel's values come from its world point
+    and its X + Z from its row less ky, so the moved pixels are this pass's
+    byte for byte. Not moved at all counts too: the scene's camera moves a
+    pixel every other picture, and the cache (kept from a key's second
+    coming) never answered. The world places (g_wx, g_wz) move only when
+    this pass writes them (world_dirty) and the kept ones were written for
+    their view (`wx_valid`); when it does not write them, neither does the
+    shift. `KOL_PASS_SHIFT=0` off; `KOL_PASS_SHIFT_CHECK=1` draws the whole
+    pass too and compares; `KOL_PASS_SHIFT_LOG=1` says why a pass was not
+    shifted.
+  - **First try, 1 shift in 900 frames on map 89:** it refused whenever
+    world_dirty was off (most of the pan) or differed from the last pass's
+    (it was in the key). 199 refusals -> 36 after.
+  - **Checked:** the check on, 0 differences (map 89's pan and the castle's,
+    301 shifts there; the Deck too). `KOL_PERSP_HASH` over both runs: the
+    same md5 with the shift off and on; the castle pan with the lifting on
+    still the morning's baseline (20cdd5ba). (With Enhanced's new default,
+    lifting off, that run's md5 is another, 3bdb191e: the preset, not the
+    shift.)
+  - **The Mac, map 89's first 300 jobs:** scene.terrain 1.49 -> 0.27 ms.
+  - **The Deck, the state, shift off -> on** (900 frames): terrain in the
+    first 300 jobs 3.40 -> 0.90 ms; **2.5-5 s 47.3 -> 55.6 fps (long frames
+    56 -> 29 of 150)**, 5-7.5 s 57.8 -> 59.6 (17 -> 4), 7.5-10 s 58.5 -> 60.0;
+    the first 2.5 s 51 fps both (the scene's load). What is left in that
+    window: scene.roofs ~3.3 ms (its cache keys on the scene's colours under
+    an awning, which the animated water changes every picture), sun_cast,
+    the water.
 - **"The menu does not display" (the user, 2026-11-18): not reproduced, by
   me or by the user after.** Opened by script it draws on the Mac and on the
   Deck's screen, at the title (240x160, the logical renderer) and in a battle
