@@ -23031,6 +23031,43 @@ SDL_RENDER_DRIVER=software`, present dumps):
   fresh data directory, the pan run, scene.lift 0.80 -> 0.01 ms, a job 7.8 ->
   6.5 ms. The Android debug APK builds. The Deck's own enhancements.cfg had
   both saved on: set to 0 by hand so that it shows the new default.
+- **The Thor with the split passes (2026-11-18, asked to measure there).** The
+  dev app from `steam-deck` (26d27bf), EM (map 55) as slot 3, 384x216, the
+  Thor's saved settings (Lifted Props and Walls on), `thor_all.sh` (10 s,
+  cycles by thread), each variant its own launch through `files/env.cfg`.
+  The scene at rest only: the D-pad taps sent with `input keyevent` did not
+  move the cursor (the lifted pixel count stayed 5343 throughout), so the
+  window and lamp light were built once and cached, and what a pan costs
+  there is not measured.
+  - One thread (KOL_WIN_SERIAL, KOL_LAMP_SERIAL, KOL_LIFT_SERIAL,
+    KOL_WIN_CACHE_FIRST) -> split: 60.0 fps both; the worker's thread 29.1 ->
+    27.6 M cycles a frame (-5%), each of the two helpers 7.6 -> 8.9 M, the
+    three together 44.3 -> 45.3 M (+2%: the split's own cost); the guest's
+    thread 30.6 M both; GPU ~20% busy both.
+  - `KOL_LIFT_PAR_CHECK` on the Thor: 1501 checks, 0 differences; no window or
+    lamp check line with a difference (they ran only at the first build).
+  - Left as found, but for the build: env.cfg and the state removed, the app
+    stopped; the Thor's dev app is this build now.
+  - **Then with the user panning by hand** (the left stick, long sweeps, 20 s
+    of `thor_move.sh` a round; told when to start and stop). Split, then one
+    thread: 60.0 fps both; the longest gap in each 2 s window 16.7 ms in 5 of
+    10 windows split (25 or 33 in the others), 25 ms in all 10 on one thread.
+    Cycles a frame: the worker's thread 35.5 M split, 35.3 M one thread; each
+    helper 14.4 M split, 4.4 M one thread; the guest 30.5 / 29.7 M. So the
+    helpers did 20 M a frame more in the split round with the worker's own
+    thread no lighter. **Not a clean comparison:** the two rounds' sweeps were
+    made by hand and are not the same pans.
+  - The Mac's scripted pan run says the split itself adds no work: the
+    process's CPU time over 900 frames with 2 helpers, one thread 22.5 s,
+    split 22.4 s. **With 6 helpers (the desktop's new default) 27.2 s, a
+    fifth more CPU for the worker's 7%:** a cost in heat and battery on the
+    Deck that was not weighed when the default was raised.
+  - **The helpers' cost, measured** (asked whether two had been: not until
+    now). The Mac, the scripted pan, 900 frames, twice each (the process's
+    CPU time / the worker's mean job): **no helper 21.0 s / 11.3 ms; two 21.7
+    and 22.0 s / 6.8 ms; six 27.3 and 26.4 s / 6.7 and 6.5 ms.** Two: 40% off
+    the job for 4% more work. Six: 3% more off for a quarter more work. The
+    desktop is back to 2 helpers, as Android.
 - **"The menu does not display" (the user, 2026-11-18): not reproduced, by
   me or by the user after.** Opened by script it draws on the Mac and on the
   Deck's screen, at the title (240x160, the logical renderer) and in a battle

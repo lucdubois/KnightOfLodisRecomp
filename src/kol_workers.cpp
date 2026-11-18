@@ -13,19 +13,14 @@ namespace kol {
 
 RowPool& row_pool() {
     // Never destroyed: its threads are detached and live as long as the app.
-    // Helpers: 2 on Android, as measured and shipped there. On a computer,
-    // what the machine has past the guest's thread and the worker's own, up
-    // to 6. The Steam Deck (8 hardware threads), map 55, 2026-11-18, 6 for 2:
-    // the cursor stepping 15.6 -> 14.3 ms a job (two runs each), long pans
-    // 19.5 -> 18.4. About 7%: most of the job is in passes off the pool.
-#if defined(__ANDROID__)
-    const float def = 2.0f;
-#else
-    const float def = static_cast<float>(
-        std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 2, 2, 6));
-#endif
+    // 2 helpers, on every device. Measured 2026-11-18 on the Mac's scripted
+    // pan of map 55 (900 frames; the process's CPU time, the worker's mean
+    // job): none 21.0 s / 11.3 ms, two 21.9 s / 6.8 ms, six 26.9 s / 6.6 ms.
+    // Two buy 40% of the job for 4% more work; four more buy 3% for a
+    // quarter more work (on the Steam Deck, 7%). Six was the desktop's
+    // default for a few hours that day.
     static RowPool* pool = new RowPool(
-        std::max(0, std::min(7, static_cast<int>(kol::env_num_or("KOL_PERSP_THREADS", def)))));
+        std::max(0, std::min(7, static_cast<int>(kol::env_num_or("KOL_PERSP_THREADS", 2.0f)))));
     return *pool;
 }
 int chunk_rows() {
