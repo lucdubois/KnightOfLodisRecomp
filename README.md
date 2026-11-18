@@ -56,6 +56,52 @@ start. A state copied in shows on the Save States page after a restart. A mod
 has its own save and its own states folder, each named with the mod's code
 (`totkol-1a2b3c4d.sav`, `states-1a2b3c4d`).
 
+## Playing on Linux, the Steam Deck and macOS
+
+- **Linux and Steam Deck:** download `KnightOfLodisRecomp-<version>-x86_64.AppImage`,
+  mark it executable and run it. On the Deck, add it to Steam (Games > Add a
+  Non-Steam Game) to play from Gaming Mode.
+- **macOS** (Apple Silicon, macOS 15 or newer): unzip and open **Knight of
+  Lodis Recomp.app**. The first time, macOS blocks it: open System Settings >
+  Privacy & Security and choose **Open Anyway**.
+
+On first start a setup window asks for the ROM, and optionally the BIOS and a
+mod: click a box, or drag the file onto the window. A click of the right stick
+or **Esc** opens the options menu; its last row quits the game.
+
+The game's files are in `~/.local/share/KnightOfLodisRecomp` (Linux) or
+`~/Library/Application Support/KnightOfLodisRecomp` (macOS): the ROM copy, the
+save, the settings and the `states` folder. Delete `totkol.gba` there to choose
+another ROM.
+
+**Keyboard** (when no controller is connected):
+
+| Key | | Key | |
+|---|---|---|---|
+| Arrows | D-pad | Q / E | L / R |
+| X | A | Return | Start |
+| Z | B | Right Shift | Select |
+| S | Next unit (the pad's north button) | A | Previous unit (west button) |
+| Esc or F10 | Options menu | `` ` `` (left of 1) | Rewind (when the Rewind cheat is on) |
+| 2, or Tab held | Fast-forward | Alt+Return | Full screen |
+| Shift+F1 | Save a state | F1 | Load the latest state |
+
+To change them, put a `keybinds.ini` in the game's folder:
+
+```ini
+[player1]
+a = X
+b = Z
+select = Right Shift
+start = Return
+up = Up
+down = Down
+left = Left
+right = Right
+l = Q
+r = E
+```
+
 ## Building
 
 Requires a sibling checkout of [gbarecomp](https://github.com/mstan/gbarecomp),

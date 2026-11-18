@@ -110,7 +110,11 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
     return 1;
 }
 
-// F10 opens and closes the menu.
+// F10 or Escape opens and closes the menu (Escape quit the game at once
+// before, 2026-11-18: the user asked for it to be the menu's key, as the
+// right stick's click; the menu's Quit Game quits). A and S are the pad's
+// west and north face buttons (Shortcut B / Previous unit, Shortcut A / Next
+// unit: kol_actions' pad hook), which the GBA has no key for.
 //
 // In player mode with a controller connected, the rest of the keyboard is
 // not the host's, the function keys aside: on the Steam Deck in Desktop Mode,
@@ -121,10 +125,25 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
 // the controller, and everything is the host's as before.
 int key_hook(int scancode, int down) {
     if (scancode == SDL_SCANCODE_F10) {
-        if (down) menu_toggle();
+        if (down) menu_pad_toggle();
         return 1;
     }
-    if (!g_player || SDL_NumJoysticks() <= 0) return 0;
+    // (With a controller, the keyboard is not a second one in player mode:
+    // the Deck's Desktop Mode types Escape from its Start button.)
+    const bool keyboard_live = !g_player || SDL_NumJoysticks() <= 0;
+    if (keyboard_live) {
+        if (scancode == SDL_SCANCODE_ESCAPE) {
+            if (down) menu_pad_toggle();
+            return 1;
+        }
+        if (scancode == SDL_SCANCODE_A || scancode == SDL_SCANCODE_S) {
+            if (gbarecomp::g_host_pad_button_hook)
+                gbarecomp::g_host_pad_button_hook(scancode == SDL_SCANCODE_S ? SDL_CONTROLLER_BUTTON_X : SDL_CONTROLLER_BUTTON_Y,
+                                                  down);
+            return 1;
+        }
+        return 0;
+    }
     return scancode >= SDL_SCANCODE_F1 && scancode <= SDL_SCANCODE_F12 ? 0 : 1;
 }
 
@@ -166,6 +185,17 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;
     gbarecomp::g_present_overlay_provider = &overlay_provider;
     gbarecomp::g_host_key_hook = &key_hook;
+    // The keyboard's layout (asked 2026-11-18), by KEYINPUT bit: A = X,
+    // B = Z, Select = Right Shift, Start = Return, the arrows, R = E, L = Q;
+    // Rewind on the key left of 1 (` on a US keyboard), Fast-forward on 2
+    // (and Tab held, the host's hotkey). A and S: key_hook. keybinds.ini in
+    // the player's folder overrides them.
+    static constexpr int kKeys[10] = {
+        SDL_SCANCODE_X, SDL_SCANCODE_Z, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RETURN, SDL_SCANCODE_RIGHT,
+        SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_E, SDL_SCANCODE_Q};
+    for (int i = 0; i < 10; ++i) gbarecomp::g_host_key_binds[i] = kKeys[i];
+    gbarecomp::g_host_assist_keys[0] = SDL_SCANCODE_GRAVE;
+    gbarecomp::g_host_assist_keys[1] = SDL_SCANCODE_2;
     MenuPlatform platform;
     platform.quit = &quit_game;
     menu_set_platform(platform);
@@ -191,6 +221,11 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     g_player = true;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
+    // keybinds.ini and config.ini in the player's folder: the program's own
+    // folder is read-only in an AppImage or a signed Mac app.
+    static std::string input_dir;
+    input_dir = dir;
+    gbarecomp::g_host_input_config_dir = input_dir.c_str();
     const std::string rom = dir + "/totkol.gba";
     const std::string bios = dir + "/gba_bios.bin";
     std::fprintf(stderr, "desktop: player mode, files in %s\n", dir.c_str());

@@ -23377,6 +23377,21 @@ SDL_RENDER_DRIVER=software`, present dumps):
   - Limits: Apple Silicon, macOS 15 or newer (Homebrew's SDL is built for
     15.0); no Developer ID, so a downloaded copy needs Privacy & Security >
     Open Anyway once.
+- **The desktop's keyboard (2026-11-18, the user's layout).** gbarecomp:
+  `g_host_key_binds[10]` and `g_host_assist_keys[2]` (a game's defaults
+  before keybinds.ini / config.ini) and `g_host_input_config_dir` (where
+  those two files are read; the program's folder is read-only in an
+  AppImage or a signed Mac app). KoL (`desktop_prepare`): A = X, B = Z,
+  Select = Right Shift, Start = Return, the arrows, L = Q, R = E, Rewind on
+  the grave key (left of 1), Fast-forward on 2 (Tab held, the host's
+  hotkey, too); the binding files from the player's folder in player mode.
+  `key_hook`: Escape opens and closes the options menu (it quit at once
+  before), as F10 and the right stick's click; A and S press the pad's west
+  and north face buttons (Previous / Next unit, Shortcut B / A) through
+  `g_host_pad_button_hook`. With a controller attached, player mode keeps
+  ignoring the keyboard but for F1-F12 (the Deck's Desktop Mode types
+  Escape from its Start button). README: a players' section for Linux, the
+  Deck and macOS with the key table. Builds; the keys not pressed by me.
 - **"The menu does not display": found and fixed (2026-11-18).** Reported
   twice; the second time after the view size was changed in the menu. The
   Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu

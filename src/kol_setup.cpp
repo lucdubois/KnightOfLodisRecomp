@@ -18,6 +18,12 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#if defined(__linux__)
+#include <atomic>
+#include <memory>
+#include <thread>
+#include <unistd.h>
+#endif
 
 #include "rom_patch.h"
 #include "sha1.h"
@@ -36,6 +42,73 @@ bool setup_mac_open_panel(const char* message, std::string* path);
 namespace {
 
 namespace fs = std::filesystem;
+
+#if defined(__linux__)
+// ── Linux: the desktop's own file dialog, but in a game console's shell ─────
+// (asked 2026-11-18). In the Steam Deck's Gaming Mode (gamescope) or Steam's
+// Big Picture, a desktop dialog cannot be counted on and would be driven by
+// a mouse: the screen's own browser, made for the pad. Anywhere else, KDE's
+// kdialog or GNOME's zenity, whichever is there; neither: the browser.
+// KOL_FILE_PICKER=builtin or =system forces one.
+bool console_shell() {
+    auto set = [](const char* n) { const char* v = std::getenv(n); return v && *v; };
+    if (set("GAMESCOPE_WAYLAND_DISPLAY")) return true;
+    if (const char* d = std::getenv("XDG_CURRENT_DESKTOP"); d && std::strstr(d, "gamescope")) return true;
+    if (const char* g = std::getenv("SteamGamepadUI"); g && std::strcmp(g, "1") == 0) return true;
+    return false;
+}
+
+std::string on_path(const char* name) {
+    const char* path = std::getenv("PATH");
+    std::string dirs = path && *path ? path : "/usr/bin:/bin";
+    std::size_t at = 0;
+    while (at <= dirs.size()) {
+        const std::size_t end = std::min(dirs.find(':', at), dirs.size());
+        const std::string cand = dirs.substr(at, end - at) + "/" + name;
+        if (end > at && ::access(cand.c_str(), X_OK) == 0) return cand;
+        at = end + 1;
+    }
+    return {};
+}
+
+// The system dialog's command for `title`, or "" when there is none to use.
+std::string system_dialog_command(const std::string& title) {
+    if (const char* f = std::getenv("KOL_FILE_PICKER")) {
+        if (std::strcmp(f, "builtin") == 0) return {};
+    } else if (console_shell()) {
+        return {};
+    }
+    const char* home = std::getenv("HOME");
+    const std::string start = home && *home ? home : "/";
+    auto quote = [](const std::string& t) {
+        std::string q = "'";
+        for (char c : t) q += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        return q + "'";
+    };
+    // The child does without the AppImage's libraries (LD_LIBRARY_PATH points
+    // at ours, older or newer than the desktop's own).
+    const std::string env = "env -u LD_LIBRARY_PATH ";
+    const char* desktop = std::getenv("XDG_CURRENT_DESKTOP");
+    const bool kde = desktop && std::strstr(desktop, "KDE");
+    const std::string kdialog = on_path("kdialog"), zenity = on_path("zenity");
+    if (!kdialog.empty() && (kde || zenity.empty()))
+        return env + quote(kdialog) + " --title " + quote(title) + " --getopenfilename " + quote(start) + " 2>/dev/null";
+    if (!zenity.empty())
+        return env + quote(zenity) + " --file-selection --title=" + quote(title) + " --filename=" + quote(start + "/") +
+               " 2>/dev/null";
+    return {};
+}
+
+// The dialog runs on a thread of its own, so the window keeps drawing (and
+// answering the desktop) while it is up.
+struct SystemPick {
+    std::thread thread;
+    std::atomic<bool> done{false};
+    bool chosen = false;
+    std::string file;
+    ~SystemPick() { if (thread.joinable()) thread.join(); }
+};
+#endif
 
 // ── Files ───────────────────────────────────────────────────────────────
 
@@ -354,6 +427,28 @@ struct Setup {
     }
 
     SDL_Window* window = nullptr;
+#if defined(__linux__)
+    std::unique_ptr<SystemPick> sys_pick;   // the desktop's dialog, while it is up
+    int sys_what = 0;
+    // Called every picture: the dialog's answer, once it has one.
+    void poll_system_pick() {
+        if (!sys_pick || !sys_pick->done.load(std::memory_order_acquire)) return;
+        sys_pick->thread.join();
+        const bool chosen = sys_pick->chosen;
+        const std::string file = sys_pick->file;
+        sys_pick.reset();
+        status.clear();
+        if (window) SDL_RaiseWindow(window);
+        if (!chosen) return;
+        picking = sys_what;
+        take(file);
+        if (picking == sys_what) picking = -1;   // (refused: the message on the main page)
+    }
+    bool system_pick_up() const { return static_cast<bool>(sys_pick); }
+#else
+    void poll_system_pick() {}
+    bool system_pick_up() const { return false; }
+#endif
 
     void start_pick(int what) {
 #if defined(__APPLE__)
@@ -368,6 +463,30 @@ struct Setup {
         take(file);
         if (picking == what) picking = -1;   // (refused: the message on the main page)
         return;
+#elif defined(__linux__)
+        static const char* const kAskLinux[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+                                                 "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
+        const std::string cmd = system_dialog_command(kAskLinux[what]);
+        if (!cmd.empty()) {
+            if (sys_pick) return;   // (one at a time)
+            sys_pick = std::make_unique<SystemPick>();
+            sys_what = what;
+            SystemPick* p = sys_pick.get();
+            p->thread = std::thread([p, cmd] {
+                if (FILE* f = ::popen(cmd.c_str(), "r")) {
+                    char buf[4096];
+                    std::string out;
+                    while (std::fgets(buf, sizeof buf, f)) out += buf;
+                    const int rc = ::pclose(f);
+                    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+                    p->chosen = rc == 0 && !out.empty();
+                    p->file = out;
+                }
+                p->done.store(true, std::memory_order_release);
+            });
+            status = "Choose the file in the window that opened.";
+            return;
+        }
 #endif
         picking = what;
         if (path.empty()) {
@@ -803,8 +922,10 @@ bool setup_run(const std::string& dir, bool fullscreen) {
         }
         if (script_at < script.size()) inputs.push_back(script[script_at++]);
         else if (scripted && shots > static_cast<int>(script.size())) inputs.push_back({Act::Quit, 0, 0});
+        st.poll_system_pick();
         for (const Input& in : inputs) {
             if (in.act == Act::Quit) { done = true; break; }
+            if (st.system_pick_up()) continue;   // (the desktop's dialog has the player)
             if (in.act == Act::Drop) { st.dropped(in.file); continue; }
             if (st.picking >= 0) st.input_browser(in);
             else if (st.input_main(in)) { play = true; done = true; break; }
