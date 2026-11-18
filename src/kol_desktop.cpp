@@ -13,14 +13,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <system_error>
 #include <vector>
 
+#include "rom_patch.h"
 #include "runtime.h"
 
 #include "kol_dev.h"
 #include "kol_menu.h"
 #include "kol_settings.h"
+#include "kol_setup.h"
 #include "kol_sheet.h"
 
 namespace kol {
@@ -191,18 +195,21 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     const std::string bios = dir + "/gba_bios.bin";
     std::fprintf(stderr, "desktop: player mode, files in %s\n", dir.c_str());
 
+    // --setup (taken out of the arguments): the setup screen even with the
+    // ROM in place (to change the BIOS or the mod).
+    const auto setup_flag = std::find(rest.begin(), rest.end(), "--setup");
+    const bool force_setup = setup_flag != rest.end();
+    if (force_setup) rest.erase(setup_flag);
     const bool rom_given = std::find(rest.begin(), rest.end(), "--rom") != rest.end();
-    if (!rom_given && !exists(rom)) {
-        // The setup screen's place (Android: SetupActivity). Until there is
-        // one here, say where the ROM goes.
-        const std::string text =
-            "Your Tactics Ogre: The Knight of Lodis (USA) ROM was not found.\n\n"
-            "Copy it to:\n" + rom + "\n\n"
-            "Optional: the GBA BIOS, beside it, as gba_bios.bin.";
-        std::fprintf(stderr, "desktop: no ROM at %s\n", rom.c_str());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Knight of Lodis Recomp", text.c_str(), nullptr);
-        *ok = false;
-        return args;
+    const bool fullscreen = std::find(rest.begin(), rest.end(), "--fullscreen") != rest.end();
+    // The setup screen (kol_setup): with no ROM in the directory, or one that
+    // is not this game's. Play there means the right ROM is in place.
+    if (!rom_given && (force_setup || !setup_file_is(rom, kRomSha1))) {
+        if (!setup_run(dir, fullscreen)) {
+            std::fprintf(stderr, "desktop: the setup screen was closed without Play\n");
+            *ok = false;
+            return args;
+        }
     }
 
     // No C toolchain on a player's machine: the static build and the
@@ -212,8 +219,37 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     gbarecomp::g_host_keyboard_yields_to_pad = 1;
 
     if (!rom_given) { args.emplace_back("--rom"); args.push_back(rom); }
-    if (exists(bios)) { args.emplace_back("--bios"); args.push_back(bios); }
+    // The real BIOS when the file is one (by its SHA-1), else the built-in
+    // replacements (as Android's files/no_bios): a file that is not the GBA
+    // BIOS would stop the runtime at start.
+    if (setup_file_is(bios, kBiosSha1)) { args.emplace_back("--bios"); args.push_back(bios); }
     else args.emplace_back("--no-bios");
+    // The mod: the one file in <dir>/mod, tried on the ROM first, as the
+    // runtime will (main_android.cpp pick_mod). One that does not apply, or
+    // changes the game's code, is set aside in <dir>/mod_refused and the
+    // original game starts, with a message.
+    if (!rom_given) {
+        const std::string mod = setup_mod_path(dir);
+        if (!mod.empty()) {
+            std::ifstream f(rom, std::ios::binary);
+            const std::vector<std::uint8_t> rom_bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            std::vector<std::uint8_t> out;
+            std::string summary, err;
+            if (!rom_bytes.empty() && gbarecomp::rom_patch_load_and_check(mod, rom_bytes, &out, &summary, &err)) {
+                std::fprintf(stderr, "desktop: mod %s: %s\n", mod.c_str(), summary.c_str());
+                args.emplace_back("--rom-patch");
+                args.push_back(mod);
+            } else {
+                const std::string name = std::filesystem::path(mod).filename().string();
+                std::filesystem::create_directories(dir + "/mod_refused", ec);
+                std::filesystem::rename(mod, dir + "/mod_refused/" + name, ec);
+                const std::string text = "The mod " + name + " can't be played: " + err +
+                                         ".\n\nThe original game starts instead.";
+                std::fprintf(stderr, "desktop: mod %s refused: %s\n", name.c_str(), err.c_str());
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Mod", text.c_str(), nullptr);
+            }
+        }
+    }
     args.emplace_back("--save-path");
     args.push_back(dir + "/totkol.sav");
     args.emplace_back("--window");

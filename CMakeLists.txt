@@ -58,12 +58,26 @@ endif()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/kol_map_ext_baked.inc"
      "R\"KOLEXT(${KOL_MAP_EXT_TEXT})KOLEXT\"\n")
 
+# The setup screen's typeface (src/kol_setup.cpp), built into the game: each
+# .ttf as a list of bytes for an array's initialiser.
+foreach(KOL_FONT Regular Bold)
+    set(KOL_FONT_TTF "${CMAKE_CURRENT_SOURCE_DIR}/third_party/roboto/Roboto-${KOL_FONT}.ttf")
+    set(KOL_FONT_INC "${CMAKE_CURRENT_BINARY_DIR}/kol_font_roboto_${KOL_FONT}.inc")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KOL_FONT_TTF}")
+    if(NOT EXISTS "${KOL_FONT_INC}" OR "${KOL_FONT_TTF}" IS_NEWER_THAN "${KOL_FONT_INC}")
+        file(READ "${KOL_FONT_TTF}" KOL_FONT_HEX HEX)
+        string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," KOL_FONT_HEX "${KOL_FONT_HEX}")
+        file(WRITE "${KOL_FONT_INC}" "${KOL_FONT_HEX}\n")
+    endif()
+endforeach()
+
 include("${CMAKE_CURRENT_SOURCE_DIR}/third_party/rcheevos.cmake")
 find_package(CURL REQUIRED)
 
 add_executable(KnightOfLodisRecomp
     src/main.cpp
     src/kol_desktop.cpp
+    src/kol_setup.cpp
     src/kol_cheevos.cpp
     src/kol_cheevos_curl.cpp
     src/kol_widescreen.cpp

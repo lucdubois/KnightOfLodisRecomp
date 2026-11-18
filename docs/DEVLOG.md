@@ -23221,6 +23221,44 @@ SDL_RENDER_DRIVER=software`, present dumps):
   screen's thread then sends the picture, or null once it is closed, as for
   a change made with the pad. Builds for Android; not tried on the Thor by
   me.
+- **The setup screen (2026-11-18).** Asked what other recomp projects do
+  (Zelda 64: Recompiled a launcher with Select ROM; Unleashed Recompiled an
+  installer wizard; Ship of Harkinian the ROM beside the program, else a
+  picker; the Perfect Dark port a fixed place and no screen), then for one
+  here in the Android screen's spirit.
+  - `src/kol_setup.{h,cpp}`: SetupActivity's page drawn with SDL: the title,
+    the three boxes ROM / BIOS / Mod (a red "!", a grey "?", a green check,
+    the same lines under each), the BIOS note, Remove mod and Play.
+  - **Text in Roboto**, Android's own typeface (third_party/roboto, Regular
+    and Bold, Apache 2.0; CMake writes each .ttf's bytes into the build,
+    `kol_font_roboto_*.inc`), drawn with stb_truetype (third_party/stb): a
+    size's ASCII glyphs baked once into a coverage texture, tinted when
+    drawn; rounded cards, a small folder shape in the browser. It was a
+    bitmap 8 x 8 font first (font8x8): the user called it horrible, "make it
+    a normal app font". The layout's unit is the window's height / 800.
+  - **Picking a file is a browser of our own**, not a system dialog: SDL2 has
+    none, and a portal's or zenity's cannot be counted on in the Deck's
+    Gaming Mode or inside a Flatpak. It opens on $HOME: folders first, hidden
+    names left out, ".." on top; D-pad, A, B, the shoulders or left/right a
+    page; a touch or the mouse on a row; the wheel.
+  - A file is checked by its SHA-1 before it is copied (the ROM to
+    totkol.gba, the BIOS to gba_bios.bin, written beside and renamed); a
+    wrong one is not copied and the page says so. A mod is tried on the ROM
+    (`rom_patch_load_and_check`) when the ROM is there, then goes to
+    `<dir>/mod/<its name>`, alone.
+  - `desktop_prepare`: the screen comes up in player mode when the directory
+    has no ROM or not this game's, or with `--setup`; closed without Play,
+    the game does not start. The BIOS is passed only when the file is the
+    GBA BIOS (else `--no-bios`: a wrong file used to stop the runtime). The
+    mod in `<dir>/mod` is tried again at start and passed as `--rom-patch`,
+    or set aside in `mod_refused` with a message, as Android does.
+  - With a controller attached the screen ignores the keyboard (the Deck's
+    Desktop Mode types keys from its buttons: every press twice).
+  - Checked on the Mac, headless (`KOL_SETUP_KEYS`, `KOL_SETUP_SHOT`,
+    `KOL_SETUP_START`): a wrong file refused with its message, the ROM and
+    the BIOS copied into an empty directory, the boxes turning green. Not
+    yet: on the Deck by hand, a mod picked, Options > Mod from the game
+    (MenuPlatform's pick_mod / restart are not wired on the desktop).
 - **"The menu does not display": found and fixed (2026-11-18).** Reported
   twice; the second time after the view size was changed in the menu. The
   Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu
