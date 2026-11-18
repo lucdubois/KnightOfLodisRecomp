@@ -47,10 +47,14 @@ optionally the BIOS and a mod; press **Play**. BACK (or the second screen's
 button) opens the options menu.
 
 Your save and save states are in Android's **Files** app, under the location
-**Knight of Lodis**: `totkol.sav` is the game's save, `totkol.state1` to
-`totkol.state3` the save state slots. Copy them out to back them up, or copy
-one in under the same name to use it (the one it replaces is kept as
-`<name>.bak`). Replace the save with the game closed: it is read at start.
+**Knight of Lodis**: `totkol.sav` is the game's save, and the folder `states`
+holds the save states of the Save States page, three files each
+(`0007.state`, its picture `0007.png` and its details `0007.txt`). Copy them
+out to back them up, or copy them in to use them (a file that is replaced is
+kept as `<name>.bak`). Replace the save with the game closed: it is read at
+start. A state copied in shows on the Save States page after a restart. A mod
+has its own save and its own states folder, each named with the mod's code
+(`totkol-1a2b3c4d.sav`, `states-1a2b3c4d`).
 
 ## Building
 

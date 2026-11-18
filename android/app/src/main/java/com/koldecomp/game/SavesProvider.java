@@ -22,8 +22,10 @@ import java.io.IOException;
  * The files stay where the game keeps them (the app's private files folder);
  * this only lets the Files app see some of them: at the top, files named like
  * a save or a state (totkol.sav, totkol.state1, anything.sav, and the ".bak" a
- * replaced one leaves), and the states folder with all it holds. The ROM, the
- * BIOS and the settings are never shown.
+ * replaced one leaves), and the numbered states' folder with all it holds:
+ * "states", and "states-<8 hex>" for each mod played (a mod keeps its own save,
+ * totkol-<8 hex>.sav, and its own states). The ROM, the BIOS and the settings
+ * are never shown.
  *
  * A file put in under a name that exists replaces it; the one that was there
  * is kept beside it as "<name>.bak". The game reads totkol.sav when it starts,
@@ -33,7 +35,6 @@ public class SavesProvider extends DocumentsProvider {
     private static final String ROOT_ID = "saves";
     // The top folder's document id; every other id is a path under files/.
     private static final String TOP = "top";
-    private static final String STATES_DIR = "states";
     private static final String BAK = ".bak";
 
     private static final String[] ROOT_COLS = {
@@ -57,13 +58,26 @@ public class SavesProvider extends DocumentsProvider {
         return name.matches("[^/]+\\.(sav|state[0-9]*)(\\.bak)?");
     }
 
+    /** A numbered states' folder at the top: the game's, or a mod's (kol_states.cpp). */
+    private static boolean statesDir(String name) {
+        return name.matches("states(-[0-9a-f]{8})?");
+    }
+
     /** May this path under files/ be shown? Never anything with a ".." in it. */
     private static boolean shown(String id) {
-        if (id.equals(TOP) || id.equals(STATES_DIR)) return true;
-        for (String part : id.split("/", -1))
+        if (id.equals(TOP)) return true;
+        String[] parts = id.split("/", -1);
+        for (String part : parts)
             if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
-        if (id.startsWith(STATES_DIR + "/")) return true;
-        return !id.contains("/") && saveName(id);
+        if (statesDir(parts[0])) return true;
+        return parts.length == 1 && saveName(id);
+    }
+
+    /** May a file of this name be made in (or renamed within) this folder? */
+    private static boolean nameAllowed(String parentId, String name) {
+        if (name.contains("/") || !shown(childId(parentId, name))) return false;
+        // At the top only a save or a state: never a file in a states folder's name.
+        return !parentId.equals(TOP) || saveName(name);
     }
 
     private File file(String id) throws FileNotFoundException {
@@ -142,8 +156,8 @@ public class SavesProvider extends DocumentsProvider {
             for (File f : children) {
                 String id = childId(parentId, f.getName());
                 if (!shown(id)) continue;
-                // At the top only files, and the states folder.
-                if (parentId.equals(TOP) && f.isDirectory() != id.equals(STATES_DIR)) continue;
+                // At the top only files, and the states folders.
+                if (parentId.equals(TOP) && f.isDirectory() != statesDir(f.getName())) continue;
                 addRow(c, id, f);
             }
         }
@@ -170,7 +184,7 @@ public class SavesProvider extends DocumentsProvider {
             throws FileNotFoundException {
         File parent = file(parentId);
         String id = childId(parentId, name);
-        if (!parent.isDirectory() || name.contains("/") || !shown(id)
+        if (!parent.isDirectory() || !nameAllowed(parentId, name)
                 || Document.MIME_TYPE_DIR.equals(mimeType))
             throw new FileNotFoundException("not a save or a state: " + name);
         File f = new File(parent, name);
@@ -194,7 +208,7 @@ public class SavesProvider extends DocumentsProvider {
     public String renameDocument(String id, String name) throws FileNotFoundException {
         File from = file(id);
         String toId = childId(parentId(id), name);
-        if (id.equals(TOP) || from.isDirectory() || name.contains("/") || !shown(toId))
+        if (id.equals(TOP) || from.isDirectory() || !nameAllowed(parentId(id), name))
             throw new FileNotFoundException("not a save or a state: " + name);
         File to = new File(from.getParentFile(), name);
         if (to.exists()) throw new FileNotFoundException(name + " exists");
