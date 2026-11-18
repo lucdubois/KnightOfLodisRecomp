@@ -4,6 +4,7 @@
 
 #include "kol_focus.h"
 #include "kol_focus_internal.h"
+#include "kol_workers.h"
 
 namespace {
 // The screen box a roof's or a box's footprint (X0..X1 x Z0..Z1, up to
@@ -116,7 +117,7 @@ bool SceneBuild::wall_lit(int face, float X, float Z, float hit, bool awnings) {
 
 // The editor's roofs drawn over the terrain pass's pixels (RoofCache).
 void SceneBuild::roofs_pass() {
-    wt.lap("scene.roofs");
+    wt.lap("roofs.key");
     // The roofs' and boxes' cache (RoofCache).
     static const bool roof_cache_on = kol::env_not_zero("KOL_ROOF_CACHE");
     if (roof_cache_on && (!roofs.empty() || !boxes.empty())) {
@@ -198,6 +199,13 @@ void SceneBuild::roofs_pass() {
     // there, else the first slope it meets (a slope steeper than the ray,
     // facing away, is not met). The block's own pixels always take it; any
     // other pixel only where the house is nearer than what it shows.
+    wt.lap("scene.roofs");
+    // KOL_ROOF_PAR_CHECK=1: the roofs drawn again from the same start on one
+    // thread (roof_par_serial_now), and everything the pass leaves compared.
+    static const bool roof_par_check = kol::env_set("KOL_ROOF_PAR_CHECK");
+    static thread_local RoofResult check_start;
+    const bool checking_split = roof_par_check && !roof_par_serial_now && !roof_hit && !roofs.empty();
+    if (checking_split) check_start.take();
     if (!roof_hit) {
         g_awning.clear();
         g_under_fix.clear();
@@ -218,7 +226,8 @@ void SceneBuild::roofs_pass() {
         std::vector<std::uint8_t> awning_mask_store;
         std::vector<std::uint8_t>* const awning_mask = mask_path && any_open ? &awning_mask_store : nullptr;
         if (awning_mask) awning_mask->assign(npx, 0);
-        for (std::size_t ri = 0; ri < roofs.size(); ++ri) {
+        // Roof ri over the pixels of rows [row_lo, row_hi).
+        auto draw_roof = [&](std::size_t ri, int row_lo, int row_hi) {
             const kol::TileRoof& r = roofs[ri];
             const RoofExtent& ext = roof_ext[ri];
             const float X0 = ext.X0, X1 = ext.X1, Z0 = ext.Z0, Z1 = ext.Z1;
@@ -294,7 +303,7 @@ void SceneBuild::roofs_pass() {
             }
             constexpr int kAwningNear = 8;
             for (int phase = r.open && g_scene_rgb ? 0 : 1; phase < (r.open && g_scene_rgb ? 3 : 2); ++phase)
-            for (int py = std::max(0, sy0); py < std::min(h, sy1); ++py)
+            for (int py = std::max({0, sy0, row_lo}); py < std::min({h, sy1, row_hi}); ++py)
                 for (int px = std::max(0, sx0); px < std::min(w, sx1); ++px) {
                     const std::size_t k = static_cast<std::size_t>(py) * w + px;
                     const unsigned ground_layer = ground_layer_of(k);
@@ -506,6 +515,38 @@ void SceneBuild::roofs_pass() {
                         g_ao[k] = lit_ao(lit);
                     }
                 }
+        };
+        // The roofs in order, a run of closed ones over the row pool in bands
+        // of rows: each band's thread draws every roof of the run in order
+        // over its own rows, so a pixel still takes the roofs in the order one
+        // thread gives it (a later roof tests what an earlier one left there),
+        // and a roof pixel reads and writes its own pixel only. An awning
+        // (open) stays on this thread, whole: its three passes hand each other
+        // the cloth's colours and the pixels refused, over all its rows.
+        // (2026-11-18: map 89's 60 roofs, drawn again every picture because
+        // the water under its awning never leaves their cache's key alone,
+        // were 3.3 ms a job on the Steam Deck.) A helper takes this thread's
+        // t_present for the run. KOL_ROOF_SERIAL=1: one thread, as before.
+        // KOL_ROOF_PAR_CHECK=1: see roofs_pass's end.
+        static const bool roof_serial = kol::env_set("KOL_ROOF_SERIAL");
+        const bool roof_split = !roof_serial && !roof_par_serial_now;
+        const bool present = t_present;
+        constexpr int kRoofBand = 16;
+        for (std::size_t ri = 0; ri < roofs.size();) {
+            if (roofs[ri].open || !roof_split) {
+                draw_roof(ri, 0, h);
+                ++ri;
+                continue;
+            }
+            std::size_t end = ri;
+            while (end < roofs.size() && !roofs[end].open) ++end;
+            kol::parallel_rows(h, kRoofBand, [&](int, int r0, int r1) {
+                const bool was = t_present;
+                t_present = present;
+                for (std::size_t i = ri; i < end; ++i) draw_roof(i, r0, r1);
+                t_present = was;
+            });
+            ri = end;
         }
         // A roof's art is outlined in dark blue one pixel outside the cells
         // it covers (its back eave, the gable's slopes): those pixels' rays
@@ -515,6 +556,7 @@ void SceneBuild::roofs_pass() {
         // pixel beside a roofed one, and not in front of it, takes its place.
         // Growing the footprint instead (2 or 4 units) pulled the ground
         // beside the house onto the roof. KOL_ROOF_NO_OUTLINE=1 leaves them.
+        wt.lap("roofs.outline");
         static const bool roof_outline = !kol::env_true("KOL_ROOF_NO_OUTLINE");
         if (roof_outline && g_scene_rgb) {
             auto outline = [](const std::uint8_t* c) { return c[0] + c[1] + c[2] < 200 && c[2] >= c[0]; };
@@ -565,6 +607,7 @@ void SceneBuild::roofs_pass() {
         // Behind the awnings' BG0 cloth (g_awning 2): the nearest BG0 pixel
         // that is not cloth, down its column first (what stands under the
         // hem), then along its row.
+        wt.lap("roofs.under");
         if (any_open && g_scene_rgb)
             for (std::size_t k = 0; k < npx; ++k) {
                 if (g_awning[k] != 2) continue;
@@ -592,7 +635,21 @@ void SceneBuild::roofs_pass() {
                 std::fclose(f);
             }
     }
-
+    if (checking_split) {
+        static thread_local RoofResult split_out;
+        split_out.take();
+        check_start.put();
+        roof_par_serial_now = true;
+        roofs_pass();
+        roof_par_serial_now = false;
+        const bool same = split_out.same();
+        static long checks = 0, fails = 0;
+        ++checks;
+        if (!same) ++fails;
+        if (!same || checks % 300 == 1)
+            std::fprintf(stderr, "roof-par-check: %s, %zu roofs (%ld checks, %ld with a difference)\n",
+                         same ? "the same" : "DIFFERENT", roofs.size(), checks, fails);
+    }
 }
 
 // The editor's boxes, then the roofs' and boxes' cache stored.
@@ -672,6 +729,7 @@ void SceneBuild::boxes_pass() {
         }
     }
 
+    wt.lap("roofs.keep");
     if (roof_key != 0 && !roof_hit) {
         if (RoofCache::Slot* slot = roof_cache_check ? g_roof_cache.find(roof_key) : nullptr) {
             g_roof_cache.count_check(slot->r.same(), "roof");

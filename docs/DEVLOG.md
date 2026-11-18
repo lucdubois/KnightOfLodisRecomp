@@ -23109,6 +23109,38 @@ SDL_RENDER_DRIVER=software`, present dumps):
     window: scene.roofs ~3.3 ms (its cache keys on the scene's colours under
     an awning, which the animated water changes every picture), sun_cast,
     the water.
+- **The roofs pass in bands of rows (2026-11-18; asked to look at it).** Map
+  89 has 60 roofs and their cache never answers there (the Mac: its key
+  0.25-0.38 ms, the drawing 0.9-1.0, the outline step 0.12-0.25, the boxes
+  0.16, nothing ever kept: the key reads the scene's colours under the
+  awning, and the water there is animated).
+  - `SceneBuild::roofs_pass` (kol_focus_roofs.cpp): a roof is
+    `draw_roof(ri, row_lo, row_hi)`; a run of closed roofs goes over
+    `parallel_rows` in bands of 16 rows, each band's thread drawing every
+    roof of the run in order over its own rows, so a pixel takes the roofs
+    in the same order as before (a later roof tests what an earlier one left
+    on the pixel, and its owner). An awning stays whole on the worker's
+    thread: its three passes hand each other the cloth's colours and the
+    refused pixels. `KOL_ROOF_SERIAL=1` old; `KOL_ROOF_PAR_CHECK=1` draws the
+    roofs again from the same start on one thread and compares everything
+    the pass leaves (RoofResult). The timers: roofs.key, scene.roofs,
+    roofs.outline, roofs.under, roofs.keep.
+  - **Checked:** the check, 301 times, 0 differences (the Mac and the Deck);
+    `KOL_PERSP_HASH` over the map 89 run the same md5 serial, split and
+    before the change (cc1567f9).
+  - **The Mac:** scene.roofs 1.01 -> 0.46 ms in the pan, 0.79 -> 0.38 after.
+  - **The Deck, the state, twice each:** scene.roofs 2.1 -> 1.05 ms; 2.5-5 s
+    53.8 and 55.5 -> 57.3 and 57.2 fps (long frames 43, 32 -> 22, 31 of 150);
+    a job's mean over the run 13.2 -> 12.3 ms.
+  - Left: the key's hash (one thread, every picture), the outline step over
+    the whole picture, the first 2.5 s (51 fps, the scene's load).
+  - **The Deck, the build as it stands, 25 s each** (fps / frames over 20 ms
+    in each 5 s; the worker's mean job): the opening (state 0003) 53.2/46,
+    then 60.0 with 2-4, 11.6 ms; map 55's pan 58.0/10, then 60.0 with 2-8,
+    12.0 ms; map 100 (state 0001) 55.7/15, 60.0/3, 57.2/2, 59.4/5, 60.0/4,
+    11.7 ms (its dip at 10-15 s not looked at). All five checks on, each
+    scene: no difference. (A grep for "N of M" lines counted hd_audio's "21
+    of 21 samples" as one: not a check's.)
 - **"The menu does not display" (the user, 2026-11-18): not reproduced, by
   me or by the user after.** Opened by script it draws on the Mac and on the
   Deck's screen, at the title (240x160, the logical renderer) and in a battle

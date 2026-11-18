@@ -1742,6 +1742,7 @@ struct SceneBuild {
         return v;
     }();
     bool roof_hit = false;
+    bool roof_par_serial_now = false;   // KOL_ROOF_PAR_CHECK's second run: the roofs on one thread
     std::uint64_t roof_key = 0;
     // The props (prop_base): whether lifted (props, walls), the scene's size.
     std::size_t pixels = 0;
