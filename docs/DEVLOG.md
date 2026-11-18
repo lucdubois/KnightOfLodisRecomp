@@ -23345,6 +23345,38 @@ SDL_RENDER_DRIVER=software`, present dumps):
   record the wish while the game is out of sight. onStop, not onPause: on a
   two-screen device the game can lose focus to an app on the other screen
   and still be in sight. Built; not tried on the Thor by me.
+- **macOS (2026-11-18): `tools/package_macos.sh`** -> `build/release/
+  KnightOfLodisRecomp-<version>-macos-arm64.zip` (71 MB) holding "Knight of
+  Lodis Recomp.app". The public build in `build-macos/` on this Mac (Release,
+  KOL_DEV_TOOLS=OFF). The app: the game in Contents/MacOS (rpath
+  @executable_path/../Frameworks), Homebrew's sdl2-compat and SDL3 in
+  Contents/Frameworks, the HD bank, the icon (an .icns from the Android one)
+  and the notices in Contents/Resources (kol_hd_audio looks there on a Mac:
+  a data file in Contents/MacOS breaks the signature), Info.plist (id
+  com.totkol.game, version from versionName), an ad-hoc signature. curl is
+  the system's. Player files in ~/Library/Application Support/
+  KnightOfLodisRecomp; the setup screen as on Linux.
+  - **Trap:** sdl2-compat loads SDL3 at run time as
+    `@loader_path/libSDL3.dylib` (its strings say so; gbarecomp's
+    package_macos.sh notes it too). Bundled as libSDL3.0.dylib it was not
+    found, and sdl2-compat put up an error dialog from its initializer,
+    before main: the app hung with no output (`sample` showed
+    `dllinit -> error_dialog -> NSAlert runModal`).
+  - **Checked:** unpacked from the zip, the signature verifies; run without a
+    picture for 400 frames, exit 0, the bank from Contents/Resources, SDL2 and
+    SDL3 from Contents/Frameworks (DYLD_PRINT_LIBRARIES; it is dropped
+    through /usr/bin/perl, SIP). Not tried: opening it from Finder, a
+    downloaded copy through Gatekeeper.
+  - **The system's Open panel on a Mac** (asked 2026-11-18): a box on the
+    setup screen opens NSOpenPanel (`src/kol_setup_mac.mm`, AppKit; CMake
+    enables OBJCXX on Apple only) in place of the screen's own browser,
+    which Linux keeps. The file chosen is checked and taken as before; a
+    refused one leaves its message on the main page; the window is raised
+    again after. Built into the package; the panel itself not seen by me
+    (it would open on the user's Mac).
+  - Limits: Apple Silicon, macOS 15 or newer (Homebrew's SDL is built for
+    15.0); no Developer ID, so a downloaded copy needs Privacy & Security >
+    Open Anyway once.
 - **"The menu does not display": found and fixed (2026-11-18).** Reported
   twice; the second time after the view size was changed in the menu. The
   Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu

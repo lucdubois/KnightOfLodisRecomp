@@ -72,3 +72,5 @@ totkol-*.sav
 *.ips
 *.ups
 *.bps
+/build-macos/
+/build-macos.*

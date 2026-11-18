@@ -108,6 +108,11 @@ std::vector<std::string> bank_paths() {
 #else
     const std::string dir = exe_dir();
     if (!dir.empty()) paths.push_back(dir + kBankName);
+#if defined(__APPLE__)
+    // A Mac app bundle keeps data in Contents/Resources (a non-code file in
+    // Contents/MacOS breaks its signature): tools/package_macos.sh.
+    if (!dir.empty()) paths.push_back(dir + "../Resources/" + kBankName);
+#endif
     paths.push_back(std::string("build/") + kBankName);
 #endif
     return paths;

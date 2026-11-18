@@ -29,6 +29,10 @@
 #include "stb_truetype.h"   // third_party/stb, public domain
 
 namespace kol {
+#if defined(__APPLE__)
+// kol_setup_mac.mm: the system's Open panel. False when cancelled.
+bool setup_mac_open_panel(const char* message, std::string* path);
+#endif
 namespace {
 
 namespace fs = std::filesystem;
@@ -349,7 +353,22 @@ struct Setup {
         status.clear();
     }
 
+    SDL_Window* window = nullptr;
+
     void start_pick(int what) {
+#if defined(__APPLE__)
+        // A Mac: the system's Open panel, not the screen's browser.
+        static const char* const kAsk[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+                                            "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
+        std::string file;
+        const bool chosen = setup_mac_open_panel(kAsk[what], &file);
+        if (window) SDL_RaiseWindow(window);
+        if (!chosen) return;
+        picking = what;
+        take(file);
+        if (picking == what) picking = -1;   // (refused: the message on the main page)
+        return;
+#endif
         picking = what;
         if (path.empty()) {
             const char* home = std::getenv("HOME");
@@ -694,6 +713,7 @@ bool setup_run(const std::string& dir, bool fullscreen) {
     Setup st;
     st.dir = dir;
     st.ui.r = ren;
+    st.window = win;
     st.ui.regular.load(kRobotoRegular);
     st.ui.bold.load(kRobotoBold);
     st.refresh();

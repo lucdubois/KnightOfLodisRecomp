@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(KnightOfLodisRecomp CXX)
+if(APPLE)
+    enable_language(OBJCXX)   # src/kol_setup_mac.mm
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +81,7 @@ add_executable(KnightOfLodisRecomp
     src/main.cpp
     src/kol_desktop.cpp
     src/kol_setup.cpp
+    $<$<PLATFORM_ID:Darwin>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_setup_mac.mm>
     src/kol_cheevos.cpp
     src/kol_cheevos_curl.cpp
     src/kol_widescreen.cpp
@@ -138,6 +142,10 @@ target_include_directories(KnightOfLodisRecomp PRIVATE
 # linker needs (the four archives are mutually recursive).
 target_link_gbarecomp_runtime_stack(KnightOfLodisRecomp)
 target_link_libraries(KnightOfLodisRecomp PRIVATE kol_rcheevos CURL::libcurl)
+if(APPLE)
+    # The setup screen's file picker (src/kol_setup_mac.mm).
+    target_link_libraries(KnightOfLodisRecomp PRIVATE "-framework AppKit")
+endif()
 
 set_target_properties(KnightOfLodisRecomp PROPERTIES
     CXX_STANDARD 20
