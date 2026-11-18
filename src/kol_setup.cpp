@@ -275,8 +275,8 @@ struct Ui {
 
 // ── The screen ──────────────────────────────────────────────────────────
 
-enum class Act { None, Left, Right, Up, Down, Accept, Back, PageUp, PageDown, Click, Quit };
-struct Input { Act act = Act::None; int x = 0, y = 0; };
+enum class Act { None, Left, Right, Up, Down, Accept, Back, PageUp, PageDown, Click, Drop, Quit };
+struct Input { Act act = Act::None; int x = 0, y = 0; std::string file; };
 
 struct Box { SDL_Rect at{}; char icon = '?'; Rgb dot = kGrey; std::string line; };
 
@@ -389,6 +389,29 @@ struct Setup {
         refresh();
     }
 
+    // A file dropped on the window (2026-11-18, asked): what it is, by its
+    // contents (the ROM, the GBA BIOS) or its extension (a mod), then taken
+    // as if picked in that box's browser. From the browser too.
+    void dropped(const std::string& file) {
+        std::vector<std::uint8_t> data;
+        if (!read_file(file, &data)) { status = "Cannot read " + fs::path(file).filename().string() + "."; return; }
+        const std::string sha = sha1_of(data);
+        std::string ext = fs::path(file).extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const int kind = same_hex(sha, kRomSha1) ? 0 : same_hex(sha, kBiosSha1) ? 1
+                       : (ext == ".ips" || ext == ".ups" || ext == ".bps") ? 2 : -1;
+        if (kind < 0) {
+            status = fs::path(file).filename().string() +
+                     " is not this game's ROM (the USA version), the GBA BIOS or a mod (.ips, .ups, .bps).";
+            return;
+        }
+        const int was = picking;
+        picking = kind;
+        take(file);                          // (success: back to the main page)
+        if (picking == kind) picking = was;  // (refused: where it was, with the message)
+        focus = kind;
+    }
+
     void remove_mod() {
         std::error_code ec;
         for (const fs::directory_entry& e : fs::directory_iterator(dir + "/mod", ec)) fs::remove(e.path(), ec);
@@ -425,7 +448,9 @@ struct Setup {
             for (std::size_t l = 0; l < lines.size() && l < 3; ++l)
                 u.text_mid(u.regular, cx, cy + static_cast<int>(l) * (small + u.px(4)), lines[l], small, kSoft);
         }
-        y += bh + u.h / 32;
+        y += bh + u.h / 40;
+        u.text_mid(u.bold, u.w / 2, y, "Or drag a file onto this window: the ROM, the BIOS or a mod.", small, kInk);
+        y += small + u.px(14);
         static const std::string kNote =
             "A GBA BIOS file is best: the game runs on the real BIOS, as on the console. Without one, an HLE BIOS "
             "(built-in replacements for the BIOS's functions) is used instead. It is less tested: some scenes may "
@@ -613,6 +638,13 @@ Input read_event(const SDL_Event& e, bool pad_attached) {
         case SDL_MOUSEBUTTONDOWN:
             if (e.button.button == SDL_BUTTON_LEFT) { in.act = Act::Click; in.x = e.button.x; in.y = e.button.y; }
             break;
+        case SDL_DROPFILE:
+            if (e.drop.file) {
+                in.act = Act::Drop;
+                in.file = e.drop.file;
+                SDL_free(e.drop.file);
+            }
+            break;
         case SDL_MOUSEWHEEL:
             in.act = e.wheel.y > 0 ? Act::Up : e.wheel.y < 0 ? Act::Down : Act::None;
             break;
@@ -628,9 +660,20 @@ bool setup_run(const std::string& dir, bool fullscreen) {
         std::fprintf(stderr, "setup: SDL: %s\n", SDL_GetError());
         return false;
     }
-    SDL_Window* win = SDL_CreateWindow("Knight of Lodis Recomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 800,
-                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
-                                           (fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+    // Always a window with its frame (asked 2026-11-18: one that can be
+    // closed, and that a file can be dropped on), whatever the game will be;
+    // its size from the screen's, 16:10, at most 1120 x 700. (A desktop
+    // compositor such as the Deck's Gaming Mode shows it full screen anyway.)
+    (void)fullscreen;
+    int ww = 1120, wh = 700;
+    SDL_Rect usable{};
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0) {
+        ww = std::min(ww, usable.w * 85 / 100);
+        wh = std::min(ww * 10 / 16, usable.h * 85 / 100);
+        ww = std::min(ww, wh * 16 / 10);
+    }
+    SDL_Window* win = SDL_CreateWindow("Knight of Lodis Recomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, ww, wh,
+                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer* ren = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC) : nullptr;
     if (!ren && win) ren = SDL_CreateRenderer(win, -1, 0);
     if (!win || !ren) {
@@ -679,6 +722,7 @@ bool setup_run(const std::string& dir, bool fullscreen) {
                 else if (t == "pgdn") in.act = Act::PageDown;
                 else if (std::sscanf(t.c_str(), "click:%d:%d", &x, &y) == 2) { in.act = Act::Click; in.x = x; in.y = y; }
                 else if (t == "quit") in.act = Act::Quit;
+                else if (t.rfind("drop:", 0) == 0) { in.act = Act::Drop; in.file = t.substr(5); }
                 if (in.act != Act::None) script.push_back(in);
                 t.clear();
                 if (!*p) break;
@@ -741,6 +785,7 @@ bool setup_run(const std::string& dir, bool fullscreen) {
         else if (scripted && shots > static_cast<int>(script.size())) inputs.push_back({Act::Quit, 0, 0});
         for (const Input& in : inputs) {
             if (in.act == Act::Quit) { done = true; break; }
+            if (in.act == Act::Drop) { st.dropped(in.file); continue; }
             if (st.picking >= 0) st.input_browser(in);
             else if (st.input_main(in)) { play = true; done = true; break; }
         }

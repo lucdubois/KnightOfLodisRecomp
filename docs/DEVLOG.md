@@ -23252,6 +23252,14 @@ SDL_RENDER_DRIVER=software`, present dumps):
     GBA BIOS (else `--no-bios`: a wrong file used to stop the runtime). The
     mod in `<dir>/mod` is tried again at start and passed as `--rom-patch`,
     or set aside in `mod_refused` with a message, as Android does.
+  - **A window, and files dropped on it (2026-11-18, asked).** The screen is
+    always a framed, closable window (at most 1120 x 700, 16:10, 85% of the
+    usable screen), whatever the game will be; closing it means the game
+    does not start. A file dropped on it (SDL_DROPFILE) is told by its SHA-1
+    (the ROM, the GBA BIOS) or its extension (.ips / .ups / .bps) and taken
+    as if picked in that box; anything else is named in red. A bold line
+    under the boxes says so. Checked headless (`KOL_SETUP_KEYS=drop:<path>`):
+    a random file refused, the ROM then the BIOS taken, their boxes green.
   - With a controller attached the screen ignores the keyboard (the Deck's
     Desktop Mode types keys from its buttons: every press twice).
   - Checked on the Mac, headless (`KOL_SETUP_KEYS`, `KOL_SETUP_SHOT`,
@@ -23259,6 +23267,75 @@ SDL_RENDER_DRIVER=software`, present dumps):
     the BIOS copied into an empty directory, the boxes turning green. Not
     yet: on the Deck by hand, a mod picked, Options > Mod from the game
     (MenuPlatform's pick_mod / restart are not wired on the desktop).
+- **The package: one Flatpak file (2026-11-18).** `tools/package_flatpak.sh`
+  -> `build/release/KnightOfLodisRecomp-<versionName>-x86_64.flatpak` (62.7
+  MB at 1.0.1; 163 MB installed).
+  - The public build on the Deck, in the SDK 24.08: Release,
+    `KOL_DEV_TOOLS=OFF`, no `-march` (any x86-64), in `~/kol/.../build-release`
+    (a first build of every shard: ~9 minutes with a game running beside
+    it). The script refuses a binary that holds a dev tool's string.
+  - Put together with the flatpak command's own `build-init` / `build-finish`
+    / `build-export` / `build-bundle`, not flatpak-builder (the Deck has
+    none, and gbarecomp's `build_flatpak.sh` expects gbarecomp inside the
+    game's tree and its launcher UI). Runtime org.freedesktop.Platform 24.08
+    (SDL2, curl and the rest come from it: nothing bundled); the bundle names
+    Flathub as where to get it.
+  - In it: the stripped game, `hd_instruments.bank` beside it, `knightoflodis`
+    (starts it with `--fullscreen`; `--windowed` for a window), the desktop
+    entry, the Android launcher's 192 px icon, the metainfo, the notices.
+    App id `com.totkol.game`, as Android's public app (my pick: not asked).
+    Permissions: x11, wayland, pulseaudio, all devices, ipc, the network
+    (RetroAchievements), and home, /run/media and /media read-only for the
+    setup screen's browser. The player's files are in
+    `~/.var/app/com.totkol.game/data/KnightOfLodisRecomp`.
+  - **The catalogue entry** (the user, opening the file in Discover: the app
+    id for a name, "Unknown author", "Licenses: Unknown"). The metainfo was
+    in the app but a store reads the compiled copy: `appstreamcli compose`
+    (in the SDK, run through `flatpak build appdir`) writes
+    share/app-info, `flatpak build-update-repo` the repo's appstream branch,
+    which `build-bundle` carries. It wants a 64 or 128 px icon
+    (icon-not-found with the 192 alone): both made with sips. The metainfo
+    now names the developer "Knight of Lodis Recomp contributors" (the user
+    did not want their name), the licence by its SPDX id
+    `PolyForm-Noncommercial-1.0.0`, categories Game / StrategyGame, and the
+    release from versionName (1.1 since 2026-11-18, every platform).
+  - A public build keeps the runtime's own files (coverage, miss list, a
+    hang's dumps: written to the current directory) in `<dir>/logs`
+    (`desktop_prepare` changes directory there): started from a package the
+    current directory is the player's home.
+  - **Checked on the Deck:** installed with `flatpak install --user`, run
+    without a picture (`SDL_VIDEODRIVER=dummy`, `--rom` given) for 400
+    frames: it starts in player mode on its own directory, finds the bank in
+    /app/bin, exits 0, and its four log files are in `logs`, none in the home
+    folder. **Not yet:** started by hand (the setup screen, Play, a session),
+    added to Steam, Gaming Mode, another distribution, an Intel or NVIDIA GPU.
+- **The AppImage (2026-11-18): the download for players.** The Flatpak,
+  opened in Discover, asked for the deck password ("configure software
+  repositories"), with and without `--runtime-repo` (Flathub named): a local
+  bundle is registered as a source and installed system-wide, privileged on
+  SteamOS, and many Decks have no password. `flatpak install --user` needs
+  none; Flathub would need none. The user chose the AppImage: one file, run
+  in place. The Flatpak script stays, for Flathub later.
+  - `tools/package_appimage.sh`: the same public build (Release,
+    KOL_DEV_TOOLS=OFF, no -march), then an AppDir on the Deck: the stripped
+    game and the HD bank in usr/bin, the libraries `ldd` names inside the
+    SDK copied to usr/lib (SDL2, curl, ssl / crypto, nghttp2, idn2, psl,
+    unistring, ffi, z, decor, libstdc++, libgcc_s) but the system's (glibc,
+    GL / EGL / Vulkan / drm, X11 / xcb / Wayland / xkbcommon, ALSA / Pulse,
+    dbus / udev / systemd), `AppRun` (LD_LIBRARY_PATH to usr/lib,
+    `--fullscreen` unless `--windowed`), the desktop entry (validated), the
+    icon, the notices. 170 MB unpacked.
+  - **Checked:** the AppDir run on SteamOS itself, outside the SDK, without
+    a picture, 400 frames: player mode, the bank found, exit 0.
+  - **Packed** with appimagetool (the AppImage project's "continuous" build,
+    fetched on the Deck once the user allowed it; sha256 e8c1169c...553b03,
+    `~/kol/appimage/tools/`): `KnightOfLodisRecomp-1.1-x86_64.AppImage`,
+    80.6 MB. Run on SteamOS (FUSE present, no extraction needed) without a
+    picture for 400 frames: player mode, the bank found inside the mounted
+    image, exit 0. A copy on the Deck's desktop for the user to try.
+  - The AppImage needs glibc 2.40 or newer (the SDK's): SteamOS 3.7 has 2.41;
+    Ubuntu 22.04 (2.35) would not run it. Player files in
+    `~/.local/share/KnightOfLodisRecomp`.
 - **"The menu does not display": found and fixed (2026-11-18).** Reported
   twice; the second time after the view size was changed in the menu. The
   Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu

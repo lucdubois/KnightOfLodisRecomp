@@ -30,9 +30,10 @@ bool setup_file_is(const std::string& path, const char* sha1_hex);
 // The mod in `dir`/mod (the one file there), or "".
 std::string setup_mod_path(const std::string& dir);
 
-// Runs the screen over `dir`. True: Play was chosen with the right ROM in
-// place. False: the window was closed (the game does not start).
-// `fullscreen`: as the game will be.
+// Runs the screen over `dir`, in a window of its own (closable; a file
+// dropped on it is taken as the ROM, the BIOS or a mod by what it is). True:
+// Play was chosen with the right ROM in place. False: the window was closed
+// (the game does not start). `fullscreen`: unused, the screen is a window.
 bool setup_run(const std::string& dir, bool fullscreen);
 
 }  // namespace kol

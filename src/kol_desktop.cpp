@@ -212,6 +212,16 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
         }
     }
 
+    // A public build keeps what the runtime writes beside itself (the
+    // coverage summary, the miss list, a hang's dumps: names relative to the
+    // current directory) in <dir>/logs, not wherever the game was started
+    // from (a packaged game's is the player's home folder). A dev build
+    // stays where it is: its test runs name files relative to the tree.
+    if constexpr (!kDevTools) {
+        const std::string logs = dir + "/logs";
+        std::filesystem::create_directories(logs, ec);
+        std::filesystem::current_path(logs, ec);
+    }
     // No C toolchain on a player's machine: the static build and the
     // interpreter bridge only, as on Android.
     SDL_setenv("GBARECOMP_SELFHEAL_RECOMPILE", "0", 0);
