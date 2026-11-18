@@ -81,6 +81,20 @@ public class MainActivity extends SDLActivity {
         }
     }
 
+    // Out of sight (Home, another app): the second screen's panel goes too, and
+    // comes back with the game (SecondScreen.onBackground / onForeground).
+    @Override
+    protected void onStop() {
+        SecondScreen.onBackground();
+        super.onStop();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        SecondScreen.onForeground();
+    }
+
     @Override
     protected void onDestroy() {
         SecondScreen.stop();

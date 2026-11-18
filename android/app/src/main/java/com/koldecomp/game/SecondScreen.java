@@ -144,7 +144,7 @@ public final class SecondScreen {
             try {
                 if (sPresentation != null) {
                     if (on) { if (sPresentation.isShowing()) sPresentation.hide(); }
-                    else if (!sPresentation.isShowing()) sPresentation.show();
+                    else if (!sBackground && sEnabled && !sPresentation.isShowing()) sPresentation.show();
                 }
             } catch (Exception e) {
                 Log.e(TAG, "could not toggle presentation", e);
@@ -208,6 +208,8 @@ public final class SecondScreen {
     public static void setEnabled(final boolean on) {
         if (sActivity == null || sPresentation == null) return;
         sActivity.runOnUiThread(() -> {
+            sEnabled = on;
+            if (sBackground) return;   // (shown again, or not, by onForeground)
             try {
                 if (on) {
                     if (!sDebugSingle && !sPresentation.isShowing()) sPresentation.show();
@@ -342,6 +344,41 @@ public final class SecondScreen {
         final StatsView v = target();
         if (v == null) return;
         v.setSceneStrip(argb, w, h, scene);
+    }
+
+    // The second screen while the game is out of sight (asked 2026-11-18 on the
+    // Thor: Home or another app left the panel on the bottom screen, since the
+    // game keeps running behind). Hidden when the activity stops, shown again
+    // when it starts, if the player's setting and No Second Screen allow it.
+    private static boolean sBackground = false;
+    private static boolean sEnabled = true;
+
+    /** MainActivity.onStop: the game is out of sight. */
+    static void onBackground() {
+        if (sActivity == null) return;
+        sActivity.runOnUiThread(() -> {
+            sBackground = true;
+            try {
+                if (sPresentation != null && sPresentation.isShowing()) sPresentation.hide();
+            } catch (Exception e) {
+                Log.e(TAG, "could not hide presentation", e);
+            }
+        });
+    }
+
+    /** MainActivity.onStart after a stop: the game is back. */
+    static void onForeground() {
+        if (sActivity == null) return;
+        sActivity.runOnUiThread(() -> {
+            if (!sBackground) return;
+            sBackground = false;
+            try {
+                if (sPresentation != null && sEnabled && !sDebugSingle && !sPresentation.isShowing())
+                    sPresentation.show();
+            } catch (Exception e) {
+                Log.e(TAG, "could not show presentation", e);
+            }
+        });
     }
 
     public static void stop() {

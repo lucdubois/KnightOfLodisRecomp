@@ -23336,6 +23336,15 @@ SDL_RENDER_DRIVER=software`, present dumps):
   - The AppImage needs glibc 2.40 or newer (the SDK's): SteamOS 3.7 has 2.41;
     Ubuntu 22.04 (2.35) would not run it. Player files in
     `~/.local/share/KnightOfLodisRecomp`.
+- **The Thor's second screen goes with the game (2026-11-18, asked).** Home
+  or another app left the panel on the bottom screen: the game keeps running
+  behind, and the Presentation stayed up. MainActivity.onStop calls
+  `SecondScreen.onBackground` (the Presentation hidden), onStart
+  `onForeground` (shown again when the player's Second Screen setting is on
+  and Debug > No Second Screen is off). `setEnabled` and `setSingle` only
+  record the wish while the game is out of sight. onStop, not onPause: on a
+  two-screen device the game can lose focus to an app on the other screen
+  and still be in sight. Built; not tried on the Thor by me.
 - **"The menu does not display": found and fixed (2026-11-18).** Reported
   twice; the second time after the view size was changed in the menu. The
   Deck's screen grabbed over SSH (`spectacle -b -n -f -o`) with the menu
