@@ -46,6 +46,12 @@ Install the APK. On first start, the setup screen asks for the ROM, and
 optionally the BIOS and a mod; press **Play**. BACK (or the second screen's
 button) opens the options menu.
 
+Your save and save states are in Android's **Files** app, under the location
+**Knight of Lodis**: `totkol.sav` is the game's save, `totkol.state1` to
+`totkol.state3` the save state slots. Copy them out to back them up, or copy
+one in under the same name to use it (the one it replaces is kept as
+`<name>.bak`). Replace the save with the game closed: it is read at start.
+
 ## Building
 
 Requires a sibling checkout of [gbarecomp](https://github.com/mstan/gbarecomp),
