@@ -22772,3 +22772,293 @@ the Thor; the phone warm, its big core at 1.4 of 2.8 GHz):
   (compositor 20%, should_yield + tick 19%), audio 8% (the stall search; see
   gbarecomp ENHANCEMENTS "Audio bridge"). After that fix: audio 2%, map 9
   ~38-40 -> ~55 fps.
+
+## Steam Deck (started 2026-11-18, branch `steam-deck`)
+
+Asked: a Steam Deck build. The Deck is a Linux x86-64 computer with one
+1280x800 screen and a controller, so it is the desktop build plus everything
+the Android app does around the game. This section is the port's state.
+
+**Built so far, checked on the Mac only** (headless, `SDL_VIDEODRIVER=dummy
+SDL_RENDER_DRIVER=software`, present dumps):
+
+- **The options menu over the game** (`src/kol_desktop.{h,cpp}`). kol_menu's
+  canvas, which Android shows on the second screen, is a present-time overlay
+  here: centred, at the largest whole scale that fits (4 on 1280x800), the
+  black around its windows see-through (a fill from the canvas's edge), the
+  game dimmed behind it as on Android (`g_present_dim`). **F10** or a **click
+  of the right stick** (down and up within 400 ms, L3 not held: L3 + R3 stays
+  the Save States page) opens and closes it; the pad drives it through
+  kol_menu's key filter, as on Android. gbarecomp: `g_present_overlay_provider`
+  and `g_host_key_hook` (ENHANCEMENTS "A game's own pictures over the window").
+- **Player mode** (`kol::desktop_prepare`, first thing in `main`): with
+  `--data-dir <dir>` or `KOL_DATA_DIR`, or by default in a public build
+  (`KOL_DEV_TOOLS=OFF`: `$XDG_DATA_HOME/KnightOfLodisRecomp`, else
+  `~/.local/share/KnightOfLodisRecomp`; `~/Library/Application Support/...` on
+  a Mac), the game's files live in one directory under Android's names
+  (`totkol.gba`, optional `gba_bios.bin`, `totkol.sav`, `enhancements.cfg`,
+  `states/`), `kol::settings_init` reads and saves the settings there (a fresh
+  directory starts on Enhanced), the BIOS is used when present and `--no-bios`
+  otherwise, the Game Boy logo is skipped, and the self-heal compiler is off.
+  Without it a run is the developer's, exactly as before (no settings file).
+  No ROM in the directory: a message box says where to put it, and the game
+  does not start (the setup screen's place).
+- **A view size chosen at run time drew enlarged on the desktop** (found by
+  the first player-mode dump: a 384x216 battle filled the window with a
+  corner of itself). `HostWindow::set_surface_size` left the 240x160 logical
+  renderer a native start sets, so present()'s destination, already in
+  window pixels, was scaled again. It now clears it for an expanded view and
+  restores it at 240x160 (non-Android only; Android never set one). Desktop
+  test runs never met it: they start at `--view-width 480`.
+- **16:10 view sizes on a 16:10 panel** (asked 2026-11-18: 16:10 on the Deck
+  build; `build_width_ladder`, non-Android only). The 16:9 sizes left bars on
+  1280x800 (320x180 is 4x with 40 pixels above and below; 384x216 and 480x270
+  scale unevenly). A panel of exactly 16:10 gets 320x200 (4x on the Deck),
+  384x240 and 432x270 in their place: a size is known by its width, and 320
+  and 384 are in both lists, so the two cannot be offered together. On a
+  computer a preset whose size scales unevenly takes the widest whole-pixel
+  one, so Enhanced starts at 320x200 on the Deck (`preset_width_choice`;
+  Android keeps 384 as shipped). Checked: BN at 320x200 (margins 40/40 20/20)
+  renders whole with the effects on; the 16:9 list is unchanged on another
+  panel. Not checked: the other two sizes, HUD anchoring and scenes at these
+  heights, the centre-240 invariant at 320x200. `KOL_PANEL=1280x800` stands in
+  for the display's size on another machine (dev builds).
+- The menu button stays a click of the right stick (the user, 2026-11-18:
+  fine for now).
+- Desktop check: `KOL_DESKTOP_MENU_AT=<n>` opens the menu at the nth present.
+  Recipe: `build/KnightOfLodisRecomp --data-dir <dir with totkol.gba> --scale 3
+  --load-state states/BN_water_focus.state --frames 400` with
+  `GBARECOMP_PRESENT_DUMP=<bmp> GBARECOMP_PRESENT_DUMP_AT=300
+  KOL_DESKTOP_MENU_AT=250`.
+
+**On the Deck (2026-11-18): it builds and runs.** The user's Deck (SteamOS
+3.7.17, 8 threads, 1280x800), over SSH (`ssh steamdeck`: the Mac's
+`~/.ssh/config`, key `~/.ssh/steamdeck_ed25519`; sshd enabled by the user).
+
+- **Build:** `tools/deck_build.sh` rsyncs gbarecomp and this repo with
+  `generated/` to `~/kol` and builds `build-deck/KnightOfLodisRecomp` there
+  inside the freedesktop SDK the Deck already had (`~/kol/sdk.sh`: `flatpak
+  run --command=sh org.freedesktop.Sdk//24.08`, GCC 14.2, CMake 3.31, Ninja,
+  SDL2 2.32, curl 8.11; nothing installed into the OS). A full build takes a
+  few minutes (ccache is in the SDK). Dev build (`KOL_DEV_TOOLS=ON`).
+- **GCC found what Clang let through:** `extern "C" extern` in gbarecomp's
+  runtime.h (line 605), and `std::lround` without `<cmath>` in kol_menu.cpp
+  and kol_gulls.cpp. Nothing else: no link errors.
+- **Run:** `~/kol/run.sh` (the SDK runtime with the X11 and audio sockets and
+  `--device=all`; from SSH it must export `DISPLAY=:0` and the session's
+  `XAUTHORITY` BEFORE `flatpak run`, or the X socket is not shared: the first
+  launch had sound and no picture, SDL on a fallback 1024x768 display, and the
+  ladder was the 16:9 one). `~/kol/play.sh` and a desktop icon "Knight of Lodis
+  (dev build)" start it full screen; files in `~/kol/data` (the user's ROM and
+  BIOS, the HD bank beside the binary), test states in `~/kol/states`.
+- **Seen in the present dump from the Deck's own screen** (BN, Desktop Mode,
+  X11): renderer opengl, 1280x800@60, the view 320x200 at 4x filling the
+  panel, the warp mesh and the disc blur through GL, the HD bank loaded, the
+  pad found as "Steam Deck" (gyro enabled), the menu overlay at 4x. The user
+  saw the picture and heard it.
+- **The game closed on Start** (the user, first play, Desktop Mode): a clean
+  exit in the log, not a crash. Steam's desktop layout types keys from the
+  Deck's buttons while SDL also reads them as a pad: Start is Escape (the
+  host's quit), A is Enter (Start in the default key table), Select is Tab.
+  In player mode with a controller attached, the keyboard now presses no GBA
+  input (gbarecomp `g_host_keyboard_yields_to_pad`) and only F1-F12 reach the
+  host's hotkeys (`key_hook`). Quitting is **Options > Quit Game** (a
+  question first; `MenuPlatform::quit` pushes SDL_QUIT), desktop builds only.
+  Built on the Deck; not yet tried by the user.
+- **Performance, first measurements (2026-11-18; the user: "leaves a lot to
+  be desired").** Desktop Mode, charging, 320x200, Enhanced, `~/kol/bench.sh
+  "<ENV>" [frames]` (runs a state on the screen with
+  `GBARECOMP_FRAME_PHASE=<csv>`, prints fps, phase times, the worker's mean).
+  - The user's state (`data/states/0001`, map 100, the smoke scene; 1500
+    frames): **55-57 fps, ~180 of 1201 frames over 20 ms**. Guest phase 10.6
+    ms (p50), the present worker 14.4-15.3 ms a picture; the long frames are
+    presents that wait for the worker (present p50 2.1, p95 12.7-14.4 ms).
+  - Two battles (BN, EM; 1200 frames): 60.0 fps, 4-6 long frames of 901, but
+    the worker is at 13.4-13.8 ms of 16.7 and the guest at 10 ms: no margin.
+  - The same state on the Mac (same build options, headless): guest 6.5 ms,
+    worker 7.6 ms. The Deck is 1.6x-2x slower throughout: its cores, not the
+    Linux build. `perf stat` on the process: 3.18 GHz effective, 2.33
+    instructions a cycle, 1.86 CPUs, ~99 M cycles a frame all threads (BN).
+    The profile is flat, as on the Thor (render_scanline_wide ~9%,
+    reflect_ray ~7%, warp_corners ~6%, bg1_shapes 3.8%, should_yield + tick
+    6.7%).
+  - **Did nothing:** `-march=znver2` (56.1 fps, guest unchanged, worker 14.4);
+    `KOL_PERSP_THREADS=6` (worker 15.3 -> 14.1: its serial passes dominate).
+    The Deck's binary is the znver2 one since.
+  - **What each group costs on the user's state** (1500 frames, worker mean /
+    fps / long frames; all on = 14.6 ms / 56.7 / 177): Lifted Props + Walls
+    off 12.0 / 59.1 / 18; Special Effects off 14.2 / 56.7 / 177; Depth of Field
+    off 13.9 / 57.1 / 171; Unit Shadows + Torchlight off 13.7 / 56.7 / 181;
+    Perspective off 7.6 / 59.1 / 10.
+  - Trap: `KOL_SETTINGS_OFF` did nothing in player mode (its pass ran before
+    `settings_init` put the preset back; five runs measured one thing). It is
+    applied again at the end of `settings_init` now (dev builds), with a
+    "forced off" log line to check.
+  - Low battery (the user's question): these runs were on the charger at full
+    clock, so it is not the cause of what is measured here.
+- **The worker's passes over more threads: started 2026-11-18, nothing
+  faster yet.** Asked whether the work could be split over more threads
+  (the Deck: the worker's thread 88% of a core, the guest's 63%, the two
+  helpers 15% each, with the user moving the cursor on map 55).
+  - **The cases** (EM, map 55, the Deck, nothing else running, nobody
+    touching it; GBARECOMP_INPUT_REPLAY from frame 448593):
+    `out/cursor.replay` (a tap every 14 frames, 4 each way; the camera barely
+    moves): 60.0 fps but ~128 of 901 frames over 20 ms, the worker 15.3-15.9
+    ms a job. **`out/pan.replay`** (a direction held 70 frames, then the next:
+    the cursor crosses the map and the camera pans; the user: the taps did
+    not move the camera enough to show it): **48.8 fps, 622 of 1201 frames
+    over 20 ms, the worker 19.5 ms a job**, guest 9.7. This is the case to beat.
+  - **More helpers: about 7%** (6 for 2: taps 15.6 -> 14.3, two runs each;
+    pans 19.5 -> 18.4, 49.7 fps). The desktop's default is now the machine's
+    threads less two, 2 to 6 (Android stays at 2).
+  - **What a pan costs** (the Mac, `KOL_WORKER_TIME=1`, taps -> pans; a job
+    9.1 -> 11.2 ms): **scene.windows 0.72 -> 2.76, scene.glow 0.41 -> 1.76**,
+    scene.terrain 0.36 -> 0.93; the rest the same or less. The window light
+    (map 55's godrays, build_window_light) and the lamps' light are kept per
+    view and worked out again whenever the view moves: 4.5 of the 8.2 ms the
+    scene build takes in a pan. These two are the target: split over rows,
+    or kept by place in the world so a pan reuses what it had (a pan moves
+    every pixel of the still scene by the same whole number of pixels).
+  - **Where the job goes** (the Mac, the same run, `KOL_WORKER_TIME=1`, 9.1
+    ms a job; sections nest, so they do not add up): the scene build
+    (`warp.scene`) 4.7, none of it on the pool: scene.lift 1.25
+    (lift_wall_surfaces 0.8 of it: its three loops 0.30 / 0.19 / 0.31),
+    scene.windows 0.73, scene.cutouts 0.5, scene.unit_ao+glow+win 0.45,
+    scene.glow 0.41, scene.proplight 0.36, scene.terrain 0.36. Then
+    warp.lighting 1.24 (light.px, on the pool), warp.atlasfill 0.75, the mesh
+    1.6 (corners 0.62, card_runs 0.28, keep 0.25, zip 0.24; `warp.mesh` is
+    timed by step now). The Deck's profile of the worker's thread agrees:
+    lift_wall_surfaces 9.9%, the window light's functions 17%.
+  - **So: no pass is large.** Splitting one saves a few tenths of a
+    millisecond on the Mac; the two named first (wall lifting, window light)
+    would give about 2.5 ms on the Deck if both split well, and each has a
+    trap: the lifting hands out atlas squares and blocks in order and fills
+    lists whose order the next step depends on; `lamp_seen` fills a shared
+    cache as it goes.
+  - **A check for it:** `KOL_PERSP_HASH=1` over the replay run gives 3584
+    hash lines; two runs of the SAME binary differed at one frame of 896
+    (f=352: kind and scene), so a whole-run hash cannot prove a split
+    harmless. Each split pass needs its own in-frame check (serial against
+    split, as KOL_PASS_CACHE_CHECK does). The cause of f=352 is not found.
+  - Traps: the user's own game was still running (started for them, no frame
+    limit) under two timing runs (49.9 and 51.6 fps, the worker 19 ms: wrong),
+    and the user moved a stick during the next two (17.0 / 17.6 ms: wrong
+    too). Say when a run starts and ask for hands off. `pgrep -x KnightOfLodisRe` before a timing run. (And `pkill -f`
+    with the binary's path kills the SSH shell that carries it.)
+- **The window light and the lamps' light over the row pool (2026-11-18;
+  the user: try both steps).** Byte-identical, checked in the frame.
+  - `build_window_light` (kol_focus_windows.cpp): its three per-pixel steps
+    (the sun on the points, the haze, the dark maps' glow) go over
+    `parallel_rows` in 4-row chunks. Before them, on the worker's thread,
+    every cell's height is asked once (CellHeights::raw fills its memo
+    through SceneBuild::cell_height_of, which reads thread_locals a helper
+    does not have) and each window's plane mask built; a helper takes the
+    worker's `t_present` for the run. `KOL_WIN_SERIAL=1` old;
+    `KOL_WIN_PAR_CHECK=1` runs each step both ways and counts the pixels that
+    differ.
+  - **Its cache cost more than its build.** `WinBuilt` (8 past builds, for
+    map 71's four shutter states) stored every build: the beams' grids and
+    five buffers copied each time. In a pan every key is new and none comes
+    back: 1.3 of the 1.9 ms the section still took. A build is kept from the
+    second time its key is built (16 missed keys remembered).
+    `KOL_WIN_CACHE_FIRST=1` old.
+  - `SceneBuild::lamp_and_window_light` (kol_focus_lamps.cpp): each lamp's
+    pixel rows over the pool, the lamps still in order. `KOL_LAMP_SERIAL=1`
+    old; `KOL_LAMP_PAR_CHECK=1` runs the loop again on one thread and compares
+    g_glow, g_glow_lamp, best, hue_sum, lit_f, full_f.
+  - **Two traps the check found.** (1) `hue_sum` is `static thread_local`: a
+    helper naming it reached its own empty one, and its rows had no hue
+    sums; it is taken through a reference now. (2) `lamp_seen` returns the
+    exact share to the read that works a cube out and the stored byte to
+    every later one, so with a ring lamp (a share between 0 and 1) a pixel's
+    light depends on the order the pixels are taken in. A map with a ring
+    lamp keeps its lamps' rows on one thread (no picture changes anywhere);
+    making the lookup order-independent was tried and taken back out, since
+    it would change those maps' pictures by a 254th of a share on a few
+    pixels.
+  - **Checked:** the pan run with both checks on, the Mac (1201 window
+    checks, 435 lamp checks) and the Deck (2401 and 601): 0 differences.
+  - **The Mac, the pan run, a job 11.2 -> 8.1 ms:** scene.windows 2.76 ->
+    0.57, scene.glow 1.76 -> 0.87.
+  - **The Deck, map 55** (before = both serial, the old cache, 2 helpers):
+    pans **47.2 -> 57.7 fps, frames over 20 ms 721 -> 241 of 1201, the worker
+    20.2 -> 15.1 ms**; taps 60.0 fps both, long frames 128 -> 73 of 901, the
+    worker 15.6 -> 14.2. The user's map 100 state (no windows): 56.7 -> 57.4
+    fps, 177 -> 175 long frames, the worker 14.6 -> 13.5 (the helpers).
+  - **The second step (the light kept by place in the world, a pan reusing
+    it) was not built:** after the first, the two passes are 0.57 + 0.87 ms of
+    an 8.1 ms job on the Mac, less than scene.lift (1.11) or scene.terrain
+    (0.93). What is left in a pan, the Mac: warp.scene 5.1 (lift 1.11,
+    terrain 0.93, glow 0.87, windows 0.57, cutouts 0.37, lamp_cast 0.30,
+    proplight 0.30), warp.atlasfill 0.68, light.px 0.60, the mesh ~1.2.
+- **The wall lifting over the row pool too (2026-11-18; the user: try the
+  lifting and the terrain).** `lift_wall_surfaces` (kol_focus_atlas.cpp) is
+  `lift_wall_surfaces_run(w, h, walls_on, split)` now, one code path either
+  way: the pixels to lift and their inlay by rows of 8 (each chunk's list of
+  pixels put together in the chunks' order, so `fx_paint` and the inlay's
+  queue come out in the order one thread gives); the tiles in three steps:
+  each tile's pieces and its groups with a pixel (pool), then each group its
+  atlas square and block in the tiles' order on the worker's thread (the
+  numbering, and the stop at kMaxLiftBlocks), then each tile's pixels (pool),
+  its under-fixes and pixel count joined in order after. The thread_locals
+  (`want`, `piece`, `g_inlay`) go to the helpers by pointer.
+  `KOL_LIFT_SERIAL=1`: one thread. `KOL_LIFT_PAR_CHECK=1`: both ways from the
+  same start, everything the pass writes compared (g_lift, the atlas's
+  opacity and height, g_under_*, g_ao, g_lift_ao, the blocks, the fixes).
+  - **Checked:** the pan run, the check on: 0 differences in 601 (the Mac)
+    and 1201 (the Deck). And against the code before the rewrite:
+    `KOL_PERSP_HASH=1` over the pan run, 3584 lines, the same md5 split and
+    serial (two runs of the old binary agreed with each other on this run).
+  - **The Mac, a pan job 8.1 -> 7.8 ms:** scene.lift 1.11 -> 0.80 (want 0.28
+    -> 0.13, inlay 0.19 -> 0.11, blocks 0.30 -> 0.19).
+  - **The Deck, map 55, pans** (lifting serial against split, two runs
+    each): **57.5 -> 58.6 fps, frames over 20 ms ~223 -> ~179 of 1201, the
+    worker 15.3 -> 14.6 ms.** Since the morning: 47.2 fps, 721 long frames,
+    20.2 ms.
+  - **The terrain pass was read and left.** It paints the cells back to
+    front along the diagonals, each pixel taking whatever cell comes last
+    (and keeping what it showed before, for the lifting). The rows could
+    only be split by every thread walking every cell in order and drawing
+    its own band of rows, with a row clip in each of the three places a cell
+    draws and in the rounded boxes: about 0.9 ms on the Mac to share out,
+    less each cell's set-up paid once a band.
+- **Lifted Props and Lifted Walls off in Enhanced, on every device** (asked
+  2026-11-18, with their descriptions to say they are heavy). `kPresets`
+  Enhanced: both false. Their rows read "... Heavy to run." (in place of
+  "Experimental."), the Android list's labels "...; heavy to run". A device
+  with saved settings keeps what it has (its preset then reads Custom); a
+  fresh install, and Preset > Enhanced, have them off. Checked on the Mac: a
+  fresh data directory, the pan run, scene.lift 0.80 -> 0.01 ms, a job 7.8 ->
+  6.5 ms. The Android debug APK builds. The Deck's own enhancements.cfg had
+  both saved on: set to 0 by hand so that it shows the new default.
+- **"The menu does not display" (the user, 2026-11-18): not reproduced, by
+  me or by the user after.** Opened by script it draws on the Mac and on the
+  Deck's screen, at the title (240x160, the logical renderer) and in a battle
+  (320x200); with the click logged for one session, six clicks by the user
+  each arrived (100 to 186 ms) and opened and closed it in turn. The log
+  lines are out again (the user asked). If it comes back: what was done just
+  before, and whether the picture dims.
+- **Not measured or tried yet:** the pad in play, rumble, Gaming Mode,
+  384x240 and 432x270.
+
+**Not built yet:**
+
+- **A package.** The Deck runs a dev binary built by hand (below), from
+  Desktop Mode. Still to do: the Flatpak (gbarecomp
+  `packaging/flatpak/build_flatpak.sh`; the Deck has no flatpak-builder, the
+  `org.flatpak.Builder` Flatpak is the way to get one without touching the
+  OS), a public build (`KOL_DEV_TOOLS=OFF`), adding it to Steam, and a run in
+  Gaming Mode (gamescope), which is where a player will be.
+- **Setup:** picking the ROM, BIOS and a mod (Android: SetupActivity, Mods).
+  SDL2 has no file dialog; candidates are the desktop portal / `zenity`, or a
+  drop of the file onto the window.
+- **The rest of the second screen:** the Save States page's grid (its rows are
+  put together by StatsView.java: `menu_states_info` / `menu_states_row`), the
+  unit sheet, the unit list, HELP cards, the world map's bar. None of it is
+  shown on the desktop yet.
+- **The menu's platform actions** (`kol::MenuPlatform`): Mod, restart,
+  Licenses. RetroAchievements' login form and popup (the desktop has only the
+  curl transport and a printed notice). Touch on the menu (the Deck has a
+  touch screen; `menu_touch` takes canvas pixels).
+- Rumble through SDL (`gbarecomp_host_rumble` exists), fullscreen by default,
+  the HD bank's place in a package, performance on the Deck: not looked at.

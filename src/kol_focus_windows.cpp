@@ -6,7 +6,11 @@
 #include "kol_focus.h"
 #include "kol_focus_internal.h"
 
+#include <atomic>
 #include <deque>
+#include <functional>
+
+#include "kol_workers.h"
 
 namespace {
 float map_window_haze(int map) {
@@ -792,57 +796,120 @@ void build_window_light(int w, int h, int ox, int oy, int kx, int ky, float sun_
         screen_rect(X0, X1, Y0, Y1, Z0, Z1, w, h, ox, oy, kx, ky, x0, x1, y0, y1);
     };
     if (B.lit == 0) return;
-    int x0, x1, y0, y1;
+    // The three per-pixel steps below go over the row pool (2026-11-18: with
+    // the camera panning the view changes every picture and they are worked
+    // out again each time, 2.8 ms a job on the Mac's map 55, the largest
+    // piece of the Steam Deck's 19.5). A pixel's value is its own point's
+    // alone, so the rows may go in any order; for the helpers, everything a
+    // point's read fills as it goes is filled first:
+    //  - each cell's height (CellHeights::raw fills its memo through
+    //    SceneBuild::cell_height_of, which reads this thread's thread_locals:
+    //    on a helper it would answer for an empty map);
+    //  - the windows' plane masks (plane_mask_for builds a map's on first use).
+    // A helper also takes this thread's t_present for the run (current_map()
+    // and the like read the capture or the live game by it).
+    // KOL_WIN_SERIAL=1: on this thread alone, as before. KOL_WIN_PAR_CHECK=1:
+    // both ways, compared (a difference is logged).
+    static const bool serial_only = kol::env_set("KOL_WIN_SERIAL");
+    static const bool par_check = kol::env_set("KOL_WIN_PAR_CHECK");
+    if (!serial_only) {
+        for (int cz = -kMargin; cz < kGameSide + kMargin; ++cz)
+            for (int cx = -kMargin; cx < kGameSide + kMargin; ++cx) (void)cell_height.raw(cx, cz);
+        for (const MapWindow& W : wins) (void)plane_mask_for(W.map);
+    }
+    const bool present = t_present;
+    // fn(px, py, k) over the rectangle's pixels, split by rows or not.
+    auto over = [&](int rx0, int rx1, int ry0, int ry1, bool split, const std::function<void(int, int, std::size_t)>& fn) {
+        if (ry1 < ry0 || rx1 < rx0) return;
+        auto rows = [&](int r0, int r1) {
+            for (int py = ry0 + r0; py < ry0 + r1; ++py)
+                for (int px = rx0; px <= rx1; ++px) fn(px, py, static_cast<std::size_t>(py) * w + px);
+        };
+        if (!split) { rows(0, ry1 - ry0 + 1); return; }
+        kol::parallel_rows(ry1 - ry0 + 1, 4, [&](int, int r0, int r1) {
+            const bool was = t_present;
+            t_present = present;
+            rows(r0, r1);
+            t_present = was;
+        });
+    };
+    // The steps, each into the buffer it is given (the check runs them twice).
+    std::atomic<bool> patch_any{false};
     // The sun on the points themselves: they lie in the beams' cells or
     // just under them (the cell a surface point sits in can be the
     // terrain's), so within the lit bounds grown by a cell.
-    rect(B.lx0 - kBeamCell, B.lx1 + kBeamCell, B.ly0 - kBeamCell, B.ly1 + kBeamCell,
-         B.lz0 - kBeamCell, B.lz1 + kBeamCell, x0, x1, y0, y1);
-    for (int py = y0; py <= y1; ++py)
-        for (int px = x0; px <= x1; ++px) {
-            const std::size_t k = static_cast<std::size_t>(py) * w + px;
-            if (!g_covered[k]) continue;
+    auto patch_step = [&](std::uint8_t* out, bool split) {
+        int x0, x1, y0, y1;
+        rect(B.lx0 - kBeamCell, B.lx1 + kBeamCell, B.ly0 - kBeamCell, B.ly1 + kBeamCell,
+             B.lz0 - kBeamCell, B.lz1 + kBeamCell, x0, x1, y0, y1);
+        over(x0, x1, y0, y1, split, [&](int px, int py, std::size_t k) {
+            if (!g_covered[k]) return;
             float X, Y, Z;
             point(px, py, k, X, Y, Z);
             const float best = window_sun_at(wins, X, Y, Z, sun_x, sun_z, rise, cell_height);
             if (best > 0.0f) {
-                g_win_patch[k] = static_cast<std::uint8_t>(std::lround(255.0f * best));
-                g_win_any = true;
+                out[k] = static_cast<std::uint8_t>(std::lround(255.0f * best));
+                patch_any.store(true, std::memory_order_relaxed);   // (even where it rounds to 0, as before)
             }
-        }
-    const auto t2 = std::chrono::steady_clock::now();
+        });
+    };
     // The haze: every pixel whose view line can cross the lit cells (their
     // bounds on screen; points in front of the grid are carried on to it).
-    rect(B.lx0, B.lx1, B.ly0, B.ly1, B.lz0, B.lz1, x0, x1, y0, y1);
-    for (int py = y0; py <= y1; ++py)
-        for (int px = x0; px <= x1; ++px) {
-            const std::size_t k = static_cast<std::size_t>(py) * w + px;
+    auto haze_step = [&](std::uint8_t* out, bool split) {
+        int x0, x1, y0, y1;
+        rect(B.lx0, B.lx1, B.ly0, B.ly1, B.lz0, B.lz1, x0, x1, y0, y1);
+        over(x0, x1, y0, y1, split, [&](int px, int py, std::size_t k) {
             float X, Y, Z;
             point(px, py, k, X, Y, Z);
             const float hz = window_haze_at(X, Y, Z);
-            if (hz > 0.0f) {
-                g_win_haze[k] = static_cast<std::uint8_t>(std::lround(255.0f * hz));
-                if (g_win_haze[k]) g_win_any = true;
-            }
-        }
+            if (hz > 0.0f) out[k] = static_cast<std::uint8_t>(std::lround(255.0f * hz));
+        });
+    };
     // On a dark map, the light the beams radiate, around their bounds grown
     // by its reach.
-    if (!B.glow.empty()) {
-        g_win_glow.assign(n, 0);
+    auto glow_step = [&](std::uint8_t* out, bool split) {
+        int x0, x1, y0, y1;
         const float R = window_glow_reach() * 1.5f;
         rect(B.lx0 - R, B.lx1 + R, 0.0f, B.ly1 + R, B.lz0 - R, B.lz1 + R, x0, x1, y0, y1);
-        for (int py = y0; py <= y1; ++py)
-            for (int px = x0; px <= x1; ++px) {
-                const std::size_t k = static_cast<std::size_t>(py) * w + px;
-                float X, Y, Z;
-                point(px, py, k, X, Y, Z);
-                const float gl = window_glow_at(X, Y + 2.0f, Z);
-                if (gl > 0.0f) {
-                    g_win_glow[k] = static_cast<std::uint8_t>(std::lround(255.0f * gl));
-                    if (g_win_glow[k]) g_win_any = true;
-                }
-            }
+        over(x0, x1, y0, y1, split, [&](int px, int py, std::size_t k) {
+            float X, Y, Z;
+            point(px, py, k, X, Y, Z);
+            const float gl = window_glow_at(X, Y + 2.0f, Z);
+            if (gl > 0.0f) out[k] = static_cast<std::uint8_t>(std::lround(255.0f * gl));
+        });
+    };
+    const bool split = !serial_only;
+    patch_step(g_win_patch.data(), split);
+    const auto t2 = std::chrono::steady_clock::now();
+    haze_step(g_win_haze.data(), split);
+    if (!B.glow.empty()) {
+        g_win_glow.assign(n, 0);
+        glow_step(g_win_glow.data(), split);
     }
+    if (par_check && split) {
+        static thread_local std::vector<std::uint8_t> ref;
+        auto compare = [&](const char* what, const std::vector<std::uint8_t>& got,
+                           const std::function<void(std::uint8_t*, bool)>& step) {
+            ref.assign(n, 0);
+            step(ref.data(), false);
+            std::size_t bad = 0;
+            for (std::size_t k = 0; k < n; ++k) bad += ref[k] != got[k];
+            static long checks = 0, fails = 0;
+            ++checks;
+            if (bad) ++fails;
+            if (bad || checks % 600 == 1)
+                std::fprintf(stderr, "win-par-check: %s: %zu of %zu pixels differ (%ld checks, %ld with a difference)\n",
+                             what, bad, n, checks, fails);
+        };
+        compare("patch", g_win_patch, patch_step);
+        compare("haze", g_win_haze, haze_step);
+        if (!B.glow.empty()) compare("glow", g_win_glow, glow_step);
+    }
+    // Any light at all (as the steps set it pixel by pixel before: the sun on
+    // any point, a haze or a glow that is not 0).
+    g_win_any = patch_any.load();
+    for (std::size_t k = 0; k < n && !g_win_any; ++k)
+        g_win_any = g_win_haze[k] || (!g_win_glow.empty() && g_win_glow[k]);
     static const bool godrays_time = kol::env_set("KOL_GODRAYS_TIME");
     if (godrays_time)
         std::fprintf(stderr, "godrays: map %d, %zu cells lit%s: grid %.2f ms, patch %.2f ms, haze %.2f ms\n", map,

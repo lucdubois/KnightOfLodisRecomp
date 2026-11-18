@@ -496,6 +496,11 @@ float SceneBuild::lamp_seen(std::size_t i, float X, float Y, float Z) {
         seen /= 9.0f;
     }
     m = static_cast<std::uint8_t>(1 + std::lround(254.0f * seen));
+    // (The read that works a cube out returns the exact share, every later
+    // one the byte's: with a ring, a share between 0 and 1, a pixel's light
+    // then depends on whether it was the first to ask about its cube, that
+    // is on the order the pixels are taken in. So a map with a ring lamp
+    // keeps its lamps' rows on one thread: lamp_and_window_light.)
     return seen;
 }
 
@@ -516,10 +521,15 @@ void SceneBuild::lamp_and_window_light() {
         // chandelier's light met the blue torches' along a line (map 56, the user expected
         // the torches' blue and the chandelier's warmth to blend more). KOL_LAMP_NO_MIX=1: as before.
         static const bool no_mix = kol::env_set("KOL_LAMP_NO_MIX");
-        static thread_local std::vector<std::uint8_t> hue_sum;
+        // (This thread's buffer, through a reference: a row's helper thread
+        // naming a thread_local reaches its own, empty one, and the rows it
+        // took had no hue sums. Found by KOL_LAMP_PAR_CHECK.)
+        static thread_local std::vector<std::uint8_t> hue_store;
+        std::vector<std::uint8_t>& hue_sum = hue_store;
         hue_sum.assign(no_mix ? 0 : static_cast<std::size_t>(w) * h * kol::kHueCount, 0);
         // Lamp i's light on pixel k: added to g_glow (to_glow), and the
         // pixel's brightest lamp kept (g_glow_lamp).
+        std::atomic<bool> glow_any{false};
         auto glow_add = [&](std::size_t k, long add, std::size_t i, bool to_glow) {
             if (to_glow) g_glow[k] = static_cast<std::uint8_t>(std::min(255L, g_glow[k] + add));
             if (!hue_sum.empty() && add > 0 && i < lamps.size()) {
@@ -530,7 +540,7 @@ void SceneBuild::lamp_and_window_light() {
                 best[k] = static_cast<std::uint8_t>(std::min(255L, add));
                 g_glow_lamp[k] = static_cast<std::uint8_t>(std::min(i, static_cast<std::size_t>(kMaxLamps - 1)));
             }
-            g_glow_any = true;
+            glow_any.store(true, std::memory_order_relaxed);
         };
         // On a ship lit by its model (ship_light_map), the shadows its faces
         // cast from the torches softened on the screen (the user, 2026-10-26,
@@ -553,6 +563,23 @@ void SceneBuild::lamp_and_window_light() {
             lit_f.assign(static_cast<std::size_t>(w) * h, 0.0f);
             full_f.assign(static_cast<std::size_t>(w) * h, 0.0f);
         }
+        // Each lamp's pixels over the row pool (2026-11-18: with the camera
+        // panning this is worked out again every picture, 1.7 ms a job on the
+        // Mac's map 55). The lamps stay in order, so each pixel still takes
+        // them in order (its brightest lamp, the first of equals); a pixel's
+        // sums are its own. What a point's read fills as it goes: lamp_seen's
+        // cubes (g_lamp_vis: each a byte that depends on the cube alone, so
+        // two rows that meet one write the same value; with no ring lamp, 0
+        // or 1 whoever asks first) and
+        // model_part_fx_art's table for the map (asked once here first). A
+        // helper takes this thread's t_present for the run.
+        // KOL_LAMP_SERIAL=1: on this thread alone, as before.
+        // KOL_LAMP_PAR_CHECK=1: both ways, compared.
+        static const bool lamp_serial = kol::env_set("KOL_LAMP_SERIAL");
+        static const bool lamp_check = kol::env_set("KOL_LAMP_PAR_CHECK");
+        (void)model_part_fx_art(fx_light_map, 0);
+        const bool present = t_present;
+        auto lamps_loop = [&](bool split) {
         for (std::size_t i = 0; i < lamps.size(); ++i) {
             const Lamp& L = lamps[i];
             const float reach = L.reach;
@@ -564,7 +591,8 @@ void SceneBuild::lamp_and_window_light() {
             const int cys = static_cast<int>((L.x + L.z) / 4.0f - L.y / 2.0f) + oy + ky;
             const int x0 = std::max(0, cxs - R), x1 = std::min(w - 1, cxs + R);
             const int y0 = std::max(0, cys - R), y1 = std::min(h - 1, cys + R);
-            for (int py = y0; py <= y1; ++py)
+            auto lamp_rows = [&](int row0, int row1) {
+            for (int py = row0; py < row1; ++py)
                 for (int px = x0; px <= x1; ++px) {
                     const std::size_t k = static_cast<std::size_t>(py) * w + px;
                     float X, Y, Z, nx = 0.0f, ny = 0.0f, nz = 0.0f;
@@ -665,12 +693,23 @@ void SceneBuild::lamp_and_window_light() {
                     if (soft && full > 0.0f) {
                         full_f[k] += full;
                         lit_f[k] += full * seen;
-                        g_glow_any = true;
+                        glow_any.store(true, std::memory_order_relaxed);
                     }
                     const long add = std::lround(full * seen);
                     if (add <= 0) continue;
                     glow_add(k, add, i, !soft);
                 }
+            };
+            if (y1 >= y0 && x1 >= x0) {
+                if (!split) lamp_rows(y0, y1 + 1);
+                else
+                    kol::parallel_rows(y1 - y0 + 1, 4, [&](int, int r0, int r1) {
+                        const bool was = t_present;
+                        t_present = present;
+                        lamp_rows(y0 + r0, y0 + r1);
+                        t_present = was;
+                    });
+            }
             // Its glow on screen: a soft halo round the flame, on whatever
             // the map shows there (sprites take theirs with the units' light).
             if (L.halo > 0.0f) {
@@ -681,6 +720,37 @@ void SceneBuild::lamp_and_window_light() {
                 });
             }
         }
+        };   // lamps_loop
+        // Not with a ring lamp on the map (lamp_seen's note): its light would
+        // differ by the rows' order, a 254th of a share on a few pixels.
+        bool any_ring = false;
+        for (const Lamp& L : lamps) any_ring = any_ring || L.ring > 0.0f;
+        const bool lamp_split = !lamp_serial && !any_ring;
+        lamps_loop(lamp_split);
+        if (lamp_check && lamp_split) {
+            // The same again on this thread alone, into the same buffers set
+            // back to their start, against what the split left.
+            const std::vector<std::uint8_t> glow_p = g_glow, lamp_p = g_glow_lamp, best_p = best, hue_p = hue_sum;
+            const std::vector<float> lit_p = lit_f, full_p = full_f;
+            std::fill(g_glow.begin(), g_glow.end(), 0);
+            std::fill(g_glow_lamp.begin(), g_glow_lamp.end(), 0);
+            std::fill(best.begin(), best.end(), 0);
+            std::fill(hue_sum.begin(), hue_sum.end(), 0);
+            if (soft) {
+                std::fill(lit_f.begin(), lit_f.end(), 0.0f);
+                std::fill(full_f.begin(), full_f.end(), 0.0f);
+            }
+            lamps_loop(false);
+            const bool same = glow_p == g_glow && lamp_p == g_glow_lamp && best_p == best && hue_p == hue_sum &&
+                              (!soft || (lit_p == lit_f && full_p == full_f));
+            static long checks = 0, fails = 0;
+            ++checks;
+            if (!same) ++fails;
+            if (!same || checks % 300 == 1)
+                std::fprintf(stderr, "lamp-par-check: %s (%ld checks, %ld with a difference)\n",
+                             same ? "the same" : "DIFFERENT", checks, fails);
+        }
+        g_glow_any = glow_any.load();
         if (soft) {
             const std::size_t n = static_cast<std::size_t>(w) * h;
             share.assign(n, 1.0f);
@@ -807,7 +877,20 @@ void SceneBuild::lamp_and_window_light() {
                 hit->put();
             } else {
                 build_window_light(w, h, ox, oy, kx, ky, sun_x, sun_z, cell_heights_occ);
-                if (cache_on) {
+                // Kept only from the second time its key is built: a camera
+                // that pans has a new key every picture, none of them seen
+                // again, and keeping each (the beams' grids and five buffers
+                // copied) cost more than its build: 1.3 of the 1.9 ms this
+                // section took in a pan on the Mac's map 55, with the build
+                // itself on the row pool (2026-11-18, the Steam Deck's pans).
+                // Map 71's four states are each built twice, then kept.
+                // KOL_WIN_CACHE_FIRST=1: from the first, as before.
+                static const bool keep_first = kol::env_set("KOL_WIN_CACHE_FIRST");
+                static std::array<std::uint32_t, 16> missed{};
+                static unsigned missed_at = 0;
+                const bool seen = keep_first || std::find(missed.begin(), missed.end(), key) != missed.end();
+                if (!seen) missed[missed_at++ % missed.size()] = key;
+                if (cache_on && seen) {
                     WinBuilt* b = &built[0];
                     for (WinBuilt& c : built)
                         if (c.used < b->used) b = &c;

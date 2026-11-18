@@ -7523,14 +7523,22 @@ int warp_provider(const std::uint8_t* layers, std::uint8_t* scene, int w, int h,
     wt.lap("warp.flat");
     warp_flat(wf, mesh);
 
-    wt.lap("warp.mesh");
+    // (The mesh by step, 2026-11-18: as one "warp.mesh" it was half the job
+    // on the Steam Deck's map 55 and said nothing of where.)
+    wt.lap("mesh.corners");
     warp_corners(wf);
+    wt.lap("mesh.keep");
     warp_keep(wf);
+    wt.lap("mesh.runs");
     warp_runs(wf);
+    wt.lap("mesh.card_runs");
     warp_card_runs(wf);
     if (g_quads.empty()) return 0;
+    wt.lap("mesh.buckets");
     warp_buckets(wf);
+    wt.lap("mesh.zip");
     warp_zip(wf);
+    wt.lap("mesh.output");
     warp_output(wf, mesh);
     return 1;
 }

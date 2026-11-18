@@ -6,6 +6,10 @@
 
 #include "kol_focus.h"
 #include "kol_focus_internal.h"
+#include "kol_workers.h"
+
+#include <cstring>
+#include <functional>
 
 namespace {
 // Per card that a layer covered: where its covering pixels start and the
@@ -1256,7 +1260,8 @@ PropLift lift_props(const std::uint8_t* layers, int w, int h, bool props_on, int
 // the pixel is lifted onto its own patch (its own surface) and the scene
 // shows BG0 at that surface behind. Tiles of 32 on the scene's grid.
 // (lift_prop_pixels' second part.) The pixels lifted: surface_px.
-int lift_wall_surfaces(int w, int h, bool walls_on) {
+// (`split`: its loops over the row pool; lift_wall_surfaces, below, says how.)
+int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
     constexpr int S = kol::ScenePixels::kSpriteSlot;
     const std::size_t n = static_cast<std::size_t>(w) * h;
     int surface_px = 0;
@@ -1275,7 +1280,47 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
         fx_paint.clear();
         auto fx_px = [&](std::size_t k) { return fx_art_on && g_modeled[k] && model_part_fx_art(fx_map, g_modeled[k] - 1); };
         const bool wall_behind = g_modeled.size() == n && in_list(kModelWallBehindMaps, fx_map);
-        for (std::size_t k = 0; k < n; ++k) {
+        kol::WorkerTimer lw("lift.want");
+        // This thread's buffers, by pointer: on a helper thread a
+        // thread_local's name is that thread's own (empty) one.
+        std::uint8_t* const want_p = want.data();
+        (void)model_part_fx_art(fx_map, 0);   // (its table for the map, before the helpers ask)
+        const bool present = kol_focus_detail::t_present;
+        // fn(chunk, row0, row1) over the rows, on the pool or here; a helper
+        // takes this thread's t_present for the run.
+        auto over_rows = [&](int rows, int chunk_rows, const std::function<void(int, int, int)>& fn) {
+            if (!split) {
+                for (int c = 0, r = 0; r < rows; ++c, r += chunk_rows) fn(c, r, std::min(rows, r + chunk_rows));
+                return;
+            }
+            kol::parallel_rows(rows, chunk_rows, [&](int c, int r0, int r1) {
+                const bool was = kol_focus_detail::t_present;
+                kol_focus_detail::t_present = present;
+                fn(c, r0, r1);
+                kol_focus_detail::t_present = was;
+            });
+        };
+        // A list each chunk fills, put together in the chunks' order: the
+        // order one thread going down the rows gives.
+        constexpr int kLiftRows = 8;
+        static thread_local std::vector<std::vector<std::size_t>> chunk_list;
+        auto lists_for = [&](int rows, int chunk_rows) -> std::vector<std::vector<std::size_t>>& {
+            const std::size_t chunks = static_cast<std::size_t>((rows + chunk_rows - 1) / chunk_rows);
+            if (chunk_list.size() < chunks) chunk_list.resize(chunks);
+            for (std::size_t c = 0; c < chunks; ++c) chunk_list[c].clear();
+            return chunk_list;
+        };
+        auto join_lists = [&](std::vector<std::vector<std::size_t>>& lists, int rows, int chunk_rows,
+                              std::vector<std::size_t>& out) {
+            const std::size_t chunks = static_cast<std::size_t>((rows + chunk_rows - 1) / chunk_rows);
+            for (std::size_t c = 0; c < chunks; ++c) out.insert(out.end(), lists[c].begin(), lists[c].end());
+        };
+        {
+        auto& fx_lists = lists_for(h, kLiftRows);
+        over_rows(h, kLiftRows, [&](int chunk, int row0, int row1) {
+        std::uint8_t* const want = want_p;
+        std::vector<std::size_t>& fx_paint = fx_lists[static_cast<std::size_t>(chunk)];
+        for (std::size_t k = static_cast<std::size_t>(row0) * w; k < static_cast<std::size_t>(row1) * w; ++k) {
             if (g_lift[k] || g_prop_dist[k] != kUnreached || g_kind[k] == kol::kSceneNone) continue;
             if (g_no_wall_lift.size() == n && g_no_wall_lift[k]) continue;
             // (An awning's BG0 cloth too: g_awning 2.)
@@ -1342,6 +1387,9 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
                 continue;
             want[k] = 1;
         }
+        });
+        join_lists(fx_lists, h, kLiftRows, fx_paint);
+        }
         // fx_paint: the wall under an art flame where BG0 has nothing (the sky):
         // the nearest pixel of the wall up or down its own column (the
         // pilaster's edges run on through), not an art flame's itself.
@@ -1384,10 +1432,17 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
         static thread_local std::vector<std::uint8_t> g_inlay;
         static thread_local std::vector<std::size_t> inlay_q;
         g_inlay.assign(no_inlay ? 0 : n, 0);
+        lw.lap("lift.inlay");
         if (!no_inlay) {
             inlay_q.clear();
             constexpr int kR = 2, kDy = 6, kDxz = 16;
-            for (int y = 0; y < h; ++y)
+            std::uint8_t* const inlay_p = g_inlay.data();
+            auto& q_lists = lists_for(h, kLiftRows);
+            over_rows(h, kLiftRows, [&](int chunk, int row0, int row1) {
+            const std::uint8_t* const want = want_p;
+            std::uint8_t* const g_inlay = inlay_p;
+            std::vector<std::size_t>& inlay_q = q_lists[static_cast<std::size_t>(chunk)];
+            for (int y = row0; y < row1; ++y)
                 for (int x = 0; x < w; ++x) {
                     const std::size_t k = static_cast<std::size_t>(y) * w + x;
                     if (!want[k]) continue;
@@ -1403,6 +1458,8 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
                     g_inlay[k] = own > back ? 1 : 2;
                     inlay_q.push_back(k);
                 }
+            });
+            join_lists(q_lists, h, kLiftRows, inlay_q);
             for (std::size_t i = 0; i < inlay_q.size(); ++i) {
                 const std::size_t k = inlay_q[i];
                 const int cx = static_cast<int>(k % w), cy = static_cast<int>(k / w);
@@ -1420,11 +1477,53 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
         const bool by_part = g_modeled.size() == n;
         constexpr int kPieceDy = 8, kPieceDxz = 16;
         static thread_local std::vector<int> piece;
-        static thread_local std::vector<std::size_t> stack;
         piece.assign(by_part ? n : 0, 0);
-        for (int ty = 0; ty < h; ty += S)
-            for (int tx = 0; tx < w; tx += S) {
+        lw.lap("lift.blocks");
+        // In three steps (2026-11-18, so that the tiles can go over the row
+        // pool; one thread going tile by tile did all three for a tile before
+        // the next): each tile's pieces and groups found; then, in the tiles'
+        // order on this thread, each group its atlas square and its block (the
+        // squares and blocks are numbered in that order, and stop at
+        // kMaxLiftBlocks); then each tile's pixels filled. A tile's steps read
+        // and write its own pixels and squares only.
+        int* const piece_p = piece.data();
+        const std::uint8_t* const inlay_r = g_inlay.empty() ? nullptr : g_inlay.data();
+        const bool under_ok = g_scene_rgb && g_cap.under_ok && g_cap.under.size() == static_cast<std::size_t>(w) * h * 3;
+        const bool span_on = g_span_px.size() == static_cast<std::size_t>(w) * h;
+        static const bool lift_same = kol::env_set("KOL_LIFT_SAME_UNDER");
+        const int tiles_x = (w + S - 1) / S, tiles_y = (h + S - 1) / S, tiles = tiles_x * tiles_y;
+        struct Group { int group, xz_min, b, ax0, ay0; };
+        struct Tile {
+            std::vector<Group> groups;                       // those with a pixel, in order
+            std::vector<kol_focus_detail::UnderFix> fixes;   // the last step's, in order
+            int px = 0;
+        };
+        static thread_local std::vector<Tile> tile_store;
+        if (static_cast<int>(tile_store.size()) < tiles) tile_store.resize(static_cast<std::size_t>(tiles));
+        Tile* const tile_p = tile_store.data();
+        // (Not a slit's floor and back wall, DrawnCells::split_z: lifted a pixel a
+        // quad, the wall's came apart into dots with the stick held down.)
+        auto in_group = [&](std::size_t k, int group) {
+            if (!want_p[k]) return false;
+            if (span_on && g_span_px[k]) return false;
+            if (!by_part) return true;
+            return group == -1 ? piece_p[k] == -1 : piece_p[k] == group;
+        };
+        auto same_under = [&](std::size_t k) {
+            return under_ok && std::equal(g_scene_rgb + k * 3, g_scene_rgb + k * 3 + 3, g_cap.under.data() + k * 3);
+        };
+        // Step 1: the tile's pieces, then its groups that hold a pixel.
+        over_rows(tiles, 1, [&](int, int t0, int t1) {
+            static thread_local std::vector<std::size_t> stack;   // (each thread's own scratch)
+            int* const piece = piece_p;
+            const std::uint8_t* const want = want_p;
+            for (int t = t0; t < t1; ++t) {
+                const int tx = (t % tiles_x) * S, ty = (t / tiles_x) * S;
                 const int bw = std::min(S, w - tx), bh = std::min(S, h - ty);
+                Tile& T = tile_p[t];
+                T.groups.clear();
+                T.fixes.clear();
+                T.px = 0;
                 int pieces = 0;
                 for (int y = ty; y < ty + bh; ++y)
                     for (int x = tx; x < tx + bw; ++x) {
@@ -1453,36 +1552,46 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
                     }
                 // Piece 0: the terrain's (and every pixel without a model).
                 for (int group = by_part ? -1 : 0; group <= (by_part ? pieces : 0); ++group) {
-                if (by_part && group == 0) continue;
-                auto in_group = [&](std::size_t k) {
-                    if (!want[k]) return false;
-                    // (Not a slit's floor and back wall, DrawnCells::split_z: lifted a pixel a
-                    // quad, the wall's came apart into dots with the stick held down.)
-                    if (g_span_px.size() == static_cast<std::size_t>(w) * h && g_span_px[k]) return false;
-                    if (!by_part) return true;
-                    return group == -1 ? piece[k] == -1 : piece[k] == group;
-                };
-                bool any = false;
-                for (int y = ty; y < ty + bh && !any; ++y)
-                    for (int x = tx; x < tx + bw && !any; ++x) any = in_group(static_cast<std::size_t>(y) * w + x);
-                if (!any) continue;
-                const bool under_ok = g_scene_rgb && g_cap.under_ok && g_cap.under.size() == static_cast<std::size_t>(w) * h * 3;
-                auto same_under = [&](std::size_t k) {
-                    return under_ok && std::equal(g_scene_rgb + k * 3, g_scene_rgb + k * 3 + 3, g_cap.under.data() + k * 3);
-                };
-                int xz_min = 1 << 30;
-                for (int y = ty; y < ty + bh; ++y)
-                    for (int x = tx; x < tx + bw; ++x) {
-                        const std::size_t k = static_cast<std::size_t>(y) * w + x;
-                        if (in_group(k)) xz_min = std::min(xz_min, g_xz[k]);
-                    }
+                    if (by_part && group == 0) continue;
+                    bool any = false;
+                    int xz_min = 1 << 30;
+                    for (int y = ty; y < ty + bh; ++y)
+                        for (int x = tx; x < tx + bw; ++x) {
+                            const std::size_t k = static_cast<std::size_t>(y) * w + x;
+                            if (!in_group(k, group)) continue;
+                            any = true;
+                            xz_min = std::min(xz_min, g_xz[k]);
+                        }
+                    if (any) T.groups.push_back({group, xz_min, -1, 0, 0});
+                }
+            }
+        });
+        // Step 2: squares and blocks, in order. (At the cap, the rest of that
+        // tile's groups are left; a later tile asks again, as before.)
+        for (int t = 0; t < tiles; ++t) {
+            const int tx = (t % tiles_x) * S, ty = (t / tiles_x) * S;
+            const int bw = std::min(S, w - tx), bh = std::min(S, h - ty);
+            for (Group& G : tile_p[t].groups) {
                 if (static_cast<int>(g_blocks.size()) >= kMaxLiftBlocks) break;
-                int ax0, ay0;
-                const int b = atlas_new_square(&ax0, &ay0, 0);
+                G.b = atlas_new_square(&G.ax0, &G.ay0, 0);
+                kol::ScenePixels::SpriteBlock blk{tx, ty, bw, bh, G.b, G.xz_min, 0, 1.0e9f, 1.0f};
+                blk.surface = true;
+                g_blocks.push_back(blk);
+            }
+        }
+        // Step 3: the pixels.
+        over_rows(tiles, 1, [&](int, int t0, int t1) {
+            for (int t = t0; t < t1; ++t) {
+                const int tx = (t % tiles_x) * S, ty = (t / tiles_x) * S;
+                const int bw = std::min(S, w - tx), bh = std::min(S, h - ty);
+                Tile& T = tile_p[t];
+                for (const Group& G : T.groups) {
+                if (G.b < 0) break;   // (past the cap)
+                const int group = G.group, b = G.b, ax0 = G.ax0, ay0 = G.ay0;
                 for (int y = 0; y < bh; ++y)
                     for (int x = 0; x < bw; ++x) {
                         const std::size_t k = static_cast<std::size_t>(ty + y) * w + tx + x;
-                        if (!in_group(k)) continue;
+                        if (!in_group(k, group)) continue;
                         g_lift[k] = static_cast<std::uint8_t>(b + 1);
                         // (An art flame under the effect's: lifted off and not drawn, the wall behind
                         // it showing. KOL_FX_ART_KEEP=1: as before.)
@@ -1500,7 +1609,6 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
                         // what is behind, as ever. (First by piece, half its pixels the
                         // same: whole pieces were left unlifted, making it nearly useless.)
                         // KOL_LIFT_SAME_UNDER=1: every pixel at the ground behind's.
-                        static const bool lift_same = kol::env_set("KOL_LIFT_SAME_UNDER");
                         // (Or most of the wall's pixels round it are so: the copy differs
                         // from the wall by a few pixels, round a slit, and those few slid
                         // out alone. Of the piece's pixels within 4, two in five the same.)
@@ -1509,13 +1617,13 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
                             for (int yy = std::max(ty, py0 - 4); yy <= std::min(ty + bh - 1, py0 + 4); ++yy)
                                 for (int xx = std::max(tx, px0 - 4); xx <= std::min(tx + bw - 1, px0 + 4); ++xx) {
                                     const std::size_t q = static_cast<std::size_t>(yy) * w + xx;
-                                    if (!in_group(q)) continue;
+                                    if (!in_group(q, group)) continue;
                                     ++all;
                                     same += same_under(q);
                                 }
                             return all > 0 && same * 5 >= all * 2;
                         };
-                        if (!lift_same && ((!g_inlay.empty() && g_inlay[k] == 1) || same_under(k) || copy_round(tx + x, ty + y))) {
+                        if (!lift_same && ((inlay_r && inlay_r[k] == 1) || same_under(k) || copy_round(tx + x, ty + y))) {
                             g_under_xz[k] = g_xz[k];
                             g_under_y[k] = g_y[k];
                             g_under_kind[k] = g_kind[k];
@@ -1523,23 +1631,86 @@ int lift_wall_surfaces(int w, int h, bool walls_on) {
                             // at the lifted pixels' corners, single dark pixels on the stone.)
                             if (g_scene_rgb && !same_under(k)) {
                                 const std::uint8_t* c = g_scene_rgb + k * 3;
-                                g_fx_under_fix.push_back({static_cast<std::uint32_t>(k), {c[0], c[1], c[2]}});
+                                T.fixes.push_back({static_cast<std::uint32_t>(k), {c[0], c[1], c[2]}});
                             }
                         }
                         if (swap_ao) {
                             g_lift_ao[k] = g_ao[k];
                             g_ao[k] = g_back_ao[k];
                         }
-                        ++surface_px;
+                        ++T.px;
                     }
-                kol::ScenePixels::SpriteBlock blk{tx, ty, bw, bh, b, xz_min, 0, 1.0e9f, 1.0f};
-                blk.surface = true;
-                g_blocks.push_back(blk);
                 }
             }
+        });
+        for (int t = 0; t < tiles; ++t) {
+            g_fx_under_fix.insert(g_fx_under_fix.end(), tile_p[t].fixes.begin(), tile_p[t].fixes.end());
+            surface_px += tile_p[t].px;
+        }
         g_lift_ao_on = swap_ao && surface_px > 0;
     }
     return surface_px;
+}
+
+// The pass, its loops over the row pool: the pixels to lift and their inlay
+// by rows, the pieces and the fill by tiles (lift_wall_surfaces_run).
+// KOL_LIFT_SERIAL=1: on this thread alone. KOL_LIFT_PAR_CHECK=1: both ways
+// from the same start, everything the pass writes compared.
+int lift_wall_surfaces(int w, int h, bool walls_on) {
+    static const bool serial = kol::env_set("KOL_LIFT_SERIAL");
+    static const bool check = kol::env_set("KOL_LIFT_PAR_CHECK");
+    if (serial || !check) return lift_wall_surfaces_run(w, h, walls_on, !serial);
+    struct State {
+        std::vector<std::uint8_t> lift, opaque, under_kind, ao, lift_ao;
+        std::vector<std::int32_t> under_xz, under_y;
+        std::vector<kol::ScenePixels::SpriteBlock> blocks;
+        std::vector<kol_focus_detail::UnderFix> fixes;
+        int atlas_h = 0;
+        bool ao_on = false;
+        void take() {
+            lift = g_lift; opaque = g_atlas_opaque; under_kind = g_under_kind; ao = g_ao; lift_ao = g_lift_ao;
+            under_xz = g_under_xz; under_y = g_under_y; blocks = g_blocks; fixes = g_fx_under_fix;
+            atlas_h = g_atlas_h; ao_on = g_lift_ao_on;
+        }
+        void put() const {
+            g_lift = lift; g_atlas_opaque = opaque; g_under_kind = under_kind; g_ao = ao; g_lift_ao = lift_ao;
+            g_under_xz = under_xz; g_under_y = under_y; g_blocks = blocks; g_fx_under_fix = fixes;
+            g_atlas_h = atlas_h; g_lift_ao_on = ao_on;
+            const std::size_t apx = static_cast<std::size_t>(g_atlas_w) * g_atlas_h;
+            g_atlas_rgb.resize(apx * 3, 0);
+            g_atlas_blur.resize(apx, 0);
+        }
+        bool same(const State& o) const {
+            if (lift != o.lift || opaque != o.opaque || under_kind != o.under_kind || ao != o.ao ||
+                lift_ao != o.lift_ao || under_xz != o.under_xz || under_y != o.under_y || atlas_h != o.atlas_h ||
+                ao_on != o.ao_on || blocks.size() != o.blocks.size() || fixes.size() != o.fixes.size())
+                return false;
+            for (std::size_t i = 0; i < blocks.size(); ++i) {
+                const auto& a = blocks[i]; const auto& b = o.blocks[i];
+                if (a.sx != b.sx || a.sy != b.sy || a.w != b.w || a.h != b.h || a.slot != b.slot || a.xz != b.xz ||
+                    a.surface != b.surface)
+                    return false;
+            }
+            for (std::size_t i = 0; i < fixes.size(); ++i)
+                if (fixes[i].k != o.fixes[i].k || std::memcmp(fixes[i].rgb, o.fixes[i].rgb, 3) != 0) return false;
+            return true;
+        }
+    };
+    static thread_local State start, split_out, serial_out;
+    start.take();
+    const int px_split = lift_wall_surfaces_run(w, h, walls_on, true);
+    split_out.take();
+    start.put();
+    const int px_serial = lift_wall_surfaces_run(w, h, walls_on, false);
+    serial_out.take();
+    const bool same = px_split == px_serial && split_out.same(serial_out);
+    static long checks = 0, fails = 0;
+    ++checks;
+    if (!same) ++fails;
+    if (!same || checks % 300 == 1)
+        std::fprintf(stderr, "lift-par-check: %s, %d pixels lifted (%ld checks, %ld with a difference)\n",
+                     same ? "the same" : "DIFFERENT", px_serial, checks, fails);
+    return px_serial;
 }
 }  // namespace
 

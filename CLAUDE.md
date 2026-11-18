@@ -1,3 +1,16 @@
+## HANDOFF — 2026-11-18: 1.0.1 released; the Steam Deck port started (read this first)
+
+**Released:** v1.0.1 (main `255f514`, pushed, GitHub release with the APK): the save and the save states in Android's Files app (SavesProvider.java), `docs/RELEASE_1.0.1.md`. Installed over 1.0 on the Thor (`com.totkol.game`).
+
+**Branch `steam-deck`, UNCOMMITTED in BOTH repos** (KoL: `src/kol_desktop.{h,cpp}`, main.cpp, kol_actions.cpp, both CMakeLists, docs/DEVLOG.md; gbarecomp: host_window.cpp, runtime.h, ENHANCEMENTS.md). docs/DEVLOG.md "Steam Deck" has what is built and the list of what is not.
+
+- Built, checked headless on the Mac only: the options menu as an overlay over the game (F10 or a click of the right stick), player mode (`--data-dir`: files and settings in one directory as on Android), and a desktop fix for a view size chosen at run time (it drew enlarged).
+- The Android debug build still compiles with it. The render invariants were not run (nothing in the PPU frame changed).
+- **It builds and runs on the user's Steam Deck** (11-18): `ssh steamdeck`, `tools/deck_build.sh` (rsync + build in the freedesktop SDK at `~/kol`), `~/kol/run.sh` / `play.sh`, a desktop icon. 1280x800, 320x200 at 4x, GL effects, menu overlay: seen in a present dump from the Deck's screen. Dev build, Desktop Mode only; no Flatpak, no Gaming Mode run, nothing measured. DEVLOG "On the Deck" has the recipe and the X11-from-SSH trap.
+- The user (11-18): has a Deck and SSH is set up (192.168.0.59); right-stick click is fine for now; yes to 16:10 on the Deck build (built: 320x200 / 384x240 / 432x270 on a 16:10 panel, Enhanced starts at 320x200; only 320x200 on BN checked).
+- **Deck performance (11-18):** its cores are ~half a Mac core; map 55 with the camera panning was 47 fps. Window light + lamp light split over the row pool (byte-identical, in-frame checks `KOL_WIN_PAR_CHECK` / `KOL_LAMP_PAR_CHECK`), the window cache no longer stores one-off builds, 6 helpers on desktop, then the wall lifting split too (`KOL_LIFT_PAR_CHECK`): pans 58.6 fps, the worker 20.2 -> 14.6 ms. Still over budget at times (~179 of 1201 long frames; map 100 57 fps). The terrain pass (a painter's pass) was left. DEVLOG has every number, the bench scripts (`~/kol/bench.sh`, `out/pan.replay`) and what is left by section.
+- Next, not started: the setup screen (ROM/BIOS/mod), the Save States grid over the game, a Quit row, then the Flatpak and a Gaming Mode run.
+
 ## HANDOFF — 2026-11-06: map 75, the mermaid's cave (read this first)
 
 **Committed (this commit; nothing pushed; gbarecomp untouched).** APK 14:47 has all of it, for Ctrl+Option+I. Not seen on the Thor. Only map_ext.cfg is the user's (never commit). README "Map 75" and the sections after it; memory kol-map75-cave.
