@@ -14,7 +14,10 @@ BACKUP="$HOME/thor_slots_backup"
 echo "APK: $(date -r "$APK" '+%Y-%m-%d %H:%M')  $(du -h "$APK" | cut -f1)"
 mkdir -p "$BACKUP"
 for f in totkol.state1 totkol.state2 totkol.state3 totkol.sav enhancements.cfg; do
-    "$ADB" exec-out "run-as com.koldecomp.game cat files/$f" > "$BACKUP/$f" 2>/dev/null || true
+    # Keep the last backup when the device has no such file (a fresh install):
+    # an empty read must not overwrite it.
+    "$ADB" exec-out "run-as com.koldecomp.game cat files/$f" > "$BACKUP/$f.new" 2>/dev/null || true
+    if [ -s "$BACKUP/$f.new" ]; then mv "$BACKUP/$f.new" "$BACKUP/$f"; else rm -f "$BACKUP/$f.new"; fi
 done
 echo "Slots backed up to $BACKUP"
 "$ADB" install -r "$APK"
