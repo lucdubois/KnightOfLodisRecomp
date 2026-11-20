@@ -23561,3 +23561,10 @@ puts it beside the game as licenses.txt.
 Also: the desktop's Options > Mod said "Start the game with --rom-patch
 FILE"; it now says a mod is chosen on the setup window and how to get it
 back (delete totkol.gba, or --setup).
+
+Then, before 1.1 went out: the APK's `libc++_shared.so` (the NDK's C++
+runtime, there since 1.0) had no notice. Android's text now ends with
+libc++'s and libc++abi's, verbatim from NDK r27's toolchain NOTICE
+(`third_party/licenses/libcxx*-ndk27.txt`). The Mac zip is packed without
+the `__MACOSX/._*` sidecars (`ditto --norsrc --noextattr`; the signature
+verifies after unzipping).

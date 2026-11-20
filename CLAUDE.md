@@ -1,3 +1,12 @@
+## HANDOFF — 2026-11-20: 1.1 released on Android, Linux / Steam Deck, macOS and Windows (read this first)
+
+**Released:** v1.1 (KoL main, pushed, tagged; GitHub release "Knight of Lodis Recomp 1.1" with `KnightOfLodisRecomp.apk`, `-1.1-x86_64.AppImage`, `-1.1-macos-arm64.zip`, `-1.1-windows-x64.zip`; notes = `docs/RELEASE_1.1.md`). **gbarecomp is never pushed** (the user: "Don't push gbarecomp!"; its origin is mstan's repo): its local commits up to `9d7b1d4` stay on this Mac, so KoL's public source needs them to build, as since 1.0.
+
+- Packages: `tools/package_appimage.sh` (on the Deck), `package_macos.sh`, `package_windows.sh` (MinGW-w64 from Homebrew, SDL2 2.30.9 static in build-windows-deps/), Android `tools/check_release_build.sh` (assembleRelease + dev-tool strings; the signing key is the 1.0 one, `23abc386...`). The Flatpak script exists but no Flatpak was released.
+- Desktop since 1.0.1: setup screen, keyboard layout, Esc / right stick = menu, RetroAchievements login form in the menu (typed text through gbarecomp `g_host_text_input`), HTTPS certificates on SteamOS (the AppImage's OpenSSL looked under /etc/pki/tls), achievement popups, Options > Licenses as a full-window page (`setup_text_page`), notices per package (`third_party/NOTICES-desktop.txt` from `tools/make_licenses.py`).
+- Checked before release: AppImage 600 frames on the Deck, Mac app and Windows .exe (Wine 11) headless; the Windows build has never run on a real Windows PC (the notes say so). docs/DEVLOG.md "Steam Deck" and its sub-sections hold the details.
+- Open: on the desktop, getting back to the setup window means deleting totkol.gba or `--setup` (offered: a menu row that restarts there); Option + Return is both full screen and Start on a Mac keyboard (offered: another key); MEMORY.md index is over its size limit.
+
 ## HANDOFF — 2026-11-18: 1.0.1 released; the Steam Deck port started (read this first)
 
 **Released:** v1.0.1 (main `255f514`, pushed, GitHub release with the APK): the save and the save states in Android's Files app (SavesProvider.java), `docs/RELEASE_1.0.1.md`. Installed over 1.0 on the Thor (`com.totkol.game`).

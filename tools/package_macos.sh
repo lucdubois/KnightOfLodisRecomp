@@ -112,5 +112,5 @@ codesign --verify --deep --strict "$APP"
 
 mkdir -p "$OUT"
 rm -f "$OUT/$ZIP"
-( cd "$WORK" && ditto -c -k --sequesterRsrc --keepParent "$APPNAME.app" "$OUT/$ZIP" )
+( cd "$WORK" && ditto -c -k --norsrc --noextattr --keepParent "$APPNAME.app" "$OUT/$ZIP" )
 ls -la "$OUT/$ZIP"

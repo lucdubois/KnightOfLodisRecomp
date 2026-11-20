@@ -3,7 +3,8 @@
 themselves so the two cannot drift apart. Run it again whenever a dependency
 or its licence changes.
 
-  android/app/src/main/assets/licenses.txt  the Android app (Options > Licenses)
+  android/app/src/main/assets/licenses.txt  the Android app (Options > Licenses),
+      with the NDK's C++ runtime it carries
   third_party/NOTICES-desktop.txt           the desktop builds: built into the
       program for Options > Licenses (CMakeLists.txt) and put beside it as
       licenses.txt by tools/package_{appimage,flatpak,macos,windows}.sh.
@@ -71,6 +72,13 @@ COMMON = [
     ("stb_image (achievement badges)", stb_licence()),
     ("FluidR3 GM soundfont (the HD instruments)",
      read(os.path.join(KOL, "tools", "hd_audio", "LICENSE-FluidR3.txt"))),
+]
+
+# What only the Android app carries: the NDK's C++ runtime, libc++_shared.so
+# (libc++ and libc++abi; their notices from NDK r27's toolchain NOTICE).
+ANDROID = [
+    ("libc++ and libc++abi (the Android NDK's C++ runtime, libc++_shared.so)",
+     lic("libcxx-ndk27.txt") + "\n\nlibc++abi:\n\n" + lic("libcxxabi-ndk27.txt")),
 ]
 
 LGPL_NOTE = (
@@ -145,7 +153,7 @@ def write(path, text):
 
 
 def main():
-    write(OUT_ANDROID, assemble(COMMON))
+    write(OUT_ANDROID, assemble(COMMON + ANDROID))
     write(OUT_DESKTOP, ascii_only(assemble(COMMON + DESKTOP)))
 
 
