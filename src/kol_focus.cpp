@@ -144,6 +144,9 @@ bool bg1_prop_map(int map) {
 }  // namespace
 
 namespace kol_focus_detail {
+// (Here, not inline in kol_focus_internal.h: see the note there.)
+thread_local std::vector<DrawnRound> SceneBuild::rounds;
+
 bool middle_v_cell(int map, int x, int z) {
     static const bool off = std::getenv("KOL_NO_MIDDLE_V_CELLS") != nullptr;
     if (off) return false;

@@ -23500,3 +23500,64 @@ welcome.
   desktop only logged them. `KOL_DESKTOP_POPUP_AT=<n>` (dev) shows a sample.
 - Seen working by the user on the Mac (11-20). On the Deck: the login and the
   welcome not yet confirmed after the certificate fix.
+
+### Windows: cross-compiled on the Mac (2026-11-20)
+
+`tools/package_windows.sh` -> `build/release/KnightOfLodisRecomp-<version>-windows-x64.zip`:
+a folder with KnightOfLodisRecomp.exe (SDL2 and the C++ runtime linked in, no
+DLL but Windows' own: the script checks the import table), the HD bank beside
+it, licenses.txt and a README.txt. Built on this Mac with Homebrew's MinGW-w64
+(`brew install mingw-w64`, GCC 16.2; toolchain `tools/mingw-w64-x86_64.cmake`)
+and SDL2 2.30.9 built from its release source (the Flatpak's pinned version
+and SHA-256) as a static library in build-windows-deps/. gbarecomp's
+GBARECOMP_STATIC_RELEASE does the static link, with its prefix pointed there.
+
+- Achievements over WinHTTP (`src/kol_cheevos_winhttp.cpp`; Windows has no
+  libcurl): the system's certificates and proxy, TLS 1.2/1.3.
+- The setup screen's ROM / BIOS / mod through the system's Open dialog
+  (`src/kol_setup_win.cpp`, as the Mac's panel).
+- `src/kol_windows.rc`: the icon (the Android launcher icon's PNGs in an .ico)
+  and a manifest with UTF-8 as the code page (Windows 10 1903 on), so a user
+  folder with accents opens through the game's UTF-8 paths.
+- Portability: the badge folder made with std::filesystem (POSIX mkdir), no
+  nanosecond mtime from MinGW's stat, and `SceneBuild::rounds` defined in
+  kol_focus.cpp: as an inline thread_local with a constructor in the header,
+  MinGW's GCC gave each file its own TLS init function and the link refused.
+- A relative `--data-dir` is made absolute: a public build moves into
+  <dir>/logs before the runtime opens the ROM, and on Windows the runtime's
+  own Open dialog then came up for the ROM it could not find.
+- Wine 11 on this Mac (a private prefix, display driver null, SDL dummy):
+  600 frames, HD sound verified, a made-up login answered by the server over
+  WinHTTP. Not run on a real Windows PC. Unsigned: SmartScreen asks once.
+
+### Options > Licenses on the desktop, and the notices of what each package carries (2026-11-20)
+
+The desktop's Licenses row opened a dialog naming a file in the source tree.
+Now a page over the whole window (`setup_text_page` in kol_setup.cpp: the
+setup screen's Roboto rasterised on the CPU with stb_truetype, sized to the
+window, h / 800 as its unit), shown by kol_desktop as a present overlay over
+the menu. The pad through the menu (`MenuPlatform::page_up / page_scroll /
+page_close`, in menu_filter_keys with its press and repeat rules: up/down two
+lines, L/R or left/right a page, B or A back), Escape, Page Up/Down,
+Home/End and the wheel (an SDL event watch). `KOL_DESKTOP_LICENSES_AT=<n>[,first]`
+(dev) opens it at a present.
+
+The text: `tools/make_licenses.py` now writes two files. Android's as before
+(the Roboto and stb_truetype sections, desktop-only, hand-added there, are
+gone). `third_party/NOTICES-desktop.txt` adds the setup screen's typeface and
+renderer and the libraries the packages carry: the AppImage's (libcurl,
+OpenSSL, nghttp2, libpsl, libidn2 and libunistring under the LGPLv3, zlib,
+libffi, libdecor, the GCC runtime), the Windows .exe's (MinGW-w64 runtime,
+winpthreads), the Mac app's (SDL3, sdl2-compat), then the Apache 2.0, LGPLv3
+and GPLv3 texts in full. ASCII (the page draws ASCII). The licence texts are
+in `third_party/licenses/`, fetched 2026-11-20 at the packages' versions
+(curl 8.11.1, nghttp2 1.65.0, libpsl 0.21.5, zlib 1.3.1, libidn2 2.3.7,
+libffi 3.4.6 and libdecor 0.2.2 (their SDK versions not read; the texts are
+the same), mingw-w64 14.0.0, GCC 14.2's runtime
+exception) or taken from Homebrew's kegs (OpenSSL, libunistring, SDL3,
+sdl2-compat, mingw-w64). CMake bakes the desktop file; every package script
+puts it beside the game as licenses.txt.
+
+Also: the desktop's Options > Mod said "Start the game with --rom-patch
+FILE"; it now says a mod is chosen on the setup window and how to get it
+back (delete totkol.gba, or --setup).

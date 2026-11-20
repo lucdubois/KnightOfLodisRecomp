@@ -1070,7 +1070,9 @@ void ask_restart(const std::string& text) {
 // Options > Mod (under g_mu): what plays, and Choose / Remove / Cancel.
 void mod_dialog() {
     if (!g_platform.pick_mod) {
-        open_dialog("Mod", "Start the game with --rom-patch FILE.", {"OK"}, 0, nullptr);
+        open_dialog("Mod", "A mod is chosen on the setup window. To open it again, quit and delete totkol.gba "
+                           "in the game's folder (your save is kept), or start the game with --setup.",
+                    {"OK"}, 0, nullptr);
         return;
     }
     std::string playing = "Playing: ";
@@ -1174,7 +1176,7 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Back: leave_page(); break;
         case Kind::Licenses:
             if (g_platform.show_licenses) g_platform.show_licenses();
-            else open_dialog("Licenses", "See android/app/src/main/assets/licenses.txt.", {"OK"}, 0, nullptr);
+            else open_dialog("Licenses", "See licenses.txt beside the game.", {"OK"}, 0, nullptr);
             break;
         case Kind::Quit:
             open_dialog("Quit Game", "Close the game? Unsaved progress is lost.",
@@ -1899,6 +1901,17 @@ std::uint16_t menu_filter_keys(std::uint16_t keyinput) {
         }
         return false;
     };
+    if (g_platform.page_up && g_platform.page_up()) {   // the platform's page (MenuPlatform::page_up)
+        if (fired(6, true)) g_platform.page_scroll(-1, false);
+        if (fired(7, true)) g_platform.page_scroll(+1, false);
+        if (fired(9, true) || fired(5, true)) g_platform.page_scroll(-1, true);   // L, left
+        if (fired(8, true) || fired(4, true)) g_platform.page_scroll(+1, true);   // R, right
+        if (fired(1, false) || fired(0, false)) {                                 // B, A
+            menu_cancel_sound();
+            g_platform.page_close();
+        }
+        return 0x03FFu;
+    }
     if (g_login.up && !g_dlg.up) {   // the login form (login_open): only the pad's keys reach here
         login_poll();
         const int was_sel = g_login.sel;

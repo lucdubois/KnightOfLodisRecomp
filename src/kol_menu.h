@@ -163,6 +163,13 @@ struct MenuPlatform {
     void (*text_input)(int on) = nullptr;   // the host takes typed text (gbarecomp g_host_text_input) or not
     void (*show_keyboard)() = nullptr;      // the system's on-screen keyboard (SteamOS: Steam's), if any
     const char* keyboard_hint = nullptr;    // the form's line when nothing else is said
+    // A page the platform draws over the menu (the desktop's Licenses,
+    // show_licenses): while page_up() the pad is the page's (menu_filter_keys:
+    // up/down scroll a step, L/R or left/right a page, B or A closes), called
+    // under the menu's lock (they must not call the menu back).
+    bool (*page_up)() = nullptr;
+    void (*page_scroll)(int dir, bool page) = nullptr;
+    void (*page_close)() = nullptr;
 };
 void menu_set_platform(const MenuPlatform& p);
 

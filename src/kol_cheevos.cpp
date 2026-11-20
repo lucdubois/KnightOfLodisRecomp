@@ -17,8 +17,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
 #include <map>
-#include <sys/stat.h>
+#include <system_error>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -623,7 +624,8 @@ void badge_worker() {
             ok = http && url[0] && http(url, nullptr, nullptr, ua.c_str(), &status, &bytes) && status == 200;
             if (ok) {
                 const std::string dir = badge_dir();
-                mkdir(dir.c_str(), 0755);
+                std::error_code ec;
+                std::filesystem::create_directory(dir, ec);
                 if (std::FILE* f = std::fopen(path.c_str(), "wb")) {
                     std::fwrite(bytes.data(), 1, bytes.size(), f);
                     std::fclose(f);

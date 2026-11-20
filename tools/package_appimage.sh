@@ -54,7 +54,7 @@ X-AppImage-Version=$VERSION
 EOF
 cp "$ROOT/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" "$STAGE/knightoflodisrecomp.png"
 [ -f "$ROOT/build/hd_instruments.bank" ] && cp "$ROOT/build/hd_instruments.bank" "$STAGE/"
-cp "$ROOT/android/app/src/main/assets/licenses.txt" "$STAGE/licenses.txt"
+cp "$ROOT/third_party/NOTICES-desktop.txt" "$STAGE/licenses.txt"
 
 if [ "${1:-}" != "--no-build" ]; then
     echo "==> sources to the Deck"

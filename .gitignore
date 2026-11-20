@@ -74,3 +74,6 @@ totkol-*.sav
 *.bps
 /build-macos/
 /build-macos.*
+/build-windows/
+/build-windows-deps/
+/build-windows.*

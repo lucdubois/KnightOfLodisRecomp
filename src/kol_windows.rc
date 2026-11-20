@@ -1,0 +1,5 @@
+// The Windows program's resources (tools/package_windows.sh): its icon, the
+// Android launcher icon at 48, 96, 144 and 192 pixels as PNG entries
+// (src/kol_windows.ico), and its manifest (UTF-8 code page).
+1 ICON "kol_windows.ico"
+1 24 "kol_windows.manifest"

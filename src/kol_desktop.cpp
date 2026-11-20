@@ -72,6 +72,68 @@ void desktop_popup(const unsigned* argb, int w, int h) {
     if (g_pop_queue.size() < 64) g_pop_queue.push_back(std::move(p));
 }
 
+// ── Options > Licenses ──────────────────────────────────────────────────
+// The third-party notices (third_party/NOTICES-desktop.txt, tools/make_licenses.py; built in
+// by CMakeLists.txt) as a page over the whole window, in the setup screen's
+// type (setup_text_page). The desktop had none: its Licenses row pointed at
+// a file in the source tree (2026-11-20). The pad through the menu
+// (MenuPlatform::page_*), Escape, Page Up / Down, Home / End and the wheel
+// here. First line and page size are atomics: the pad runs on the guest
+// thread, the keys and the wheel on the event loop's, the drawing at present.
+const char kLicensesText[] =
+#include "kol_licenses_baked.inc"
+    ;
+std::atomic<bool> g_lic_open{false};
+std::atomic<int> g_lic_first{0}, g_lic_lines{0}, g_lic_page{30};
+std::vector<std::uint32_t> g_lic_px;
+int g_lic_w = 0, g_lic_h = 0, g_lic_drawn_first = -1;
+unsigned g_lic_version = 0;
+
+void licenses_show() {
+    g_lic_first = 0;
+    g_lic_open = true;
+}
+bool licenses_up() { return g_lic_open.load(); }
+void licenses_close() { g_lic_open = false; }
+void licenses_scroll(int dir, bool page) {
+    const int step = page ? std::max(1, g_lic_page.load() - 2) : 2;
+    const int last = std::max(0, g_lic_lines.load() - g_lic_page.load());
+    g_lic_first = std::clamp(g_lic_first.load() + dir * step, 0, last);
+}
+// The wheel over the page (an SDL event watch: the host has no hook for it).
+int licenses_wheel(void*, SDL_Event* e) {
+    if (e->type == SDL_MOUSEWHEEL && g_lic_open.load() && e->wheel.y != 0) {
+        const int last = std::max(0, g_lic_lines.load() - g_lic_page.load());
+        g_lic_first = std::clamp(g_lic_first.load() - 3 * e->wheel.y, 0, last);
+    }
+    return 1;
+}
+
+// The page at this present, the whole window; false when it is not up.
+bool licenses_overlay(gbarecomp::PresentOverlay* o, int out_w, int out_h) {
+    if (!g_lic_open.load()) return false;
+    const int first = g_lic_first.load();
+    if (out_w != g_lic_w || out_h != g_lic_h || first != g_lic_drawn_first) {
+        g_lic_w = out_w;
+        g_lic_h = out_h;
+        g_lic_px.assign(static_cast<std::size_t>(out_w) * out_h, 0xFF000000u);
+        int lines = 0, page = 1;
+        setup_text_page("Licenses", kLicensesText,
+                        "Up / Down: scroll     L / R: a page     B or Esc: back", out_w, out_h, first,
+                        g_lic_px.data(), &lines, &page);
+        g_lic_lines = lines;
+        g_lic_page = page;
+        g_lic_drawn_first = first;
+        g_lic_version = ++g_overlay_version;
+    }
+    o->argb = g_lic_px.data();
+    o->w = o->dw = g_lic_w;
+    o->h = o->dh = g_lic_h;
+    o->x = o->y = 0;
+    o->version = g_lic_version;
+    return true;
+}
+
 // The popup's place at this present; false when none is up.
 bool popup_overlay(gbarecomp::PresentOverlay* o, int out_w, int out_h) {
     constexpr long kSlideMs = 250, kHoldMs = 4000;
@@ -174,6 +236,16 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
             return e && *e ? std::atol(e) : -1L;
         }();
         if (presents == pop_at) cheevos_notice("Welcome, Player", "0 of 87 achievements unlocked.");
+        // KOL_DESKTOP_LICENSES_AT=<n>[,first]: Options > Licenses at the nth
+        // present (the menu opened), from the text's line `first`.
+        static const char* const lic = std::getenv("KOL_DESKTOP_LICENSES_AT");
+        static long lic_at = -1, lic_first = 0;
+        static const bool lic_read = lic && std::sscanf(lic, "%ld,%ld", &lic_at, &lic_first) >= 1;
+        if (lic_read && presents == lic_at) {
+            if (!menu_is_open()) menu_toggle();
+            licenses_show();
+            g_lic_first = static_cast<int>(lic_first);
+        }
     }
     int n = 0;
     if (max >= 1 && menu_is_open()) {
@@ -192,6 +264,14 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
             out[0].version = ++g_overlay_version;
             n = 1;
         }
+    }
+    // The licenses' page over the menu, while it is open (it goes with it).
+    if (!menu_is_open()) g_lic_open = false;
+    else if (n < max && licenses_overlay(&out[n], out_w, out_h)) ++n;
+    static bool wheel_watched = false;
+    if (!wheel_watched) {
+        wheel_watched = true;
+        SDL_AddEventWatch(&licenses_wheel, nullptr);
     }
     // An achievement's popup over everything, the menu too.
     if (n < max && popup_overlay(&out[n], out_w, out_h)) ++n;
@@ -240,6 +320,18 @@ int key_hook(int scancode, int down) {
             }
         }
         return 1;
+    }
+    // The licenses' page (Options > Licenses): Escape goes back to the menu;
+    // Page Up / Down, Home and End move it (the pad's keys go through the menu).
+    if (g_lic_open.load()) {
+        switch (scancode) {
+            case SDL_SCANCODE_ESCAPE: if (down) licenses_close(); return 1;
+            case SDL_SCANCODE_PAGEUP: if (down) licenses_scroll(-1, true); return 1;
+            case SDL_SCANCODE_PAGEDOWN: if (down) licenses_scroll(+1, true); return 1;
+            case SDL_SCANCODE_HOME: if (down) g_lic_first = 0; return 1;
+            case SDL_SCANCODE_END: if (down) licenses_scroll(+1 << 20, false); return 1;
+            default: break;
+        }
     }
     if (keyboard_live) {
         if (scancode == SDL_SCANCODE_ESCAPE) {
@@ -332,6 +424,11 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     gbarecomp::g_host_assist_keys[1] = SDL_SCANCODE_2;
     MenuPlatform platform;
     platform.quit = &quit_game;
+    // Options > Licenses: the notices on a page over the window.
+    platform.show_licenses = &licenses_show;
+    platform.page_up = &licenses_up;
+    platform.page_scroll = &licenses_scroll;
+    platform.page_close = &licenses_close;
     // RetroAchievements' login: a form in the menu, typed into (the desktop
     // had none: its Log In printed how to use KOL_RA_USER, 2026-11-19).
     platform.login_in_menu = true;
@@ -363,6 +460,10 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     g_player = true;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
+    // Absolute: a public build moves into <dir>/logs before the runtime opens
+    // the ROM, so a relative --data-dir lost it (2026-11-20, under Wine: the
+    // runtime's own Open dialog came up, unseen, and held the start).
+    if (const auto abs = std::filesystem::absolute(dir, ec); !ec) dir = abs.string();
     // keybinds.ini and config.ini in the player's folder: the program's own
     // folder is read-only in an AppImage or a signed Mac app.
     static std::string input_dir;

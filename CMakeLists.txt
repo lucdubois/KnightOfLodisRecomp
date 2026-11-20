@@ -3,6 +3,9 @@ project(KnightOfLodisRecomp CXX)
 if(APPLE)
     enable_language(OBJCXX)   # src/kol_setup_mac.mm
 endif()
+if(WIN32)
+    enable_language(RC)       # src/kol_windows.rc: the program's icon
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +64,14 @@ endif()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/kol_map_ext_baked.inc"
      "R\"KOLEXT(${KOL_MAP_EXT_TEXT})KOLEXT\"\n")
 
+# The desktop builds' third-party notices (tools/make_licenses.py), built into
+# the game for Options > Licenses (src/kol_desktop.cpp).
+set(KOL_LICENSES_TXT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/NOTICES-desktop.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KOL_LICENSES_TXT}")
+file(READ "${KOL_LICENSES_TXT}" KOL_LICENSES_TEXT)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/kol_licenses_baked.inc"
+     "R\"KOLLIC(${KOL_LICENSES_TEXT})KOLLIC\"\n")
+
 # The setup screen's typeface (src/kol_setup.cpp), built into the game: each
 # .ttf as a list of bytes for an array's initialiser.
 foreach(KOL_FONT Regular Bold)
@@ -75,7 +86,11 @@ foreach(KOL_FONT Regular Bold)
 endforeach()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/third_party/rcheevos.cmake")
-find_package(CURL REQUIRED)
+# RetroAchievements' HTTP: libcurl, but on Windows the system's WinHTTP
+# (src/kol_cheevos_winhttp.cpp; tools/package_windows.sh).
+if(NOT WIN32)
+    find_package(CURL REQUIRED)
+endif()
 
 add_executable(KnightOfLodisRecomp
     src/main.cpp
@@ -83,7 +98,9 @@ add_executable(KnightOfLodisRecomp
     src/kol_setup.cpp
     $<$<PLATFORM_ID:Darwin>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_setup_mac.mm>
     src/kol_cheevos.cpp
-    src/kol_cheevos_curl.cpp
+    $<IF:$<PLATFORM_ID:Windows>,${CMAKE_CURRENT_SOURCE_DIR}/src/kol_cheevos_winhttp.cpp,${CMAKE_CURRENT_SOURCE_DIR}/src/kol_cheevos_curl.cpp>
+    $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_windows.rc>
+    $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_setup_win.cpp>
     src/kol_widescreen.cpp
     src/kol_obj_cull.cpp
     src/kol_focus.cpp
@@ -141,7 +158,14 @@ target_include_directories(KnightOfLodisRecomp PRIVATE
 # gbarecomp_runtime, gbarecomp_debug in the order/grouping each platform's
 # linker needs (the four archives are mutually recursive).
 target_link_gbarecomp_runtime_stack(KnightOfLodisRecomp)
-target_link_libraries(KnightOfLodisRecomp PRIVATE kol_rcheevos CURL::libcurl)
+target_link_libraries(KnightOfLodisRecomp PRIVATE kol_rcheevos)
+if(WIN32)
+    # WinHTTP (achievements), the Open dialog (the setup screen); a window
+    # program, no console (-mwindows: gbarecomp's static SDL2 flags add it).
+    target_link_libraries(KnightOfLodisRecomp PRIVATE winhttp comdlg32)
+else()
+    target_link_libraries(KnightOfLodisRecomp PRIVATE CURL::libcurl)
+endif()
 if(APPLE)
     # The setup screen's file picker (src/kol_setup_mac.mm).
     target_link_libraries(KnightOfLodisRecomp PRIVATE "-framework AppKit")

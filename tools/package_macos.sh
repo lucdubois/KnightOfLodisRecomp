@@ -74,7 +74,7 @@ ls "$APP/Contents/Frameworks"
 
 echo "==> resources"
 [ -f "$ROOT/build/hd_instruments.bank" ] && cp "$ROOT/build/hd_instruments.bank" "$APP/Contents/Resources/"
-cp "$ROOT/android/app/src/main/assets/licenses.txt" "$APP/Contents/Resources/licenses.txt"
+cp "$ROOT/third_party/NOTICES-desktop.txt" "$APP/Contents/Resources/licenses.txt"
 ICONSET="$WORK/AppIcon.iconset"
 mkdir -p "$ICONSET"
 SRC="$ROOT/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"

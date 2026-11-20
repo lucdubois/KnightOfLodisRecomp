@@ -77,7 +77,7 @@ EOF
 cp "$ROOT/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" "$STAGE/$APP_ID.png"
 for z in 128 64; do sips -z $z $z "$STAGE/$APP_ID.png" --out "$STAGE/$APP_ID-$z.png" > /dev/null; done
 [ -f "$ROOT/build/hd_instruments.bank" ] && cp "$ROOT/build/hd_instruments.bank" "$STAGE/"
-cp "$ROOT/android/app/src/main/assets/licenses.txt" "$STAGE/licenses.txt"
+cp "$ROOT/third_party/NOTICES-desktop.txt" "$STAGE/licenses.txt"
 
 echo "==> sources to the Deck"
 cd "$ROOT/.."

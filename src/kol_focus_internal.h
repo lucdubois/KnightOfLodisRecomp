@@ -1817,7 +1817,9 @@ struct SceneBuild {
     void debug_tile_info();    // (rest)
 };
 
-inline thread_local std::vector<DrawnRound> SceneBuild::rounds;
+// (SceneBuild::rounds is defined in kol_focus.cpp: an inline thread_local
+// with a constructor gets one TLS init function per file from MinGW's GCC,
+// and the Windows link refused the duplicates.)
 
 // A map byte's terrain record (cell_rules), worked out once a frame.
 inline int SceneBuild::record_of(std::uint8_t local) {

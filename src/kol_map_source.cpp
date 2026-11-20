@@ -218,6 +218,8 @@ const MapExt* g_ext = nullptr;   // the current map's, or none
 // told by the mtime's nanoseconds.
 #if defined(__APPLE__)
 inline long kMtimeNs(const struct stat& st) { return st.st_mtimespec.tv_nsec; }
+#elif defined(_WIN32)
+inline long kMtimeNs(const struct stat&) { return 0; }   // (whole seconds there)
 #else
 inline long kMtimeNs(const struct stat& st) { return st.st_mtim.tv_nsec; }
 #endif

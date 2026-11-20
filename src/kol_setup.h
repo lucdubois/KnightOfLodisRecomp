@@ -16,6 +16,7 @@
 // Shown by kol::desktop_prepare in player mode when the directory holds no
 // ROM (or not this game's), or with --setup. See docs/DEVLOG.md "Steam Deck".
 
+#include <cstdint>
 #include <string>
 
 namespace kol {
@@ -35,5 +36,14 @@ std::string setup_mod_path(const std::string& dir);
 // Play was chosen with the right ROM in place. False: the window was closed
 // (the game does not start). `fullscreen`: unused, the screen is a window.
 bool setup_run(const std::string& dir, bool fullscreen);
+
+// A page of plain text in this screen's typeface, for the game's window (the
+// desktop's Options > Licenses): a title bar (with "a-b of n" when the text
+// runs on), the text from its line `first` (the file's lines kept, a longer
+// one wrapped at spaces), and `hint` at the foot, on w x h ARGB, sized to the
+// window (as the screen: its unit is h / 800). *lines: the text's lines once
+// wrapped; *page: how many show at once.
+void setup_text_page(const std::string& title, const std::string& text, const std::string& hint, int w, int h,
+                     int first, std::uint32_t* argb, int* lines, int* page);
 
 }  // namespace kol

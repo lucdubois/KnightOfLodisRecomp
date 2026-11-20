@@ -270,15 +270,3 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 (The soundfont's own INFO chunk: "Frank Wen 2000-2002, 2008; Toby Smithe
 2008", "Licensed under the MIT License.")
-
-
-Roboto (the typeface of the desktop build's setup screen)
----------------------------------------------------------
-
-Copyright 2011 Google Inc. Licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). The license's text is in third_party/roboto/LICENSE of the source.
-
-
-stb_truetype (text rendering in the desktop build's setup screen)
------------------------------------------------------------------
-
-By Sean Barrett and contributors. Public domain (https://github.com/nothings/stb).

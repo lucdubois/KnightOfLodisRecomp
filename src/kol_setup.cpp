@@ -38,6 +38,9 @@ namespace kol {
 #if defined(__APPLE__)
 // kol_setup_mac.mm: the system's Open panel. False when cancelled.
 bool setup_mac_open_panel(const char* message, std::string* path);
+#elif defined(_WIN32)
+// kol_setup_win.cpp: the system's Open dialog. False when cancelled.
+bool setup_win_open_dialog(SDL_Window* window, int what, const char* title, std::string* path);
 #endif
 namespace {
 
@@ -457,6 +460,18 @@ struct Setup {
                                             "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
         std::string file;
         const bool chosen = setup_mac_open_panel(kAsk[what], &file);
+        if (window) SDL_RaiseWindow(window);
+        if (!chosen) return;
+        picking = what;
+        take(file);
+        if (picking == what) picking = -1;   // (refused: the message on the main page)
+        return;
+#elif defined(_WIN32)
+        // Windows: the system's Open dialog, as the Mac's panel.
+        static const char* const kAskWin[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+                                               "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
+        std::string file;
+        const bool chosen = setup_win_open_dialog(window, what, kAskWin[what], &file);
         if (window) SDL_RaiseWindow(window);
         if (!chosen) return;
         picking = what;
@@ -956,6 +971,156 @@ bool setup_run(const std::string& dir, bool fullscreen) {
     return play && st.rom_ok;
 }
 
+// ── A page of text, drawn on the CPU (setup_text_page) ──────────────────
+namespace {
+
+// The setup screen's Roboto, its sizes baked into coverage bitmaps kept here
+// (no renderer: the page is a picture the game's window shows as an overlay).
+struct CpuFace {
+    stbtt_fontinfo info{};
+    const unsigned char* data = nullptr;
+    bool ok = false;
+    struct Baked {
+        int px = 0, side = 0, ascent = 0;
+        std::vector<unsigned char> cover;
+        stbtt_bakedchar ch[96];
+    };
+    std::vector<Baked> sizes;
+    explicit CpuFace(const unsigned char* ttf) : data(ttf) {
+        ok = stbtt_InitFont(&info, ttf, stbtt_GetFontOffsetForIndex(ttf, 0)) != 0;
+    }
+    const Baked* at(int px) {
+        if (!ok || px < 4) return nullptr;
+        for (const Baked& b : sizes)
+            if (b.px == px) return &b;
+        Baked b;
+        b.px = px;
+        for (b.side = 256;; b.side *= 2) {
+            b.cover.assign(static_cast<std::size_t>(b.side) * b.side, 0);
+            if (stbtt_BakeFontBitmap(data, 0, static_cast<float>(px), b.cover.data(), b.side, b.side, 32, 96, b.ch) > 0 ||
+                b.side >= 4096)
+                break;
+        }
+        int asc = 0, desc = 0, gap = 0;
+        stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
+        b.ascent = static_cast<int>(asc * stbtt_ScaleForPixelHeight(&info, static_cast<float>(px)) + 0.5f);
+        if (sizes.size() > 8) sizes.erase(sizes.begin());   // (window sizes come and go)
+        sizes.push_back(std::move(b));
+        return &sizes.back();
+    }
+    int width(const std::string& t, int px) {
+        const Baked* b = at(px);
+        if (!b) return 0;
+        float x = 0.0f;
+        for (unsigned char c : t)
+            if (c >= 32 && c < 128) x += b->ch[c - 32].xadvance;
+        return static_cast<int>(x + 0.5f);
+    }
+    // `t` with its top at y, blended over w x h ARGB.
+    void draw(std::uint32_t* px_out, int w, int h, int x, int y, const std::string& t, int px, Rgb c) {
+        const Baked* b = at(px);
+        if (!b) return;
+        float pen = static_cast<float>(x);
+        for (unsigned char ch : t) {
+            if (ch < 32 || ch >= 128) continue;
+            const stbtt_bakedchar& g = b->ch[ch - 32];
+            const int dx = static_cast<int>(pen + g.xoff + 0.5f), dy = y + b->ascent + static_cast<int>(g.yoff);
+            for (int yy = 0; yy < g.y1 - g.y0; ++yy) {
+                const int Y = dy + yy;
+                if (Y < 0 || Y >= h) continue;
+                for (int xx = 0; xx < g.x1 - g.x0; ++xx) {
+                    const int X = dx + xx;
+                    if (X < 0 || X >= w) continue;
+                    const unsigned a = b->cover[static_cast<std::size_t>(g.y0 + yy) * b->side + g.x0 + xx];
+                    if (!a) continue;
+                    std::uint32_t& d = px_out[static_cast<std::size_t>(Y) * w + X];
+                    auto mix = [a](unsigned from, unsigned to) { return (from * (255 - a) + to * a + 127) / 255; };
+                    d = 0xFF000000u | (mix((d >> 16) & 0xFF, c.r) << 16) | (mix((d >> 8) & 0xFF, c.g) << 8) |
+                        mix(d & 0xFF, c.b);
+                }
+            }
+            pen += g.xadvance;
+        }
+    }
+};
+
+void fill_rect(std::uint32_t* px, int w, int h, int x0, int y0, int ww, int hh, Rgb c) {
+    const std::uint32_t v = 0xFF000000u | (static_cast<std::uint32_t>(c.r) << 16) |
+                            (static_cast<std::uint32_t>(c.g) << 8) | c.b;
+    for (int y = std::max(0, y0); y < std::min(h, y0 + hh); ++y)
+        for (int x = std::max(0, x0); x < std::min(w, x0 + ww); ++x) px[static_cast<std::size_t>(y) * w + x] = v;
+}
+
+}  // namespace
+
+void setup_text_page(const std::string& title, const std::string& text, const std::string& hint, int w, int h,
+                     int first, std::uint32_t* argb, int* lines_out, int* page_out) {
+    static CpuFace regular(kRobotoRegular), bold(kRobotoBold);
+    if (lines_out) *lines_out = 0;
+    if (page_out) *page_out = 1;
+    if (!argb || w <= 0 || h <= 0) return;
+    const float k = std::max(0.5f, h / 800.0f);
+    auto px = [k](float v) { return std::max(1, static_cast<int>(v * k + 0.5f)); };
+    const int margin = px(32), size = px(18), line_h = px(25), title_size = px(26), bar = px(64), foot = px(48);
+    fill_rect(argb, w, h, 0, 0, w, h, kPaper);
+    // The text's lines: each of the file's kept, a longer one wrapped at spaces
+    // (its indent kept); tabs as four spaces.
+    std::vector<std::string> lines;
+    const int max_w = w - 2 * margin;
+    std::size_t at = 0;
+    while (at <= text.size()) {
+        const std::size_t nl = text.find('\n', at);
+        std::string src = text.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? text.size() + 1 : nl + 1;
+        for (std::size_t t; (t = src.find('\t')) != std::string::npos;) src.replace(t, 1, "    ");
+        if (!src.empty() && src.back() == '\r') src.pop_back();
+        if (regular.width(src, size) <= max_w) { lines.push_back(src); continue; }
+        std::size_t indent = src.find_first_not_of(' ');
+        if (indent == std::string::npos || indent > 16) indent = 0;
+        const std::string lead(indent, ' ');
+        std::string line = lead, word;
+        auto flush = [&] {
+            if (word.empty()) return;
+            const bool fresh = line.size() == lead.size();
+            const std::string tried = fresh ? line + word : line + " " + word;
+            if (!fresh && regular.width(tried, size) > max_w) {
+                lines.push_back(line);
+                line = lead + word;
+            } else {
+                line = tried;
+            }
+            word.clear();
+        };
+        for (std::size_t i = indent; i < src.size(); ++i) {
+            if (src[i] == ' ') flush();
+            else word += src[i];
+        }
+        flush();
+        if (line.size() > lead.size()) lines.push_back(line);
+    }
+    while (!lines.empty() && lines.back().empty()) lines.pop_back();
+    const int top = bar + px(16), bottom = h - foot - px(8);
+    const int page = std::max(1, (bottom - top) / line_h);
+    first = std::clamp(first, 0, std::max(0, static_cast<int>(lines.size()) - page));
+    for (int i = 0; i < page && first + i < static_cast<int>(lines.size()); ++i)
+        regular.draw(argb, w, h, margin, top + i * line_h, lines[static_cast<std::size_t>(first + i)], size, kInk);
+    // The title bar and the foot, over the text's edges.
+    fill_rect(argb, w, h, 0, 0, w, bar, kAccent);
+    bold.draw(argb, w, h, margin, (bar - title_size) / 2 - px(2), title, title_size, kWhite);
+    if (static_cast<int>(lines.size()) > page) {
+        char where[48];
+        std::snprintf(where, sizeof where, "%d-%d of %d", first + 1,
+                      std::min(first + page, static_cast<int>(lines.size())), static_cast<int>(lines.size()));
+        const int ws = regular.width(where, size);
+        regular.draw(argb, w, h, w - margin - ws, (bar - size) / 2 - px(2), where, size, kWhite);
+    }
+    fill_rect(argb, w, h, 0, h - foot, w, foot, kOff);
+    fill_rect(argb, w, h, 0, h - foot, w, std::max(1, px(1)), kLine);
+    regular.draw(argb, w, h, margin, h - foot + (foot - size) / 2 - px(2), hint, size, kSoft);
+    if (lines_out) *lines_out = static_cast<int>(lines.size());
+    if (page_out) *page_out = page;
+}
+
 }  // namespace kol
 
 #else   // Android has SetupActivity.java.
@@ -964,6 +1129,8 @@ namespace kol {
 bool setup_file_is(const std::string&, const char*) { return false; }
 std::string setup_mod_path(const std::string&) { return {}; }
 bool setup_run(const std::string&, bool) { return true; }
+void setup_text_page(const std::string&, const std::string&, const std::string&, int, int, int, std::uint32_t*,
+                     int*, int*) {}
 }  // namespace kol
 
 #endif
