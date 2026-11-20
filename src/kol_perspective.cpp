@@ -7075,15 +7075,40 @@ void warp_card_runs(WarpFrame& wf) {
                     if (c < 0) return a;
                     return (fxz[c] > fxz[a] || (fxz[c] == fxz[a] && fy[c] > fy[a])) ? c : a;
                 };
-                for (int j = 0; j <= b.h; ++j)
+                // Each row's own pixels' first and last column (none: lo > hi):
+                // a corner touches its own pixels only within the rows above and
+                // below it, between those (2026-11-18: every corner of the square
+                // was tested, 33 x 33 for a few pixels, on the Steam Deck).
+                int row_lo[kSlot], row_hi[kSlot];
+                for (int j = 0; j < b.h; ++j) {
+                    row_lo[j] = b.w;
+                    row_hi[j] = -1;
+                    const std::uint8_t* lr = lift + static_cast<std::size_t>(b.sy + j) * w + b.sx;
+                    for (int i = 0; i < b.w; ++i)
+                        if (lr[i] == bi + 1) {
+                            row_lo[j] = std::min(row_lo[j], i);
+                            row_hi[j] = i;
+                        }
+                }
+                for (int j = 0; j <= b.h; ++j) {
+                    // The corners' columns that can touch one: lo - 0 .. hi + 1
+                    // of the rows above (j - 1) and below (j).
+                    int c0 = b.w + 1, c1 = -1;
+                    for (const int r : {j - 1, j})
+                        if (r >= 0 && r < b.h && row_lo[r] <= row_hi[r]) {
+                            c0 = std::min(c0, row_lo[r]);
+                            c1 = std::max(c1, row_hi[r] + 1);
+                        }
                     for (int i = 0; i <= b.w; ++i) {
                         const int X = b.sx + i, Y = b.sy + j;
-                        const int best = nearer(nearer(own(X - 1, Y - 1), own(X, Y - 1)),
-                                                nearer(own(X - 1, Y), own(X, Y)));
                         float* v = &g_xy[(base + static_cast<std::size_t>(j) * (kSlot + 1) + i) * 2];
+                        const int best = i < c0 || i > c1 ? -1
+                                                          : nearer(nearer(own(X - 1, Y - 1), own(X, Y - 1)),
+                                                                   nearer(own(X - 1, Y), own(X, Y)));
                         if (best < 0) { v[0] = static_cast<float>(X); v[1] = static_cast<float>(Y); continue; }
                         cam.corner(w, fxz, fy, fk, best, X, Y, v);
                     }
+                }
                 const auto [sax0, say0] = kol::slot_origin(b.slot, sp.atlas_per_row);
                 for (int j = 0; j < b.h; ++j)
                     for (int i = 0; i < b.w; ++i) {

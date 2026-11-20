@@ -1583,8 +1583,10 @@ inline std::vector<std::uint8_t> g_lift_win_patch, g_lift_win_haze;
 inline bool g_lift_win_any = false;
 
 // (kol_focus_windows.cpp)
+// `memo_key`: everything the light on a world point reads but the point
+// itself, without the view (0: worked out every time; see its memo).
 void lift_window_light(int w, int h, int ox, int oy, int kx, int ky, float sun_x, float sun_z,
-                       const CellHeights& cell_height);
+                       const CellHeights& cell_height, std::uint32_t memo_key);
 
 // The second set of windows (MapWindow::own_deg, map 67's moonlight) runs
 // through the main set's functions: for as long as this lives, its beams
@@ -1744,6 +1746,9 @@ struct SceneBuild {
     // shapes' cache); the occlusion's reach.
     float ao_reach_v = 0.0f;
     std::uint32_t pass_key = 0, place_key = 0;
+    // The same as pass_key but for where the camera is (kx, ky): the world,
+    // its heights and the sun alone (terrain_pass's still_key).
+    std::uint32_t pass_still_key = 0;
     // The roofs' and boxes' cache (RoofCache): checked, hit, its key.
     const bool roof_cache_check = [] {
         static const bool v = kol::env_true("KOL_ROOF_CACHE_CHECK");

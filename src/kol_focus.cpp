@@ -2421,6 +2421,7 @@ void SceneBuild::terrain_pass() {
         // shift's own business, below.)
         smix(1u | (world_on ? 2u : 0u) | (shade_on ? 8u : 0u));
     }
+    pass_still_key = still_key;
     wt.lap("scene.terrain");
     const bool pass_hit = pass_cache && g_pass.valid && g_pass.key == pass_key;
     ++g_pass.frames;
@@ -3502,10 +3503,32 @@ void SceneBuild::atlas() {
         cast_window_shadows(w, h, ox, oy, kx, ky);
         wt.lap("scene.lift");
         if ((lift_on || walls_on) && !g_atlas_bailed) lift_prop_pixels(layers, w, h, lift_on, walls_on, ox, oy, kx, ky);
+        wt.lap("lift.over");
         if (!g_atlas_bailed) grow_over_sprite(layers, w, h);
         if (!g_atlas_bailed) props_over_units(layers, w, h, lift_on, walls_on);
-        if ((lift_on || walls_on) && !g_atlas_bailed)
-            lift_window_light(w, h, ox, oy, kx, ky, sun_x, sun_z, cell_heights);
+        wt.lap("lift.winlight");
+        if ((lift_on || walls_on) && !g_atlas_bailed) {
+            // The light on a world point reads, besides the point: the world,
+            // its heights and the sun (pass_still_key: no view in it, so a pan
+            // keeps it), the sun's height, the windows' masks (the door's
+            // bars) and shutter, the beams and their shafts, the haze, the
+            // map's windows and model (lift_window_light's memo).
+            std::uint32_t memo_key = pass_still_key;
+            auto mixf = [&memo_key](float f) {
+                std::uint32_t u;
+                std::memcpy(&u, &f, sizeof u);
+                kol::fnv_mix(memo_key, u);
+            };
+            mixf(shadow_rise());
+            kol::fnv_mix(memo_key, win_dark ? g_win_sun_key : 0u);
+            kol::fnv_mix(memo_key, g_plane_mask.hash);
+            mixf(g_shutter_spread);
+            kol::fnv_mix(memo_key, g_beams.valid ? g_beams.key : 0u);
+            kol::fnv_mix(memo_key, static_cast<std::uint32_t>(g_shafts.size()));
+            mixf(g_win_haze_k);
+            kol::fnv_mix(memo_key, static_cast<std::uint32_t>(current_map()));
+            lift_window_light(w, h, ox, oy, kx, ky, sun_x, sun_z, cell_heights, memo_key | 1u);
+        }
     }
     else g_atlas_on = g_wall_px_any = false;
 }

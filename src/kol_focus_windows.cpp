@@ -974,7 +974,7 @@ void unit_window_light(int w, int h, int ox, int oy, int kx, int ky, float sun_x
     }
 }
 void lift_window_light(int w, int h, int ox, int oy, int kx, int ky, float sun_x, float sun_z,
-                       const CellHeights& cell_height) {
+                       const CellHeights& cell_height, std::uint32_t memo_key) {
     g_lift_win_any = false;
     const std::size_t n = static_cast<std::size_t>(w) * h;
     if (!g_win_any || g_win_patch.size() != n || g_lift.size() != n || g_under_xz.size() != n) return;
@@ -989,9 +989,42 @@ void lift_window_light(int w, int h, int ox, int oy, int kx, int ky, float sun_x
     int x0, x1, y0, y1;
     screen_rect(B.lx0 - kBeamCell, B.lx1 + kBeamCell, B.ly0 - kBeamCell, B.ly1 + kBeamCell, B.lz0 - kBeamCell,
                 B.lz1 + kBeamCell, w, h, ox, oy, kx, ky, x0, x1, y0, y1);
+    // The light on the point under each lifted pixel, kept from the last
+    // picture (2026-11-18, the lifting's cost on the Steam Deck: this step
+    // was 0.6 ms a picture on map 55, the same points worked out again each
+    // time while the camera turned or the units moved). A point's light is
+    // its own (X, Y, Z)'s alone under everything memo_key names, so where
+    // the key is the same and a pixel's point is the last picture's at the
+    // pixel the scroll brings it from (the same pixel if the view did not
+    // move), the last picture's values are its own. The memo holds, for
+    // every pixel of the last rectangle, the point (none: kNoPoint) and its
+    // two values. KOL_LIFT_WIN_MEMO=0: every point worked out.
+    // KOL_LIFT_WIN_MEMO_CHECK=1: every point worked out and compared with
+    // what the memo gave (a difference is logged).
+    struct Memo {
+        std::uint32_t key = 0;
+        int w = 0, h = 0, sx = 0, sy = 0, x0 = 0, x1 = -1, y0 = 0, y1 = -1;
+        std::vector<std::int32_t> xz, y;
+        std::vector<std::uint8_t> sun, hz;
+    };
+    static Memo memo, next;
+    static const bool memo_on = kol::env_not_zero("KOL_LIFT_WIN_MEMO");
+    static const bool memo_check = kol::env_set("KOL_LIFT_WIN_MEMO_CHECK");
+    constexpr std::int32_t kNoPoint = INT32_MIN;
+    const bool use = memo_on && memo_key != 0u && memo.key == memo_key && memo.w == w && memo.h == h;
+    // A point's pixel moves with the scroll: from (px - dx, py - dy) then.
+    const int dx = (ox + kx) - memo.sx, dy = (oy + ky) - memo.sy;
+    if (next.xz.size() != n) {
+        next.xz.assign(n, kNoPoint);
+        next.y.assign(n, 0);
+        next.sun.assign(n, 0);
+        next.hz.assign(n, 0);
+    }
+    long reused = 0, worked = 0, differ = 0;
     for (int py = y0; py <= y1; ++py)
         for (int px = x0; px <= x1; ++px) {
             const std::size_t k = static_cast<std::size_t>(py) * w + px;
+            next.xz[k] = kNoPoint;
             const int bi = static_cast<int>(g_lift[k]) - 1;
             if (bi < 0 || bi >= static_cast<int>(g_blocks.size())) continue;
             if (!g_blocks[bi].prop && !g_blocks[bi].surface) continue;
@@ -1000,14 +1033,56 @@ void lift_window_light(int w, int h, int ox, int oy, int kx, int ky, float sun_x
             if (g_lift_win_patch[k] || g_lift_win_haze[k]) g_lift_win_any = true;
             g_win_patch[k] = g_win_haze[k] = 0;
             if (g_under_kind[k] == kol::kSceneNone) continue;
-            const float u = 2.0f * static_cast<float>(px - ox - kx) + 1.0f;   // X - Z
-            const float xz = static_cast<float>(g_under_xz[k]);
-            const float X = 0.5f * (xz + u), Z = 0.5f * (xz - u), Y = static_cast<float>(g_under_y[k]);
-            const float sun = window_sun_at(wins, X, Y, Z, sun_x, sun_z, rise, cell_height);
-            const float hz = window_haze_at(X, Y, Z);
-            if (sun > 0.0f) g_win_patch[k] = static_cast<std::uint8_t>(std::lround(255.0f * sun));
-            if (hz > 0.0f) g_win_haze[k] = static_cast<std::uint8_t>(std::lround(255.0f * hz));
+            const std::int32_t pxz = g_under_xz[k], pyy = g_under_y[k];
+            std::uint8_t ps = 0, hs = 0;
+            bool have = false;
+            if (use) {
+                const int qx = px - dx, qy = py - dy;
+                if (qx >= memo.x0 && qx <= memo.x1 && qy >= memo.y0 && qy <= memo.y1) {
+                    const std::size_t q = static_cast<std::size_t>(qy) * w + qx;
+                    if (memo.xz[q] == pxz && memo.y[q] == pyy) {
+                        ps = memo.sun[q];
+                        hs = memo.hz[q];
+                        have = true;
+                    }
+                }
+            }
+            if (!have || memo_check) {
+                const float u = 2.0f * static_cast<float>(px - ox - kx) + 1.0f;   // X - Z
+                const float xz = static_cast<float>(pxz);
+                const float X = 0.5f * (xz + u), Z = 0.5f * (xz - u), Y = static_cast<float>(pyy);
+                const float sun = window_sun_at(wins, X, Y, Z, sun_x, sun_z, rise, cell_height);
+                const float hz = window_haze_at(X, Y, Z);
+                const std::uint8_t cs = sun > 0.0f ? static_cast<std::uint8_t>(std::lround(255.0f * sun)) : 0;
+                const std::uint8_t ch = hz > 0.0f ? static_cast<std::uint8_t>(std::lround(255.0f * hz)) : 0;
+                if (have && (cs != ps || ch != hs)) ++differ;
+                ps = cs;
+                hs = ch;
+                ++worked;
+            }
+            if (have) ++reused;
+            g_win_patch[k] = ps;
+            g_win_haze[k] = hs;
+            next.xz[k] = pxz;
+            next.y[k] = pyy;
+            next.sun[k] = ps;
+            next.hz[k] = hs;
         }
+    std::swap(memo, next);
+    memo.key = memo_key;
+    memo.w = w;
+    memo.h = h;
+    memo.sx = ox + kx;
+    memo.sy = oy + ky;
+    memo.x0 = x0; memo.x1 = x1; memo.y0 = y0; memo.y1 = y1;
+    if (memo_check) {
+        static long checks = 0, fails = 0;
+        ++checks;
+        if (differ) ++fails;
+        if (differ || checks % 300 == 1)
+            std::fprintf(stderr, "lift-win-memo-check: %ld reused, %ld differ, %ld worked out (%ld checks, %ld with a difference)\n",
+                         reused, differ, worked, checks, fails);
+    }
 }
 }  // namespace kol_focus_detail
 

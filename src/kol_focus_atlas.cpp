@@ -1068,16 +1068,19 @@ PropLift lift_props(const std::uint8_t* layers, int w, int h, bool props_on, int
     // (Kept between frames: a fresh scene-sized buffer is mapped, faulted in
     // and unmapped every frame.)
     static thread_local std::vector<int> prop_of;
-    prop_of.assign(n, -1);
+    prop_of.assign(props_on ? n : 0, -1);   // (none read with props off)
     std::unordered_map<std::uint64_t, int> prop_index;
     int last_pi = -1;
-    for (std::size_t k = 0; k < n; ++k) {
+    // (With props off, Lifted Walls alone: no pixel is one. The cheap tests
+    // first: a pixel no prop reached, or one already lifted.)
+    for (std::size_t k = 0; props_on && k < n; ++k) {
+        if (g_prop_dist[k] == kUnreached || g_lift[k]) continue;
         // (BG1 on top; or under interface, see the pass after the claim.)
         const bool bg1 = scene_top(layers, k) == 1u ||
                          (g_iface[k] && g_scene_codes && (g_scene_codes[k] & 0x0Fu) == kol::kLayerObj &&
                           (g_scene_codes[k] >> 4) == 1u);
         const bool v_bg0 = g_spire_v.size() == n && g_spire_v[k] && scene_top(layers, k) == 0u;
-        if (!props_on || g_prop_dist[k] == kUnreached || !(bg1 || v_bg0) || g_lift[k]) continue;
+        if (!(bg1 || v_bg0)) continue;
         if (fire_map && !is_flame(k)) continue;   // only the flames and smoke there (fire_map_now)
         // By place and by the cell that claimed it: trees on one diagonal at
         // one height share a place, and were one prop (a row of the
@@ -1317,10 +1320,16 @@ int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
         };
         {
         auto& fx_lists = lists_for(h, kLiftRows);
+        // Without the cases below that take a pixel whatever its layers (an
+        // art flame, an awning's cloth, a rope, a model's actor), only one
+        // with BG1 on top can be one: tested first, as most are not.
+        const bool any_layers = fx_art_on || g_awning.size() == n || g_rope_air.size() == n ||
+                                g_model_actor_px.size() == n;
         over_rows(h, kLiftRows, [&](int chunk, int row0, int row1) {
         std::uint8_t* const want = want_p;
         std::vector<std::size_t>& fx_paint = fx_lists[static_cast<std::size_t>(chunk)];
         for (std::size_t k = static_cast<std::size_t>(row0) * w; k < static_cast<std::size_t>(row1) * w; ++k) {
+            if (!any_layers && (g_scene_codes[k] & 0x0Fu) != 1u) continue;
             if (g_lift[k] || g_prop_dist[k] != kUnreached || g_kind[k] == kol::kSceneNone) continue;
             if (g_no_wall_lift.size() == n && g_no_wall_lift[k]) continue;
             // (An awning's BG0 cloth too: g_awning 2.)
@@ -1478,7 +1487,7 @@ int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
         constexpr int kPieceDy = 8, kPieceDxz = 16;
         static thread_local std::vector<int> piece;
         piece.assign(by_part ? n : 0, 0);
-        lw.lap("lift.blocks");
+        lw.lap("lift.pieces");
         // In three steps (2026-11-18, so that the tiles can go over the row
         // pool; one thread going tile by tile did all three for a tile before
         // the next): each tile's pieces and groups found; then, in the tiles'
@@ -1566,6 +1575,7 @@ int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
                 }
             }
         });
+        lw.lap("lift.squares");
         // Step 2: squares and blocks, in order. (At the cap, the rest of that
         // tile's groups are left; a later tile asks again, as before.)
         for (int t = 0; t < tiles; ++t) {
@@ -1579,8 +1589,14 @@ int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
                 g_blocks.push_back(blk);
             }
         }
+        lw.lap("lift.fill");
         // Step 3: the pixels.
         over_rows(tiles, 1, [&](int, int t0, int t1) {
+            // copy_round's counts (below) from sums over the tile, made for a
+            // group at its first call: the same counts as going over the 9 x 9
+            // pixels round each, at a fraction of the cost (2026-11-18, the
+            // lifting on the Steam Deck). (Each thread's own scratch.)
+            static thread_local std::vector<int> sum_all, sum_same;
             for (int t = t0; t < t1; ++t) {
                 const int tx = (t % tiles_x) * S, ty = (t / tiles_x) * S;
                 const int bw = std::min(S, w - tx), bh = std::min(S, h - ty);
@@ -1588,6 +1604,47 @@ int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
                 for (const Group& G : T.groups) {
                 if (G.b < 0) break;   // (past the cap)
                 const int group = G.group, b = G.b, ax0 = G.ax0, ay0 = G.ay0;
+                // A pixel with the same colour on the layer under it: that layer
+                // holds a copy of this wall there, not what is behind it (map 36's
+                // parapet tops, BG1 over a near copy on BG0). Laid at the ground
+                // behind's depth, the copy slid out under the wall's top with the
+                // stick held down, a speckled wedge (Thor state 0270). It keeps
+                // the wall's own place; a pixel with another colour under it shows
+                // what is behind, as ever. (First by piece, half its pixels the
+                // same: whole pieces were left unlifted, making it nearly useless.)
+                // KOL_LIFT_SAME_UNDER=1: every pixel at the ground behind's.
+                // (Or most of the wall's pixels round it are so: the copy differs
+                // from the wall by a few pixels, round a slit, and those few slid
+                // out alone. Of the piece's pixels within 4, two in five the same.)
+                const int sw = bw + 1;
+                bool sums = false;
+                auto copy_round = [&](int px0, int py0) {
+                    if (!sums) {
+                        sum_all.assign(static_cast<std::size_t>(sw) * (bh + 1), 0);
+                        sum_same.assign(static_cast<std::size_t>(sw) * (bh + 1), 0);
+                        for (int y = 0; y < bh; ++y) {
+                            int ra = 0, rs = 0;
+                            for (int x = 0; x < bw; ++x) {
+                                const std::size_t q = static_cast<std::size_t>(ty + y) * w + tx + x;
+                                const bool in = in_group(q, group);
+                                ra += in;
+                                rs += in && same_under(q);
+                                const std::size_t s = static_cast<std::size_t>(y + 1) * sw + x + 1;
+                                sum_all[s] = sum_all[s - sw] + ra;
+                                sum_same[s] = sum_same[s - sw] + rs;
+                            }
+                        }
+                        sums = true;
+                    }
+                    const int x0 = std::max(tx, px0 - 4) - tx, x1 = std::min(tx + bw - 1, px0 + 4) - tx + 1;
+                    const int y0 = std::max(ty, py0 - 4) - ty, y1 = std::min(ty + bh - 1, py0 + 4) - ty + 1;
+                    auto box = [&](const std::vector<int>& s) {
+                        return s[static_cast<std::size_t>(y1) * sw + x1] - s[static_cast<std::size_t>(y0) * sw + x1] -
+                               s[static_cast<std::size_t>(y1) * sw + x0] + s[static_cast<std::size_t>(y0) * sw + x0];
+                    };
+                    const int all = box(sum_all), same = box(sum_same);
+                    return all > 0 && same * 5 >= all * 2;
+                };
                 for (int y = 0; y < bh; ++y)
                     for (int x = 0; x < bw; ++x) {
                         const std::size_t k = static_cast<std::size_t>(ty + y) * w + tx + x;
@@ -1600,29 +1657,7 @@ int lift_wall_surfaces_run(int w, int h, bool walls_on, bool split) {
                         g_under_xz[k] = g_back_xz[k];
                         g_under_y[k] = g_back_y[k];
                         g_under_kind[k] = g_back_kind[k];
-                        // A pixel with the same colour on the layer under it: that layer
-                        // holds a copy of this wall there, not what is behind it (map 36's
-                        // parapet tops, BG1 over a near copy on BG0). Laid at the ground
-                        // behind's depth, the copy slid out under the wall's top with the
-                        // stick held down, a speckled wedge (Thor state 0270). It keeps
-                        // the wall's own place; a pixel with another colour under it shows
-                        // what is behind, as ever. (First by piece, half its pixels the
-                        // same: whole pieces were left unlifted, making it nearly useless.)
-                        // KOL_LIFT_SAME_UNDER=1: every pixel at the ground behind's.
-                        // (Or most of the wall's pixels round it are so: the copy differs
-                        // from the wall by a few pixels, round a slit, and those few slid
-                        // out alone. Of the piece's pixels within 4, two in five the same.)
-                        auto copy_round = [&](int px0, int py0) {
-                            int same = 0, all = 0;
-                            for (int yy = std::max(ty, py0 - 4); yy <= std::min(ty + bh - 1, py0 + 4); ++yy)
-                                for (int xx = std::max(tx, px0 - 4); xx <= std::min(tx + bw - 1, px0 + 4); ++xx) {
-                                    const std::size_t q = static_cast<std::size_t>(yy) * w + xx;
-                                    if (!in_group(q, group)) continue;
-                                    ++all;
-                                    same += same_under(q);
-                                }
-                            return all > 0 && same * 5 >= all * 2;
-                        };
+                        // (The same colour under it, or round it: copy_round, above.)
                         if (!lift_same && ((inlay_r && inlay_r[k] == 1) || same_under(k) || copy_round(tx + x, ty + y))) {
                             g_under_xz[k] = g_xz[k];
                             g_under_y[k] = g_y[k];
@@ -1734,7 +1769,9 @@ void lift_prop_pixels(const std::uint8_t* layers, int w, int h, bool props_on, b
         g_atlas_rgb.clear(); g_atlas_opaque.clear(); g_atlas_blur.clear();
     }
     if (g_atlas_per_row <= 0) return;
+    kol::WorkerTimer lt("lift.props");
     const PropLift pl = lift_props(layers, w, h, props_on, ox, oy, kx, ky);
+    lt.lap("lift.walls");
     const int surface_px = lift_wall_surfaces(w, h, walls_on);
     if (!g_blocks.empty()) g_atlas_on = true;
     static const bool sprite_debug = kol::env_set("KOL_SPRITE_DEBUG");
