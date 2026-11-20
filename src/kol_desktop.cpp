@@ -502,7 +502,13 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     }
     // No C toolchain on a player's machine: the static build and the
     // interpreter bridge only, as on Android.
+    // (On Windows SDL_setenv leaves the C runtime's copy, which the runtime's
+    // std::getenv reads, as it was: the Windows build healed with its TCC.)
+#if defined(_WIN32)
+    if (!std::getenv("GBARECOMP_SELFHEAL_RECOMPILE")) _putenv_s("GBARECOMP_SELFHEAL_RECOMPILE", "0");
+#else
     SDL_setenv("GBARECOMP_SELFHEAL_RECOMPILE", "0", 0);
+#endif
     // With a controller, the keyboard is not a second one (key_hook's note).
     gbarecomp::g_host_keyboard_yields_to_pad = 1;
 
