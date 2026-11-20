@@ -23431,8 +23431,72 @@ SDL_RENDER_DRIVER=software`, present dumps):
   unit sheet, the unit list, HELP cards, the world map's bar. None of it is
   shown on the desktop yet.
 - **The menu's platform actions** (`kol::MenuPlatform`): Mod, restart,
-  Licenses. RetroAchievements' login form and popup (the desktop has only the
-  curl transport and a printed notice). Touch on the menu (the Deck has a
+  Licenses. RetroAchievements' login form and popup (built 2026-11-19/20,
+  below). Touch on the menu (the Deck has a
   touch screen; `menu_touch` takes canvas pixels).
 - Rumble through SDL (`gbarecomp_host_rumble` exists), fullscreen by default,
   the HD bank's place in a package, performance on the Deck: not looked at.
+
+### Lifted props and walls: the work a moving camera repeated (2026-11-19)
+
+Asked: lifting (what BG1 hid, seen as the camera moves) for less. Measured
+with the camera moving (`KOL_PERSP_STICK_SWEEP`): the camera does not change
+its cost; about two thirds was scene work done again identically every frame.
+Trap: KOL_WORKER_TIME's "total" sums nested sections (warp.scene holds
+scene.*, scene.lift holds lift.*); the job's real time is the
+`[present-pipeline] jobs=N compute mean` line (GBARECOMP_FRAME_PHASE), and
+the section table held 48 (now 64: mesh.* were dropped).
+
+- **The window light behind lifted pixels** (`lift_window_light`) is kept per
+  world point: a pixel reuses the last picture's value at its place shifted
+  by the pan, when that place shows the same world point and height and the
+  key (the world, heights and sun without the view: `pass_still_key`; the
+  sun's height, window masks, shutter, beams, shafts, haze, map) is the same.
+  `KOL_LIFT_WIN_MEMO=0` off, `KOL_LIFT_WIN_MEMO_CHECK=1` compares every reuse.
+- **Wall lifting** (kol_focus_atlas): cells with no prop and no layer skip
+  the per-pixel tests first; step 3's box counts from prefix sums (per
+  thread, per group) instead of re-counting each box.
+- **Card runs** (kol_perspective `warp_card_runs`): a corner is tested only
+  between its rows' own first and last pixels (every corner of a 33 x 33
+  square was tested for a few pixels).
+- Byte-identical: the `KOL_PERSP_HASH` fingerprints through a pan with the
+  camera turning, `KOL_LIFT_PAR_CHECK` (601 checks), the memo check.
+- Deck (EM, Enhanced): lifting's cost +3.45 -> +2.55 ms a frame. Left: walls
+  0.72 (want, inlay, pieces, fill), window light 0.22, props 0.12, atlas fill
+  +0.38, card runs +0.34. Next idea: walls per tile, reused (the inlay's
+  flood fill needs a per-component recompute).
+
+### RetroAchievements on the desktop: the login form, HTTPS, the popups (2026-11-19/20)
+
+From the Deck: the Achievements page's Log In opened nothing (the desktop
+printed how to use KOL_RA_USER), then "No answer from the server", then no
+welcome.
+
+- **A login form in the menu** (`MenuPlatform::login_in_menu`; kol_menu
+  `login_*`): the game's window over the dimmed page, Username and Password
+  (stars), a message line, Log In and Cancel. The pad moves, A presses,
+  Start logs in, B cancels; the keyboard types (gbarecomp
+  `g_host_text_input` / `g_host_text_hook`: while it is up the keyboard
+  presses nothing for the game and SDL_TEXTINPUT comes to the form). On
+  SteamOS the line says "Steam + X: on-screen keyboard." The password is
+  wiped once sent and never kept. Android keeps its own dialog.
+- **Enter**: on Username it goes to Password, on Password it logs in, also
+  with a controller attached (the Deck: Steam's keyboard types Enter). On the
+  buttons it stays the pad's A: Desktop Mode types Enter from A too.
+- **Characters the font lacks** (`# $ ; @ \ ^ ` { | } ~`) are drawn from a
+  one-pixel stand-in font (kol_menu `kStandIns`, codes 0xE0+; the user: "even
+  if it looks weird"); `[ ]` and `"` take the font's own 0x53, 0x54, 0x51
+  (`"` was 0x52, the font's ellipsis). The sheet's encoder gets spaces.
+- **HTTPS from the AppImage**: its libcurl and OpenSSL come from the
+  freedesktop SDK, whose OpenSSL looks under /etc/pki/tls; SteamOS keeps
+  certificates in /etc/ssl/certs, so every request failed (curl 35, "TLS
+  connect error ... No such file or directory"). kol_cheevos_curl now gives
+  libcurl the first certificate bundle found in the distributions' usual
+  places (SSL_CERT_FILE wins). Checked on the Deck: a made-up login got the
+  server's "Invalid user/password combination".
+- **Popups** (kol_desktop `desktop_popup`, `cheevos_set_popup`): the welcome,
+  unlocks and the mod notice, as Android's: top right, slide in 250 ms, held
+  4 s, out 250 ms, one at a time, x round(height x 3 / 1080). Before, the
+  desktop only logged them. `KOL_DESKTOP_POPUP_AT=<n>` (dev) shows a sample.
+- Seen working by the user on the Mac (11-20). On the Deck: the login and the
+  welcome not yet confirmed after the certificate fix.

@@ -156,8 +156,26 @@ struct MenuPlatform {
     void (*unlink_rom)() = nullptr;   // the ROM copy set aside, then restart
     void (*show_licenses)() = nullptr;   // Options > Licenses: the app's notices (assets/licenses.txt)
     void (*quit)() = nullptr;         // Options > Quit Game (a desktop: no system gesture closes the game)
+    // The RetroAchievements login as a form in the menu itself (a desktop:
+    // Android has its own dialog, kol_cheevos.h's login form). Typed text
+    // comes in through menu_login_text and menu_login_key.
+    bool login_in_menu = false;
+    void (*text_input)(int on) = nullptr;   // the host takes typed text (gbarecomp g_host_text_input) or not
+    void (*show_keyboard)() = nullptr;      // the system's on-screen keyboard (SteamOS: Steam's), if any
+    const char* keyboard_hint = nullptr;    // the form's line when nothing else is said
 };
 void menu_set_platform(const MenuPlatform& p);
+
+// The login form (MenuPlatform::login_in_menu). Up: whether it is open.
+// Text: typed UTF-8 (printable ASCII kept) into the field being typed in.
+// Key: a keyboard key while it is up; `pad` true when a controller is
+// attached (only Backspace, and Enter on a field, are the keyboard's then:
+// the Steam Deck's Desktop Mode types Enter, Escape and the arrows from its
+// own buttons, which the pad already drives). True: the key was the form's.
+enum class LoginKey { Backspace, Enter, Escape, Tab, BackTab, Up, Down, Left, Right };
+bool menu_login_up();
+void menu_login_text(const char* utf8);
+bool menu_login_key(LoginKey k, bool pad);
 // The picker's answer: the mod's name, or an error (name null).
 void menu_mod_picked(const char* name, const char* error);
 

@@ -17,6 +17,38 @@ size_t on_body(char* data, size_t size, size_t n, void* user) {
     return size * n;
 }
 
+// The system's certificate bundle (Linux). The AppImage brings its own libcurl
+// and OpenSSL, from the freedesktop SDK, whose OpenSSL looks under
+// /etc/pki/tls (Fedora's layout); SteamOS keeps them in /etc/ssl/certs, so
+// every request failed to connect ("No answer from the server", 2026-11-20,
+// the Deck in Gaming Mode: curl error 35, "TLS connect error ... No such file
+// or directory"). The first of the distributions' usual places that exists;
+// none when SSL_CERT_FILE says where (OpenSSL reads it), or off Linux.
+const char* ca_bundle() {
+#if defined(__linux__)
+    static const char* const found = []() -> const char* {
+        if (const char* e = std::getenv("SSL_CERT_FILE"); e && *e) return nullptr;
+        static const char* const kPlaces[] = {
+            "/etc/ssl/certs/ca-certificates.crt",                  // Debian, Ubuntu, Arch, SteamOS
+            "/etc/pki/tls/certs/ca-bundle.crt",                    // Fedora, RHEL
+            "/etc/ssl/ca-bundle.pem",                              // openSUSE
+            "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",   // CentOS, RHEL 7
+            "/etc/pki/tls/cacert.pem",
+            "/etc/ssl/cert.pem",                                   // Alpine
+        };
+        for (const char* p : kPlaces)
+            if (std::FILE* f = std::fopen(p, "rb")) {
+                std::fclose(f);
+                return p;
+            }
+        return nullptr;
+    }();
+    return found;
+#else
+    return nullptr;
+#endif
+}
+
 bool curl_post(const char* url, const char* post, const char* content_type, const char* user_agent,
                int* status, std::string* body) {
     CURL* c = curl_easy_init();
@@ -28,6 +60,7 @@ bool curl_post(const char* url, const char* post, const char* content_type, cons
     curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    if (const char* ca = ca_bundle()) curl_easy_setopt(c, CURLOPT_CAINFO, ca);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, &on_body);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, body);
     if (headers) curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);

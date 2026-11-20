@@ -237,7 +237,40 @@ const Art& art() {
     return a;
 }
 
-// Plain ASCII in the game's character codes (the font's glyph order).
+// The printable ASCII the cartridge's font has no glyph for, drawn from a plain
+// one-pixel font of our own so a typed name, or a server's message, shows what
+// it holds (2026-11-20, the login form: "show them in another font, even if it
+// looks weird"; they were blanks before). Codes kStandIn + index: past every
+// code the game's texts use (the menu's ROM texts stop at 0x8E). 16 rows as the
+// font's glyphs, the capitals' rows 4-13; '#' is ink (palette index 1).
+struct StandIn {
+    char ch;
+    std::uint8_t advance;
+    const char* rows[16];
+};
+constexpr std::uint8_t kStandIn = 0xE0u;
+const StandIn kStandIns[] = {
+    {'#', 6, {"", "", "", "", "", ".#.#.", ".#.#.", "#####", ".#.#.", ".#.#.", "#####", ".#.#.", ".#.#.", "", "", ""}},
+    {'$', 6, {"", "", "", "..#..", ".####", "#.#..", "#.#..", "#.#..", ".###.", "..#.#", "..#.#", "..#.#", "####.",
+              "..#..", "", ""}},
+    {';', 3, {"", "", "", "", "", "", ".#", "", "", "", "", ".#", ".#", "#.", "", ""}},
+    {'@', 6, {"", "", "", "", "", ".###.", "#...#", "#.###", "#.#.#", "#.#.#", "#.##.", "#....", ".####", "", "", ""}},
+    {'\\', 6, {"", "", "", "#....", "#....", ".#...", ".#...", "..#..", "..#..", "..#..", "...#.", "...#.", "....#",
+               "....#", "", ""}},
+    {'^', 6, {"", "", "", "", "..#..", ".#.#.", "#...#", "", "", "", "", "", "", "", "", ""}},
+    {'`', 3, {"", "", "", "#.", ".#", "", "", "", "", "", "", "", "", "", "", ""}},
+    {'{', 5, {"", "", "..##", ".#..", ".#..", ".#..", ".#..", ".#..", "#...", ".#..", ".#..", ".#..", ".#..", ".#..",
+              "..##", ""}},
+    {'|', 3, {"", "", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ".#", ""}},
+    {'}', 5, {"", "", "##..", "..#.", "..#.", "..#.", "..#.", "..#.", "...#", "..#.", "..#.", "..#.", "..#.", "..#.",
+              "##..", ""}},
+    {'~', 6, {"", "", "", "", "", "", "", ".##.#", "#.##.", "", "", "", "", "", "", ""}},
+};
+constexpr int kStandIns_n = static_cast<int>(sizeof kStandIns / sizeof kStandIns[0]);
+bool is_stand_in(std::uint8_t c) { return c >= kStandIn && c < kStandIn + kStandIns_n; }
+
+// Plain ASCII in the game's character codes (the font's glyph order); what the
+// font lacks in stand-in codes (kStandIns), anything else a space.
 Text encode(const char* s) {
     Text t;
     for (; *s; ++s) {
@@ -251,7 +284,14 @@ Text encode(const char* s) {
             static const char kPunct[] = "!?.,:&_%'()<>+-*/=";
             const char* p = std::strchr(kPunct, ch);
             if (p && ch) c = static_cast<std::uint8_t>(0x3E + (p - kPunct));
-            else if (ch == '"') c = 0x52;
+            // The font's own quote and brackets (0x52 was here for '"': that
+            // glyph is an ellipsis at the foot of the line).
+            else if (ch == '"') c = 0x51;
+            else if (ch == '[') c = 0x53;
+            else if (ch == ']') c = 0x54;
+            else
+                for (int k = 0; k < kStandIns_n; ++k)
+                    if (kStandIns[k].ch == ch) c = static_cast<std::uint8_t>(kStandIn + k);
         }
         t.codes.push_back(c);
     }
@@ -351,6 +391,7 @@ public:
     }
     int advance(std::uint8_t c) const {
         if (c == kSpace) return 4;
+        if (is_stand_in(c)) return kStandIns[c - kStandIn].advance;
         const std::uint32_t o = kGlyphWidths - kRomBase + c;
         return o < a_.rom_size ? a_.rom[o] : 6;
     }
@@ -386,16 +427,27 @@ public:
         const int x0 = x;
         for (std::uint8_t c : t.codes) {
             if (c == kNewline) break;
-            if (c != kSpace) glyph(kGlyphs + c * 64u, x, y);
+            if (is_stand_in(c)) stand_in(kStandIns[c - kStandIn], x, y);
+            else if (c != kSpace) glyph(kGlyphs + c * 64u, x, y);
             x += advance(c);
         }
         return x - x0;
+    }
+    void stand_in(const StandIn& s, int x0, int y0) {
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; s.rows[y][x]; ++x)
+                if (s.rows[y][x] == '#') put(x0 + x, y0 + y, 1, a_.bg_pal[kFrameBank]);
     }
     std::uint32_t* px() { return px_; }
     // ARGB pixels as they are (a picture), clipped as the rest.
     void blit(int x0, int y0, const std::uint32_t* src, int w, int h) {
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x) dot(x0 + x, y0 + y, src[y * w + x]);
+    }
+    // A filled rectangle.
+    void fill(int x0, int y0, int w, int h, std::uint32_t argb) {
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) dot(x0 + x, y0 + y, argb);
     }
     // A rectangle's outline, `t` pixels thick.
     void frame(int x0, int y0, int w, int h, int t, std::uint32_t argb) {
@@ -650,6 +702,18 @@ struct Dialog {
     std::function<void(int)> done;
 };
 Dialog g_dlg;   // under g_mu
+// The RetroAchievements login form (MenuPlatform::login_in_menu; drawn and
+// driven below, login_*). Under g_mu.
+struct LoginForm {
+    bool up = false;
+    std::string user, pass;
+    int sel = 0;          // 0 the name, 1 the password, 2 Log In, 3 Cancel
+    int field = 0;        // the field being typed in (the last one selected)
+    bool busy = false;    // a login sent, its answer awaited
+    std::string message;  // what went wrong, else empty
+};
+LoginForm g_login;
+std::string g_login_last_user;   // the name of the last attempt, to start from
 int g_page = 0;            // 0 the options, 1 Debug, 2 Audio, 3 Layers (in Debug), 4 Graphics,
                            // 5 Gameplay, 6 Cheats, 7 Save States (in Debug)
 int g_return_sel = 0;      // the main page's row that opened a page
@@ -888,6 +952,109 @@ void open_dialog(const char* title, const char* text, const std::vector<std::str
     g_dirty.store(true, std::memory_order_release);
 }
 
+// ── The RetroAchievements login form (MenuPlatform::login_in_menu) ──────
+// A desktop's (2026-11-19: on the Steam Deck the Achievements page's Log In
+// opened nothing; the desktop only printed how to log in with environment
+// variables). The game's window over the dimmed page: the name and the
+// password (shown as stars), a line for what is under way or went wrong
+// (else how to type), Log In and Cancel. The pad moves between them, A on a
+// field asks for the system's on-screen keyboard (SteamOS: Steam's), A on
+// Log In or Start logs in, B cancels; the keyboard types (menu_login_text,
+// menu_login_key). While it is up the host takes typed text and the
+// keyboard presses nothing for the game (MenuPlatform::text_input). It
+// stays up while the login is under way: it closes once logged in, and says
+// what went wrong if not. The password is never kept past the form.
+constexpr std::size_t kLoginMax = 64;
+
+void login_wipe(std::string& s) {
+    std::fill(s.begin(), s.end(), '\0');
+    s.clear();
+}
+
+// Under g_mu (these all are).
+void login_open() {
+    login_wipe(g_login.pass);
+    g_login = LoginForm{};
+    g_login.up = true;
+    g_login.user = g_login_last_user;
+    g_login.sel = g_login.field = g_login.user.empty() ? 0 : 1;
+    g_open = true;
+    if (g_platform.text_input) g_platform.text_input(1);
+    g_dirty.store(true, std::memory_order_release);
+}
+
+void login_close() {
+    login_wipe(g_login.pass);
+    g_login = LoginForm{};
+    if (g_platform.text_input) g_platform.text_input(0);
+    g_dirty.store(true, std::memory_order_release);
+}
+
+void login_submit() {
+    if (g_login.busy) return;
+    if (g_login.user.empty() || g_login.pass.empty()) {
+        g_login.message = g_login.user.empty() ? "Enter your username." : "Enter your password.";
+        g_login.sel = g_login.field = g_login.user.empty() ? 0 : 1;
+        return;
+    }
+    g_login_last_user = g_login.user;
+    g_login.busy = true;
+    g_login.message.clear();
+    menu_confirm_sound();
+    cheevos_login(g_login.user, g_login.pass);   // (sets LoggingIn before it returns)
+    login_wipe(g_login.pass);
+}
+
+// The answer to a login sent: logged in closes the form; else what went wrong.
+void login_poll() {
+    if (!g_login.up || !g_login.busy) return;
+    const CheevosStatus st = cheevos_status();
+    if (st.state == CheevosState::LoggingIn) return;
+    if (st.state == CheevosState::LoggedIn) {
+        login_close();
+        return;
+    }
+    g_login.busy = false;
+    g_login.message = st.message.empty() ? std::string("Login failed.") : st.message;
+    g_login.sel = g_login.field = 1;   // the password again (it was cleared)
+    g_dirty.store(true, std::memory_order_release);
+}
+
+void login_nav(LoginKey k) {
+    int& s = g_login.sel;
+    switch (k) {
+        case LoginKey::Up: s = s >= 2 ? 1 : std::max(0, s - 1); break;
+        case LoginKey::Down: s = s == 0 ? 1 : s == 1 ? 2 : s; break;
+        case LoginKey::Left: if (s == 3) s = 2; break;
+        case LoginKey::Right: if (s == 2) s = 3; break;
+        case LoginKey::Tab: s = (s + 1) % 4; break;
+        case LoginKey::BackTab: s = (s + 3) % 4; break;
+        default: break;
+    }
+    if (s < 2) g_login.field = s;
+}
+
+// A (pad) or Enter (keyboard) on the selection.
+void login_press(bool pad) {
+    switch (g_login.sel) {
+        case 0:
+        case 1:
+            if (pad) {
+                if (g_platform.show_keyboard) g_platform.show_keyboard();
+            } else if (g_login.sel == 0) {
+                g_login.sel = g_login.field = 1;
+            } else {
+                login_submit();
+            }
+            break;
+        case 2: login_submit(); break;
+        default:
+            menu_cancel_sound();
+            login_close();
+            break;
+    }
+}
+
 // "Restart now?" after a mod change (not under g_mu).
 void ask_restart(const std::string& text) {
     menu_dialog("Mod", text.c_str(), {"Restart", "Later"}, 1, [](int b) {
@@ -1029,8 +1196,10 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Mod: mod_dialog(); break;
         case Kind::Cheevo:
             if (r.id == kCheevoAccount && cheevos_status().state != CheevosState::LoggedIn &&
-                cheevos_status().state != CheevosState::LoggingIn)
-                cheevos_request_login_form();
+                cheevos_status().state != CheevosState::LoggingIn) {
+                if (g_platform.login_in_menu) login_open();
+                else cheevos_request_login_form();
+            }
             else if (r.id == kCheevoLogout)
                 cheevos_logout();
             break;
@@ -1452,6 +1621,94 @@ void dialog_render(Canvas& c, std::uint32_t* argb, const Art& a, int bob) {
         c.hand(L.bx[g_dlg.sel] - kHandW - 1 + bob, L.by + 8);
 }
 
+// The login form (login_open), over the dimmed page: the menu's own window,
+// rows 2-20, the labels where the menu's are.
+constexpr int kLoginR0 = 2, kLoginR1 = 20;
+constexpr int kLoginBoxX = 104, kLoginBoxW = kSheetW - 16 - kLoginBoxX, kLoginBoxH = 18;
+constexpr int kLoginFieldY[2] = {44, 68};   // each field's text line
+constexpr int kLoginMsgY = 94;
+constexpr int kLoginButtonsY = (kLoginR1 + 1) * 8 - 8 - kDlgButtonH;
+
+// The buttons' places (Log In, Cancel): x and width.
+void login_buttons(Canvas& c, int bx[2], int bw[2]) {
+    static const char* const kLabels[2] = {"Log In", "Cancel"};
+    constexpr int gap = 8;
+    for (int i = 0; i < 2; ++i) bw[i] = ((c.width(encode(kLabels[i])) + 24 + 7) / 8) * 8;
+    bx[0] = (kSheetW - bw[0] - gap - bw[1]) / 2;
+    bx[1] = bx[0] + bw[0] + gap;
+}
+
+void login_render(Canvas& c, std::uint32_t* argb, const Art& a, int bob) {
+    for (int i = 0; i < kSheetW * kSheetH; ++i)
+        argb[i] = 0xFF000000u | ((argb[i] >> 1) & 0x7F7F7Fu);
+    c.window(0, kLoginR0, kSheetCols - 1, kLoginR1);
+    c.text(encode("RetroAchievements"), kLabelX, kLoginR0 * 8 + 6);
+    // The fields: a pale box, its text's end in view (the start dropped while
+    // it is too long), a blinking bar after it in the field typed in.
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+    const bool caret_on = (ms / 532) % 2 == 0;
+    static const char* const kNames[2] = {"Username", "Password"};
+    for (int f = 0; f < 2; ++f) {
+        const int y = kLoginFieldY[f];
+        c.text(encode(kNames[f]), kLabelX, y);
+        c.fill(kLoginBoxX, y - 1, kLoginBoxW, kLoginBoxH, 0xFFFFF6DCu);
+        c.frame(kLoginBoxX, y - 1, kLoginBoxW, kLoginBoxH, 1, 0xFF5A3A1Eu);
+        std::string s = f == 0 ? g_login.user : std::string(g_login.pass.size(), '*');
+        Text t = encode(s.c_str());
+        while (!t.codes.empty() && c.width(t) > kLoginBoxW - 10) t.codes.erase(t.codes.begin());
+        const int w = c.text(t, kLoginBoxX + 4, y);
+        if (g_login.sel == f && !g_login.busy && caret_on)
+            c.fill(kLoginBoxX + 4 + w + 1, y + 2, 1, 12, 0xFF5A3A1Eu);
+    }
+    // What is under way or went wrong, else how to type: two lines at most.
+    const std::string msg = g_login.busy ? std::string("Logging in...")
+                          : !g_login.message.empty() ? g_login.message
+                          : g_platform.keyboard_hint ? std::string(g_platform.keyboard_hint)
+                                                     : std::string("Type with the keyboard.");
+    {
+        const int inner = kSheetW - 2 * kLabelX;
+        std::vector<std::string> lines;
+        std::string line, word;
+        auto flush = [&]() {
+            const std::string tryl = line.empty() ? word : word.empty() ? line : line + " " + word;
+            if (!line.empty() && c.width(encode(tryl.c_str())) > inner) { lines.push_back(line); line = word; }
+            else line = tryl;
+            word.clear();
+        };
+        for (char ch : msg) {
+            if (ch == ' ') flush();
+            else word += ch;
+        }
+        flush();
+        if (!line.empty()) lines.push_back(line);
+        for (std::size_t i = 0; i < lines.size() && i < 2; ++i)
+            c.text(encode(lines[i].c_str()), kLabelX, kLoginMsgY + 16 * static_cast<int>(i));
+    }
+    // Log In and Cancel, in the dialog's buttons.
+    int bx[2], bw[2];
+    login_buttons(c, bx, bw);
+    std::uint32_t up[16];
+    button_palette(a.bg_pal[kFrameBank], 0, up);
+    static const char* const kLabels[2] = {"Log In", "Cancel"};
+    for (int i = 0; i < 2; ++i) {
+        const int cols = bw[i] / 8;
+        for (int r = 0; r < 3; ++r)
+            for (int col = 0; col < cols; ++col) {
+                int tile;
+                if (r == 0) tile = col == 0 ? 0x11 : col == cols - 1 ? 0x12 : 0x15;
+                else if (r == 2) tile = col == 0 ? 0x13 : col == cols - 1 ? 0x14 : 0x16;
+                else tile = col == 0 ? 0x17 : col == cols - 1 ? 0x18 : 0x05;
+                c.tile4(bx[i] + col * 8, kLoginButtonsY + r * 8, &a.bg[static_cast<std::size_t>(tile) * 32u], up);
+            }
+        const Text t = encode(kLabels[i]);
+        c.text(t, bx[i] + (bw[i] - c.width(t)) / 2, kLoginButtonsY + 5);
+    }
+    // The hand: at the field's label, or beside the button.
+    if (g_login.sel < 2) c.hand(kLabelX - kHandW - 1 + bob, kLoginFieldY[g_login.sel] + 4);
+    else c.hand(bx[g_login.sel - 2] - kHandW - 1 + bob, kLoginButtonsY + 8);
+}
+
 }  // namespace
 
 bool menu_is_open() {
@@ -1465,6 +1722,7 @@ void menu_cancel_sound() { g_sound_request.store(kSoundClose); }
 bool menu_toggle() {
     std::lock_guard<std::mutex> lock(g_mu);
     g_open = !g_open;
+    if (!g_open && g_login.up) login_close();   // (the host stops taking typed text)
     g_sound_request.store(g_open ? kSoundOpen : kSoundClose);   // the game's confirm / cancel
     // It opens where it was closed: the same page (a submenu too), row and
     // scroll. Resetting only the page put the hand on the main page's row
@@ -1641,6 +1899,24 @@ std::uint16_t menu_filter_keys(std::uint16_t keyinput) {
         }
         return false;
     };
+    if (g_login.up && !g_dlg.up) {   // the login form (login_open): only the pad's keys reach here
+        login_poll();
+        const int was_sel = g_login.sel;
+        const bool was_up = g_login.up, was_busy = g_login.busy;
+        if (fired(6, true)) login_nav(LoginKey::Up);
+        if (fired(7, true)) login_nav(LoginKey::Down);
+        if (fired(5, true)) login_nav(LoginKey::Left);
+        if (fired(4, true)) login_nav(LoginKey::Right);
+        if (fired(0, false)) login_press(true);          // A
+        else if (fired(3, false)) login_submit();         // Start
+        else if (fired(1, false)) {                       // B
+            menu_cancel_sound();
+            login_close();
+        }
+        if (g_login.sel != was_sel || g_login.up != was_up || g_login.busy != was_busy)
+            g_dirty.store(true, std::memory_order_release);
+        return 0x03FFu;
+    }
     if (g_dlg.up) {   // the dialog: left/right move the hand, A presses, B cancels
         const int n = static_cast<int>(g_dlg.buttons.size());
         bool changed = false, close = false;
@@ -1949,6 +2225,8 @@ bool menu_render(std::uint32_t* argb) {
     }
     for (std::size_t k = 0; k < lines.size() && k < 2; ++k)   // every help is two lines
         c.text(lines[k], left + (kSheetW - left - c.width(lines[k])) / 2, top + static_cast<int>(k) * 16);
+    login_poll();
+    if (g_login.up) login_render(c, argb, a, bob);
     if (g_dlg.up) dialog_render(c, argb, a, bob);
     return true;
 }
@@ -2166,8 +2444,8 @@ std::vector<std::uint32_t> menu_notice_popup(const char* heading, const char* co
 int menu_encode(const char* text, std::uint8_t* out, int max) {
     const Text e = encode(text);
     int n = 0;
-    for (const auto b : e.codes)
-        if (n < max) out[n++] = static_cast<std::uint8_t>(b);
+    for (const auto b : e.codes)   // (the stand-ins are this file's canvas's alone)
+        if (n < max) out[n++] = is_stand_in(b) ? kSpace : static_cast<std::uint8_t>(b);
     return n;
 }
 
@@ -2330,6 +2608,12 @@ void menu_debug_frame() {
             menu_filter_keys(0x03FFu);
         } else if (t == "states") {   // the Save States page, opened directly
             menu_open_states();
+        } else if (t.rfind("type:", 0) == 0) {   // text typed into the login form
+            menu_login_text(t.c_str() + 5);
+        } else if (t == "bs") {                  // Backspace in the login form
+            menu_login_key(LoginKey::Backspace, false);
+        } else if (t == "enter") {               // Enter there, a controller attached (the Deck)
+            menu_login_key(LoginKey::Enter, true);
         } else if (std::sscanf(t.c_str(), "drag%f", &y) == 1) {
             menu_touch(0, 120, 60);
             menu_touch(1, 120, 60 - y);
@@ -2419,6 +2703,54 @@ void menu_debug_frame() {
 void menu_set_platform(const MenuPlatform& p) {
     std::lock_guard<std::mutex> lock(g_mu);
     g_platform = p;
+}
+
+bool menu_login_up() {
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_open && g_login.up;
+}
+
+void menu_login_text(const char* utf8) {
+    if (!utf8) return;
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (!g_open || !g_login.up || g_login.busy) return;
+    if (g_login.sel >= 2) g_login.sel = g_login.field;   // typing goes back to the field
+    std::string& f = g_login.field == 0 ? g_login.user : g_login.pass;
+    for (const char* p = utf8; *p; ++p) {
+        const unsigned char ch = static_cast<unsigned char>(*p);
+        if (ch >= 0x20 && ch < 0x7F && f.size() < kLoginMax) f.push_back(static_cast<char>(ch));
+    }
+    g_login.message.clear();
+    g_dirty.store(true, std::memory_order_release);
+}
+
+bool menu_login_key(LoginKey k, bool pad) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (!g_open || !g_login.up) return false;
+    if (k == LoginKey::Backspace) {
+        if (!g_login.busy) {
+            if (g_login.sel >= 2) g_login.sel = g_login.field;
+            std::string& f = g_login.field == 0 ? g_login.user : g_login.pass;
+            if (!f.empty()) f.back() = '\0', f.pop_back();
+            g_login.message.clear();
+        }
+    } else if (k == LoginKey::Enter && (!pad || g_login.sel < 2)) {
+        // On a field, Enter is the keyboard's also with a controller (2026-11-20,
+        // the Deck: Enter on the name did nothing; Steam's keyboard types it):
+        // the name goes on to the password, the password logs in. On the
+        // buttons it is the pad's A (the Deck's Desktop Mode types Enter from A
+        // as well, which would press them twice).
+        if (!g_login.busy) login_press(false);
+    } else if (pad) {
+        return true;   // the pad drives the form (menu_filter_keys)
+    } else if (k == LoginKey::Escape) {
+        menu_cancel_sound();
+        login_close();
+    } else {
+        login_nav(k);
+    }
+    g_dirty.store(true, std::memory_order_release);
+    return true;
 }
 
 void menu_dialog(const char* title, const char* text, const std::vector<std::string>& buttons,

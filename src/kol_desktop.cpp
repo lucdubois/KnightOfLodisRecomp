@@ -8,19 +8,24 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <system_error>
 #include <vector>
 
 #include "rom_patch.h"
 #include "runtime.h"
 
+#include "kol_cheevos.h"
 #include "kol_dev.h"
 #include "kol_menu.h"
 #include "kol_settings.h"
@@ -35,7 +40,77 @@ bool g_player = false;
 // ── The options menu over the game ──────────────────────────────────────
 
 std::uint32_t g_menu_px[kSheetW * kSheetH];
-unsigned g_menu_version = 0;
+// Every overlay picture's version, from one count (the host keeps a texture a
+// place in the list, and the menu and a popup can take turns at a place).
+// The presenting thread's alone.
+unsigned g_overlay_version = 0;
+
+// ── Achievement popups (kol_cheevos.h CheevosPopup) ─────────────────────
+// The desktop had none (2026-11-20, the Deck: no "Welcome" after a login, and
+// an unlock went only to the log). As Android shows them (Cheevos.showPopup):
+// one at a time at the top right, sliding in from the right edge in 250 ms,
+// held 4 s, out in 250 ms, at the window's height x 3 / 1080 (2 on the Deck's
+// 800 lines), 4 x that from the corner. Queued on the guest thread, shown by
+// the presenting thread.
+struct Popup {
+    std::vector<std::uint32_t> px;
+    int w = 0, h = 0;
+    unsigned version = 0;
+};
+std::mutex g_pop_mu;
+std::deque<Popup> g_pop_queue;   // under g_pop_mu
+Popup g_pop;                     // the one up (px empty: none); presenting thread
+std::chrono::steady_clock::time_point g_pop_since;
+
+void desktop_popup(const unsigned* argb, int w, int h) {
+    if (!argb || w <= 0 || h <= 0) return;
+    Popup p;
+    p.px.assign(argb, argb + static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    p.w = w;
+    p.h = h;
+    std::lock_guard<std::mutex> lock(g_pop_mu);
+    if (g_pop_queue.size() < 64) g_pop_queue.push_back(std::move(p));
+}
+
+// The popup's place at this present; false when none is up.
+bool popup_overlay(gbarecomp::PresentOverlay* o, int out_w, int out_h) {
+    constexpr long kSlideMs = 250, kHoldMs = 4000;
+    const auto now = std::chrono::steady_clock::now();
+    auto elapsed = [&] {
+        return static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - g_pop_since).count());
+    };
+    long t = g_pop.px.empty() ? 0 : elapsed();
+    if (g_pop.px.empty() || t >= 2 * kSlideMs + kHoldMs) {
+        g_pop = Popup{};
+        {
+            std::lock_guard<std::mutex> lock(g_pop_mu);
+            if (g_pop_queue.empty()) return false;
+            g_pop = std::move(g_pop_queue.front());
+            g_pop_queue.pop_front();
+        }
+        g_pop.version = ++g_overlay_version;
+        g_pop_since = now;
+        t = 0;
+    }
+    const int scale = std::max(1, static_cast<int>(std::lround(out_h * 3.0 / 1080.0)));
+    const int dw = g_pop.w * scale, dh = g_pop.h * scale, margin = 4 * scale;
+    // In, held, out; eased at both ends (Android's default interpolator).
+    float f = t < kSlideMs ? static_cast<float>(t) / kSlideMs
+            : t < kSlideMs + kHoldMs ? 1.0f
+                                     : 1.0f - static_cast<float>(t - kSlideMs - kHoldMs) / kSlideMs;
+    f = std::clamp(f, 0.0f, 1.0f);
+    f = f * f * (3.0f - 2.0f * f);
+    const int shown_x = out_w - margin - dw, hidden_x = out_w;
+    o->argb = g_pop.px.data();
+    o->w = g_pop.w;
+    o->h = g_pop.h;
+    o->dw = dw;
+    o->dh = dh;
+    o->x = hidden_x + static_cast<int>(std::lround((shown_x - hidden_x) * f));
+    o->y = margin;
+    o->version = g_pop.version;
+    return true;
+}
 
 // The canvas comes on the second screen's black. Over the game, the black
 // around the menu's windows is see-through: every opaque-black pixel reached
@@ -92,22 +167,35 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
             const unsigned n = width_choice_count();
             if (n > 0) width_choice_set((width_choice_current() + 1u) % n);
         }
+        // KOL_DESKTOP_POPUP_AT=<n>: a sample notice at the nth present (the
+        // achievement popup's place and slide, in present dumps after it).
+        static const long pop_at = [] {
+            const char* e = std::getenv("KOL_DESKTOP_POPUP_AT");
+            return e && *e ? std::atol(e) : -1L;
+        }();
+        if (presents == pop_at) cheevos_notice("Welcome, Player", "0 of 87 achievements unlocked.");
     }
-    if (max < 1 || !menu_is_open()) return 0;
-    menu_take_dirty();   // the second screen's cue; here every present redraws
-    if (!menu_render(g_menu_px)) return 0;
-    clear_outside(g_menu_px);
-    // The largest whole scale that leaves a margin: 4 on the Deck's 1280x800.
-    const int scale = std::max(1, std::min(out_w * 95 / 100 / kSheetW, out_h * 95 / 100 / kSheetH));
-    out[0].argb = g_menu_px;
-    out[0].w = kSheetW;
-    out[0].h = kSheetH;
-    out[0].dw = kSheetW * scale;
-    out[0].dh = kSheetH * scale;
-    out[0].x = (out_w - out[0].dw) / 2;
-    out[0].y = (out_h - out[0].dh) / 2;
-    out[0].version = ++g_menu_version;
-    return 1;
+    int n = 0;
+    if (max >= 1 && menu_is_open()) {
+        menu_take_dirty();   // the second screen's cue; here every present redraws
+        if (menu_render(g_menu_px)) {
+            clear_outside(g_menu_px);
+            // The largest whole scale that leaves a margin: 4 on the Deck's 1280x800.
+            const int scale = std::max(1, std::min(out_w * 95 / 100 / kSheetW, out_h * 95 / 100 / kSheetH));
+            out[0].argb = g_menu_px;
+            out[0].w = kSheetW;
+            out[0].h = kSheetH;
+            out[0].dw = kSheetW * scale;
+            out[0].dh = kSheetH * scale;
+            out[0].x = (out_w - out[0].dw) / 2;
+            out[0].y = (out_h - out[0].dh) / 2;
+            out[0].version = ++g_overlay_version;
+            n = 1;
+        }
+    }
+    // An achievement's popup over everything, the menu too.
+    if (n < max && popup_overlay(&out[n], out_w, out_h)) ++n;
+    return n;
 }
 
 // F10 or Escape opens and closes the menu (Escape quit the game at once
@@ -131,6 +219,28 @@ int key_hook(int scancode, int down) {
     // (With a controller, the keyboard is not a second one in player mode:
     // the Deck's Desktop Mode types Escape from its Start button.)
     const bool keyboard_live = !g_player || SDL_NumJoysticks() <= 0;
+    // The menu's login form (kol_menu login_open): every key is the form's
+    // while it is up; the text itself comes as text (text_hook). With a
+    // controller only Backspace, and Enter on a field, act (menu_login_key).
+    if (menu_login_up()) {
+        if (down) {
+            switch (scancode) {
+                case SDL_SCANCODE_BACKSPACE: menu_login_key(LoginKey::Backspace, !keyboard_live); break;
+                case SDL_SCANCODE_RETURN:
+                case SDL_SCANCODE_KP_ENTER: menu_login_key(LoginKey::Enter, !keyboard_live); break;
+                case SDL_SCANCODE_ESCAPE: menu_login_key(LoginKey::Escape, !keyboard_live); break;
+                case SDL_SCANCODE_TAB:
+                    menu_login_key((SDL_GetModState() & KMOD_SHIFT) ? LoginKey::BackTab : LoginKey::Tab, !keyboard_live);
+                    break;
+                case SDL_SCANCODE_UP: menu_login_key(LoginKey::Up, !keyboard_live); break;
+                case SDL_SCANCODE_DOWN: menu_login_key(LoginKey::Down, !keyboard_live); break;
+                case SDL_SCANCODE_LEFT: menu_login_key(LoginKey::Left, !keyboard_live); break;
+                case SDL_SCANCODE_RIGHT: menu_login_key(LoginKey::Right, !keyboard_live); break;
+                default: break;
+            }
+        }
+        return 1;
+    }
     if (keyboard_live) {
         if (scancode == SDL_SCANCODE_ESCAPE) {
             if (down) menu_pad_toggle();
@@ -145,6 +255,30 @@ int key_hook(int scancode, int down) {
         return 0;
     }
     return scancode >= SDL_SCANCODE_F1 && scancode <= SDL_SCANCODE_F12 ? 0 : 1;
+}
+
+// The login form's typed text (gbarecomp g_host_text_hook) and the host's
+// text mode (MenuPlatform::text_input).
+void text_hook(const char* utf8) { menu_login_text(utf8); }
+void text_input(int on) { gbarecomp::g_host_text_input = on; }
+
+// SteamOS (the Steam Deck): no keyboard in Gaming Mode, Steam's on screen
+// with Steam + X in either mode. (Its steam://open/keyboard link was not
+// verified to open it, and in Desktop Mode it may bring Steam's window up
+// instead: not called.)
+bool steamos() {
+#if defined(__linux__)
+    static const bool v = [] {
+        std::ifstream f("/etc/os-release");
+        std::string line;
+        while (std::getline(f, line))
+            if (line == "ID=steamos") return true;
+        return false;
+    }();
+    return v;
+#else
+    return false;
+#endif
 }
 
 // Options > Quit Game: the window's close, which the host takes as its quit.
@@ -198,7 +332,15 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     gbarecomp::g_host_assist_keys[1] = SDL_SCANCODE_2;
     MenuPlatform platform;
     platform.quit = &quit_game;
+    // RetroAchievements' login: a form in the menu, typed into (the desktop
+    // had none: its Log In printed how to use KOL_RA_USER, 2026-11-19).
+    platform.login_in_menu = true;
+    platform.text_input = &text_input;
+    platform.keyboard_hint = steamos() ? "Steam + X: on-screen keyboard." : nullptr;
+    gbarecomp::g_host_text_hook = &text_hook;
     menu_set_platform(platform);
+    // Achievement popups over the game (the welcome, unlocks), as Android's.
+    cheevos_set_popup(&desktop_popup);
 
     // --data-dir <dir> (taken out of the arguments), else KOL_DATA_DIR, else
     // in a public build the platform's place.

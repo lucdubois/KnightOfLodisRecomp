@@ -27,7 +27,8 @@ void cheevos_set_http(CheevosHttp fn);
 using CheevosNotify = void (*)(const char* text);
 void cheevos_set_notify(CheevosNotify fn);
 // An unlock's popup, drawn in the game's window style (menu_cheevo_popup_render):
-// ARGB, w x h. Android shows it over the game (Cheevos.showPopup); without a
+// ARGB, w x h. Android shows it over the game (Cheevos.showPopup), the desktop
+// as an overlay at the top right (kol_desktop desktop_popup); without a
 // backend the unlock is a notice line instead.
 using CheevosPopup = void (*)(const unsigned* argb, int w, int h);
 void cheevos_set_popup(CheevosPopup fn);
