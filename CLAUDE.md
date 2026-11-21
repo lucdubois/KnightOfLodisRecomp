@@ -1,4 +1,14 @@
-## HANDOFF — 2026-11-20: 1.1 released on Android, Linux / Steam Deck, macOS and Windows (read this first)
+## HANDOFF — 2026-11-20, night: 1.1.1 released (read this first)
+
+**Released:** v1.1.1 (versionCode 5; notes `docs/RELEASE_1.1.1.md`; the same four packages as 1.1). docs/DEVLOG.md "1.1.1: two slow scenes, the Deck's music, Options > Display" has the details. gbarecomp `ddbfc9b` stays local (never pushed). The foldable work stays on the `foldable-split` branches of both repos, out of this release (the user's call).
+
+- Faster map 102 sunset / map 58 night (Thor states 0311/0312): terrain pass in row bands, prop shadows on the pool and spread over three pictures on a sun step (the one non-byte-identical change), the next sun step's shadow map built ahead. The banded pass crashed on maps with rounded cells (thread_local `rounds`) until fixed before release: check pool work on a map with rounds (EM, FS, EP).
+- Desktop: Options > Display (window / full screen, window size by the display's shape, `display.cfg`), Alt+Enter with a controller, late pictures skipped in player mode (the Deck's music).
+- Lifted Props/Walls back in Enhanced; `settings_version=2` moves an untouched 1.1 Enhanced once.
+- The Thor has only the public app: install the release APK there, not the debug one (memory kol-thor-public-only).
+- Not measured: the Deck with lifting back on (map 100 was 14.6 vs 12.0 ms a job before tonight's cuts).
+
+## HANDOFF — 2026-11-20: 1.1 released on Android, Linux / Steam Deck, macOS and Windows
 
 **Released:** v1.1 (KoL main, pushed, tagged; GitHub release "Knight of Lodis Recomp 1.1" with `KnightOfLodisRecomp.apk`, `-1.1-x86_64.AppImage`, `-1.1-macos-arm64.zip`, `-1.1-windows-x64.zip`; notes = `docs/RELEASE_1.1.md`). **gbarecomp is never pushed** (the user: "Don't push gbarecomp!"; its origin is mstan's repo): its local commits up to `9d7b1d4` stay on this Mac, so KoL's public source needs them to build, as since 1.0.
 

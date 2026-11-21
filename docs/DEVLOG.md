@@ -23568,3 +23568,101 @@ libc++'s and libc++abi's, verbatim from NDK r27's toolchain NOTICE
 (`third_party/licenses/libcxx*-ndk27.txt`). The Mac zip is packed without
 the `__MACOSX/._*` sidecars (`ditto --norsrc --noextattr`; the signature
 verifies after unzipping).
+
+## 1.1.1: two slow scenes, the Deck's music, Options > Display (2026-11-20)
+
+### Map 102's sunset and map 58 at night, faster
+
+Thor states 0311 (map 102: narration, rain, the sun setting) and 0312 (map
+58, the ship at night) were slow on the Thor and the Deck. Every change below
+is byte-identical (`KOL_PERSP_HASH=1`, line by line; the first frame after a
+state load varies run to run on both states, so it is left out of every
+comparison) except the prop-shadow spread, which is a timing change.
+
+- **What the mean hid.** On 0311 five pictures in six took ~8.2 ms of worker
+  time on the Mac and every sixth ~14.8 ms: the sunset moves the sun every
+  6th frame, and the terrain pass, the prop shadows, the shadow map and its
+  edge were all redone for it. The 300-job means did not show it; per-job
+  times did (`KOL_WORKER_SLOW=1` sections per job, gbarecomp
+  `GBARECOMP_JOB_LOG=1` each job's time, and the job-spread line at exit
+  with `GBARECOMP_FRAME_PHASE`).
+- **The terrain pass in row bands** on the row pool: the clear on the caller,
+  then one band of rows per thread, each walking every cell and drawing only
+  its own rows, so each pixel is still the last cell drawn over it.
+  `KOL_PASS_SERIAL=1` old, `KOL_PASS_PAR_CHECK=1` draws it again serially and
+  compares.
+- **Prop shadows in three steps** (keys, matching, casts), the keys and the
+  casts on the pool, keys kept while the props, the sun and the camera are
+  the same. `KOL_PROP_SHADOW_SERIAL=1` old.
+- **Kept across pictures:** lamp sight grids of lamps that did not move
+  (`KOL_LAMP_VIS_KEEP=0`, `_CHECK=1`), the ship model's rope sums while its
+  patch is unchanged, `scene_props` by identity, the BG1 opaque map (an
+  8-slot cache), the warp mesh. The model pass walks one flag byte per
+  pixel; the prop-under-interface walk starts only beside interface sprites
+  (`KOL_PROP_FRONT_ALL=1` old).
+- **The next sunset step's shadow map built ahead** on its own thread: the
+  next step's sun height is known exactly (`t_sun_ahead_steps`), so it is
+  built during the quiet pictures and taken at the step only on an exact key
+  over every input and the whole height and roof data. Roof and box lookups
+  became free functions over a `RoofSet` so the thread works on its own copy
+  (map 102 has two boxes). Posting it on the step picture slowed that
+  picture's terrain pass (1.4 -> 2.3 ms): it is posted a picture later.
+  `KOL_SHADOW_AHEAD=0` off, `_CHECK=1`, `_LOG=1`. 119 of 120 steps took it.
+- **Prop shadows spread over three pictures** when only the sun moved: a
+  third of the props recast per picture, the rest keep the last step's
+  shadow until their turn. Not byte-identical: three pictures per step
+  differ, at most a few pixels of shadow one step behind.
+  `KOL_PROP_SHADOW_SPREAD=1` puts back all at once (byte-identical to the
+  build before), `_LOG=1`.
+
+Mac worker time: 0311 mean 11.8 -> ~8.2 ms, the step pictures 14.8 -> ~9.8
+(quiet ones ~8.1); 0312 10.4 -> ~9.5. Tried and removed: a tighter bound on
+the shadow map's rays (same output, same time).
+
+### The banded terrain pass crashed on maps with rounded cells
+
+Found on the Deck the same evening (its state 0302, map 56, and others):
+a segfault in the terrain pass on a row-pool helper. `SceneBuild::rounds`
+(the rounded towers and boxes) is a static `thread_local`, so a helper saw
+an empty list while `round_of` pointed into the caller's. Maps 102 and 58
+have no rounded cells, which is why the checks there never met it. Each
+helper now takes the caller's list for its band. Checked with
+`KOL_PASS_PAR_CHECK=1` on 0302, EM panning (61 passes), FS and EP: the same.
+Pool work must be checked on a map with rounds too.
+
+### The music on the Deck: a late picture no longer holds the game
+
+On Android a picture the present worker has not finished 3 ms into the
+present is skipped (the last one shown again) and the game goes on
+(gbarecomp `GBARECOMP_PRESENT_SKIP_LATE`, since 2026-10-26). gbarecomp left
+it off on the desktop for its picture tests, so on the Deck every late
+worker held the guest, and the music with it. The desktop's player mode now
+turns it on, except with the dummy video driver or a present dump (every
+headless test).
+
+### Options > Display (desktop)
+
+Players on Windows reported Alt+Enter doing nothing: with a controller
+connected, the desktop key hook took every key but F1-F12. Alt+Enter now
+goes to the host's toggle. And a Display page above Graphics: **Display**
+(Window / Full Screen) and **Window Size**, the window's own size, apart
+from the game's view size (the picture is fitted into the window). The
+sizes are common 16:9 and 16:10 ones that fit the display's usable area,
+of the display's own shape (the Deck's 1280x800 is 16:10; its taskbar left
+no 16:10 size at first, only 16:9 ones). Window Size is greyed and skipped
+in full screen. Saved in `display.cfg` (mode=, window=WxH), read before the
+window opens, over the launcher's `--fullscreen`; Alt+Enter's switch is
+saved too. gbarecomp: `g_host_window_mode_request` /
+`g_host_window_size_request`, `g_host_window_*_now`,
+`g_host_display_usable` / `_size`, applied once a frame on the window's
+thread (`HostWindow::apply_display_requests`). Greyed text is lightened, not
+darkened: the menu's text is dark on a light window.
+
+### Lifted Props and Walls back in Enhanced
+
+Taken out for 1.1 for the Deck's sake, put back. Settings are saved key by
+key, not by preset, so a player who never changed anything had them saved
+off. `settings_version=2` is now written; a file without it whose settings
+are exactly 1.1's Enhanced is moved to today's Enhanced once. Checked: 1.1's
+Enhanced file -> on; with one other change -> untouched; version 2 with
+them off -> stays off.
