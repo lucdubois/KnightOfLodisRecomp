@@ -423,6 +423,12 @@ struct ModelView {
     int x0 = 0, y0 = 0, W = 0, H = 0;
     bool any_over = false;    // some part is kModelOver
     std::vector<Px> px;
+    // px's flags the pass tests at every pixel of the model's box, a byte a
+    // pixel (a Px is 80 bytes, and the box is most of the picture: the loops
+    // that only ask whether a part is here read 6 MB each for it).
+    // kHit0: l[0] has a part; kLift0, kThin0, kOver0: l[0]'s; kHit2: l[2] has one.
+    enum : std::uint8_t { kHit0 = 1, kLift0 = 2, kThin0 = 4, kOver0 = 8, kHit2 = 16 };
+    std::vector<std::uint8_t> bits;
     // The pixels just outside the model (no hit, one beside them): where
     // the art's outline can lie past it.
     std::vector<std::uint32_t> ring;
@@ -1015,6 +1021,14 @@ void SceneBuild::model_pass() {
                     hh.over = (t.flags & kModelOver) != 0;
                     hh.lit = light(X, Y, Z, nx, ny, nz, t.flags);
                 }
+            mv.bits.assign(n, 0);
+            for (std::size_t k = 0; k < n; ++k) {
+                const ModelView::Px& c = mv.px[k];
+                mv.bits[k] = static_cast<std::uint8_t>(
+                    (c.l[0].part >= 0 ? ModelView::kHit0 : 0) | (c.l[0].lift ? ModelView::kLift0 : 0) |
+                    (c.l[0].thin ? ModelView::kThin0 : 0) | (c.l[0].over ? ModelView::kOver0 : 0) |
+                    (c.l[2].part >= 0 ? ModelView::kHit2 : 0));
+            }
             mv.ring.clear();
             auto any_hit = [&](int x, int y) {
                 if (x < 0 || y < 0 || x >= mv.W || y >= mv.H) return false;
@@ -1191,6 +1205,7 @@ void SceneBuild::model_pass() {
         // (79 at 24 again: 48 let its slope take the cliff cell x 3, z 11's top,
         // 40 in front of it; the grid's vertical face under the slope, which
         // had needed it, is drawn low now, kDrawnCells.)
+        wt.lap("model.tiles");
         // The tiles (the BG's 8 x 8, by the picture's scroll) where a
         // hanging part's art is on BG1.
         auto tile_of = [&](int px, int py) {
@@ -1202,39 +1217,34 @@ void SceneBuild::model_pass() {
         const int htw = std::max(0, htx1 - htx0 + 1), hth = std::max(0, hty1 - hty0 + 1);
         static std::vector<std::uint8_t> hang_tiles;
         hang_tiles.assign(static_cast<std::size_t>(htw) * hth, 0);
-        for (int py = mby0; py <= mby1; ++py)
-            for (int px = mbx0; px <= mbx1; ++px) {
-                const std::size_t k = static_cast<std::size_t>(py) * w + px;
-                if (ground_layer_of(k) != 1u) continue;
-                const ModelView::Hit& hh =
-                    mv.px[static_cast<std::size_t>(py - fky - mv.y0) * mv.W + (px - fkx - mv.x0)].l[0];
-                if (hh.part < 0 || !hh.lift || hh.thin) continue;
-                const auto [tx, ty] = tile_of(px, py);
-                hang_tiles[static_cast<std::size_t>(ty - hty0) * htw + (tx - htx0)] = 1;
-            }
-        auto hang_bg1_tile = [&](int px, int py) {
-            const auto [tx, ty] = tile_of(px, py);
-            return hang_tiles[static_cast<std::size_t>(ty - hty0) * htw + (tx - htx0)] != 0;
-        };
         // The tiles where a solid part's own art is on BG1 (map 90's hull, in
         // tile-stepped bits over the water): under them BG0 is water, not the
         // solid, so a hanging part lifted there (kModelOver) must not open onto
         // the solid: a cyan wedge showed in the rail beside the mast.
+        // (Both in one walk of the box, by the view's flags: ModelView::bits.)
         static std::vector<std::uint8_t> solid_tiles;
         solid_tiles.clear();
-        if (mv.any_over) {
-            solid_tiles.assign(static_cast<std::size_t>(htw) * hth, 0);
-            for (int py = mby0; py <= mby1; ++py)
-                for (int px = mbx0; px <= mbx1; ++px) {
-                    const std::size_t k = static_cast<std::size_t>(py) * w + px;
-                    if (ground_layer_of(k) != 1u) continue;
-                    const ModelView::Hit& hh =
-                        mv.px[static_cast<std::size_t>(py - fky - mv.y0) * mv.W + (px - fkx - mv.x0)].l[0];
-                    if (hh.part < 0 || hh.over) continue;
-                    const auto [tx, ty] = tile_of(px, py);
-                    solid_tiles[static_cast<std::size_t>(ty - hty0) * htw + (tx - htx0)] = 1;
-                }
+        if (mv.any_over) solid_tiles.assign(static_cast<std::size_t>(htw) * hth, 0);
+        for (int py = mby0; py <= mby1; ++py) {
+            const std::uint8_t* const brow = mv.bits.data() + static_cast<std::size_t>(py - fky - mv.y0) * mv.W;
+            for (int px = mbx0; px <= mbx1; ++px) {
+                const std::uint8_t b = brow[px - fkx - mv.x0];
+                if (!(b & ModelView::kHit0)) continue;
+                const bool hang = (b & ModelView::kLift0) && !(b & ModelView::kThin0);
+                const bool solid = mv.any_over && !(b & ModelView::kOver0);
+                if (!hang && !solid) continue;
+                const std::size_t k = static_cast<std::size_t>(py) * w + px;
+                if (ground_layer_of(k) != 1u) continue;
+                const auto [tx, ty] = tile_of(px, py);
+                const std::size_t ti = static_cast<std::size_t>(ty - hty0) * htw + (tx - htx0);
+                if (hang) hang_tiles[ti] = 1;
+                if (solid) solid_tiles[ti] = 1;
+            }
         }
+        auto hang_bg1_tile = [&](int px, int py) {
+            const auto [tx, ty] = tile_of(px, py);
+            return hang_tiles[static_cast<std::size_t>(ty - hty0) * htw + (tx - htx0)] != 0;
+        };
         const int map = mdl->map;
         auto solid_bg1_tile = [&](int px, int py) {
             if (solid_tiles.empty()) return false;
@@ -1265,23 +1275,59 @@ void SceneBuild::model_pass() {
         };
         if (!ropes_any && rw > 0 && rh > 0) {
             const int s = rw + 1;
-            rope_i1.assign(static_cast<std::size_t>(s) * (rh + 1), 0);
-            rope_i2.assign(rope_i1.size(), 0);
-            for (int y = 0; y < rh; ++y)
+            // The box's patch pixels first, a byte each: while they are the
+            // last picture's (a still camera: the art's BG1 does not change),
+            // so are the two sums, kept as they stand (they were worked out
+            // again every picture, a third of this pass on map 58).
+            // KOL_MODEL_ROPE_SUMS_KEEP=0: every picture, as before.
+            // KOL_MODEL_ROPE_SUMS_CHECK=1: worked out anyway and compared.
+            static const bool sums_keep = kol::env_not_zero("KOL_MODEL_ROPE_SUMS_KEEP");
+            static const bool sums_check = kol::env_true("KOL_MODEL_ROPE_SUMS_CHECK");
+            static std::vector<std::uint8_t> patch, patch_was;
+            static int was_rw = 0, was_rh = 0;
+            patch.resize(static_cast<std::size_t>(rw) * rh);
+            for (int y = 0; y < rh; ++y) {
+                const int my = y + ry0 - fky - mv.y0;
+                const bool row_in = my >= 0 && my < mv.H;
+                std::uint8_t* const prow = patch.data() + static_cast<std::size_t>(y) * rw;
                 for (int x = 0; x < rw; ++x) {
                     const std::size_t k = static_cast<std::size_t>(y + ry0) * w + (x + rx0);
                     // A patch is the ground's: what a part covers (the mast,
                     // 9 wide on BG1) is no patch, or the ropes beside it go.
-                    const int mx = x + rx0 - fkx - mv.x0, my = y + ry0 - fky - mv.y0;
-                    const bool part = mx >= 0 && my >= 0 && mx < mv.W && my < mv.H &&
-                                      mv.px[static_cast<std::size_t>(my) * mv.W + mx].l[0].part >= 0;
-                    rope_i1[(y + 1) * s + x + 1] = (!part && ground_layer_of(k) == 1u) + rope_i1[y * s + x + 1] +
-                                                   rope_i1[(y + 1) * s + x] - rope_i1[y * s + x];
+                    const int mx = x + rx0 - fkx - mv.x0;
+                    const bool part = row_in && mx >= 0 && mx < mv.W &&
+                                      (mv.bits[static_cast<std::size_t>(my) * mv.W + mx] & ModelView::kHit0);
+                    prow[x] = !part && ground_layer_of(k) == 1u;
                 }
-            for (int y = 0; y < rh; ++y)
-                for (int x = 0; x < rw; ++x)
-                    rope_i2[(y + 1) * s + x + 1] = (box5(rope_i1, x, y) > kRopeMaxBg1) + rope_i2[y * s + x + 1] +
-                                                   rope_i2[(y + 1) * s + x] - rope_i2[y * s + x];
+            }
+            const bool same = sums_keep && was_rw == rw && was_rh == rh && patch == patch_was &&
+                              rope_i1.size() == static_cast<std::size_t>(s) * (rh + 1) && rope_i2.size() == rope_i1.size();
+            static std::vector<std::int32_t> chk1, chk2;
+            if (same && sums_check) {
+                chk1 = rope_i1;
+                chk2 = rope_i2;
+            }
+            if (!same || sums_check) {
+                rope_i1.assign(static_cast<std::size_t>(s) * (rh + 1), 0);
+                rope_i2.assign(rope_i1.size(), 0);
+                for (int y = 0; y < rh; ++y)
+                    for (int x = 0; x < rw; ++x)
+                        rope_i1[(y + 1) * s + x + 1] = patch[static_cast<std::size_t>(y) * rw + x] + rope_i1[y * s + x + 1] +
+                                                       rope_i1[(y + 1) * s + x] - rope_i1[y * s + x];
+                for (int y = 0; y < rh; ++y)
+                    for (int x = 0; x < rw; ++x)
+                        rope_i2[(y + 1) * s + x + 1] = (box5(rope_i1, x, y) > kRopeMaxBg1) + rope_i2[y * s + x + 1] +
+                                                       rope_i2[(y + 1) * s + x] - rope_i2[y * s + x];
+            }
+            if (same && sums_check) {
+                static long checks = 0, bad = 0;
+                ++checks;
+                if (chk1 != rope_i1 || chk2 != rope_i2) ++bad;
+                if (checks % 300 == 0) std::fprintf(stderr, "[model-rope-sums] %ld kept sums checked, %ld bad\n", checks, bad);
+            }
+            patch_was.swap(patch);
+            was_rw = rw;
+            was_rh = rh;
         }
         std::array<bool, 256> part_hangs{};
         for (int i = 0; i < mdl->nt; ++i)
@@ -1310,6 +1356,7 @@ void SceneBuild::model_pass() {
             if (rope_near_hanging) return box5(rope_i2, px - rx0, py - ry0) == 0 || near_hanging(px, py);
             return box5(rope_i2, px - rx0, py - ry0) == 0 && !near_hanging(px, py);
         };
+        wt.lap("model.place");
         for (int py = mby0; py <= mby1; ++py)
             for (int px = mbx0; px <= mbx1; ++px) {
                 const std::size_t k = static_cast<std::size_t>(py) * w + px;
@@ -1331,9 +1378,10 @@ void SceneBuild::model_pass() {
                                                                                                    : nullptr;
                     if (rgb && rgb[2] > rgb[0] + 40 && rgb[2] > rgb[1] + 10) continue;
                 }
-                const ModelView::Px& c =
-                    mv.px[static_cast<std::size_t>(py - fky - mv.y0) * mv.W + (px - fkx - mv.x0)];
-                const bool h0 = c.l[0].part >= 0, h2 = c.l[2].part >= 0;
+                const std::size_t mk = static_cast<std::size_t>(py - fky - mv.y0) * mv.W + (px - fkx - mv.x0);
+                const bool h0 = mv.bits[mk] & ModelView::kHit0, h2 = mv.bits[mk] & ModelView::kHit2;
+                if (!h0 && !h2) continue;   // (nothing of the model here: `use` below stays -1)
+                const ModelView::Px& c = mv.px[mk];
                 int use = -1;
                 // The nearest part on either layer of the art (the ship's own
                 // art is on BG1 here and there: the stern's post and
@@ -1468,6 +1516,7 @@ void SceneBuild::model_pass() {
                 put_back(k, !rope_sky && (rope_air || (layer == 1u && c.l[use].lift)), over_behind);
                 put(k, c.l[use]);
             }
+        wt.lap("model.joins");
         // A piece of the model the game draws as a sprite (kModelActor,
         // SceneObjects::model_actor): that sprite's pixels within its outline
         // take its place, opening onto what the pixel had; those past the
@@ -1882,6 +1931,7 @@ void SceneBuild::model_pass() {
                 if (from != npx) fill_from(from);
             }
         }
+        wt.lap("model.shade");
         if (sunlit)
             for (const auto& [k, f] : shadow_list) {
                 if (k >= npx || g_kind[k] == kol::kSceneNone || ground_layer_of(k) > 1u) continue;
@@ -2015,6 +2065,7 @@ void SceneBuild::model_pass() {
             glow_dirty = true;
         }
     }
+    wt.lap("model.light");
     if (g_occ) lamp_and_window_light();   // (see lamp_and_window_light)
 }
 }  // namespace kol_focus_detail

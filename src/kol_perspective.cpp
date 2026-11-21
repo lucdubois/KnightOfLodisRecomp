@@ -397,6 +397,8 @@ std::vector<std::uint8_t> g_hole_filled;   // a prop's hole under interface, fil
 std::vector<int> g_quad_key;
 std::vector<int> g_bucket;
 std::vector<Quad> g_sorted;
+std::vector<Quad> g_sorted_last;   // the picture before's (warp_buckets)
+bool g_idx_valid = false;          // g_idx is the zip of g_sorted_last (warp_zip made it, nothing failed since)
 // Corner rows: surface cuts (per pixel row) and the corners kept as cuts.
 std::vector<std::uint8_t> g_cut;
 // A corner row two surfaces share, for the strips of the one behind (see
@@ -3057,8 +3059,41 @@ struct RayHit {
     const std::uint8_t* sky = nullptr;   // the sky pixel it left at, or null
     int last_ry = 0;                     // the last row it reached
 };
+// `run_top` (the water's: the first row of each surface pixel's run down its
+// column, or null): a ray over the surface crosses the rest of that run in
+// one step (2026-11-20, Thor state 0312, map 58's sea: a ray took the open
+// water a pixel a step up to the hull or the sky, the hottest function of
+// the worker). The steps left out each did nothing but note their row: the
+// column a step is in only ever moves one way up the ray, so from this step
+// to the last one in the same column, within the run, every pixel is the
+// surface's. KOL_RAY_RUN_CHECK=1 (block_rays): each ray both ways, compared.
+// `skip` (ray_skip): every column in blocks of 8 rows, each block's nearest
+// place and whether it holds anything that can end a ray whatever its depth
+// (a lifted pixel, the sky). A ray climbs past everything behind it, 40 steps
+// of a ray's 73 on map 58 and 86 of 97 on map 102 (counted, 2026-11-20), five
+// loads each: at a block's foot, a block with nothing of that kind and
+// nothing as near as the ray will be at its top (the ray only gets farther
+// going up, so that is the nearest test of the eight) is passed in one step,
+// when the ray stays in its column through it. Each step left out would
+// have gone on to the next: the surface's own, or behind the ray.
+struct RaySkip {
+    int w = 0, h = 0;
+    unsigned long picture = 0;
+    const std::int32_t* xz = nullptr;
+    const std::uint8_t* lift = nullptr;
+    const std::uint8_t* codes = nullptr;
+    const std::uint8_t* kind = nullptr;
+    std::vector<std::int32_t> near;    // a block's greatest xz
+    std::vector<std::uint8_t> stop;    // a lifted pixel or the sky in it
+};
+constexpr int kRaySkipRows = 8;
+// The picture the effects are working on (bumped before the water's pass by
+// both providers): the blocks are this picture's alone (a guest frame's
+// serial can be worked out twice).
+std::atomic<unsigned long> g_effects_picture{0};
 RayHit reflect_ray(const kol::ScenePixels& sp, const std::uint8_t* src, const std::uint8_t* surface, int w, int h,
-                   int x, int y, const IceCam* cam, int wobble = 0) {
+                   int x, int y, const IceCam* cam, int wobble = 0, const std::int16_t* run_top = nullptr,
+                   const RaySkip* skip = nullptr) {
     static const bool fixed_view = std::getenv("KOL_ICE_FIXED_VIEW") != nullptr;
     RayHit out;
     out.last_ry = y;
@@ -3117,6 +3152,7 @@ RayHit reflect_ray(const kol::ScenePixels& sp, const std::uint8_t* src, const st
     static const bool sky_at_hit = std::getenv("KOL_ICE_SKY_AT_HIT") != nullptr;
     static const bool iface_stops = std::getenv("KOL_ICE_IFACE_STOPS") != nullptr;
     const bool pass_hanging = kol::map_flag(kol::MapFlag::PolishedFloor, sp.map);
+    if (iface_stops || (drift && !drift_linear)) skip = nullptr;
     for (int tt = 1; tt <= limit; ++tt) {
         const int ry = y - tt;
         if (ry < 0) break;
@@ -3124,7 +3160,38 @@ RayHit reflect_ray(const kol::ScenePixels& sp, const std::uint8_t* src, const st
         const int rxc = column_at(tt, true);
         if (rxc < 0 || rxc >= w) break;
         const std::size_t q = static_cast<std::size_t>(ry) * w + rxc;
-        if (surface[q] == 1u) continue;
+        if (skip && (ry & (kRaySkipRows - 1)) == kRaySkipRows - 1 && tt + kRaySkipRows - 1 <= limit) {
+            const int t_top = tt + kRaySkipRows - 1;
+            const std::size_t b = static_cast<std::size_t>(ry / kRaySkipRows) * w + rxc;
+            if (!skip->stop[b] &&
+                static_cast<float>(skip->near[b]) + 2.0f < static_cast<float>(uw) - back * static_cast<float>(t_top) &&
+                column_at(t_top, true) == rxc) {
+                tt = t_top;
+                out.last_ry = y - t_top;
+                continue;
+            }
+        }
+        if (surface[q] == 1u) {
+            if (run_top && (!drift || drift_linear)) {
+                const int t_end = std::min(y - static_cast<int>(run_top[q]), limit);
+                if (t_end > tt) {
+                    // The last step in this column: where the drift's line
+                    // leaves it, worked out, then settled with column_at
+                    // itself (the steps in a column are one stretch).
+                    int t = t_end;
+                    if (drift_step != 0.0f) {
+                        const float edge = static_cast<float>(rxc - wobble) + (drift_step > 0.0f ? 0.5f : -0.5f);
+                        const float cross = (edge - static_cast<float>(x)) / drift_step;
+                        if (cross < static_cast<float>(t_end)) t = std::max(tt, static_cast<int>(cross));
+                        while (t > tt && column_at(t, true) != rxc) --t;
+                        while (t < t_end && column_at(t + 1, true) == rxc) ++t;
+                    }
+                    tt = t;
+                    out.last_ry = y - t;
+                }
+            }
+            continue;
+        }
         // Through the falling snow: a flake is not a thing standing in the
         // column (each made a streak down the ice under it).
         if (sp.weather && sp.weather[q]) continue;
@@ -3249,11 +3316,66 @@ bool refl_every_frame() {
     static const bool v = std::getenv("KOL_REFL_EVERY_FRAME") != nullptr;
     return v;
 }
+// KOL_RAY_RUN_CHECK=1: a ray that crossed the surface's runs in one step
+// (reflect_ray's run_top), against the same ray a pixel a step.
+std::atomic<long> g_ray_run_checked{0}, g_ray_run_bad{0};
+// The blocks of this picture's scene (reflect_ray's `skip`), made once a
+// picture for the water's, the puddles' and the ice's rays alike.
+const RaySkip* ray_skip(const kol::ScenePixels& sp, int w, int h) {
+    static RaySkip rs;
+    static const bool on = kol::env_not_zero("KOL_RAY_RUNS");
+    if (!on || !sp.xz) return nullptr;
+    const unsigned long picture = g_effects_picture.load();
+    if (rs.w == w && rs.h == h && rs.picture == picture && rs.xz == sp.xz && rs.lift == sp.lift &&
+        rs.codes == sp.scene_codes && rs.kind == sp.kind && !rs.near.empty())
+        return &rs;
+    const int bh = (h + kRaySkipRows - 1) / kRaySkipRows;
+    rs.near.assign(static_cast<std::size_t>(bh) * w, INT32_MIN);
+    rs.stop.assign(static_cast<std::size_t>(bh) * w, 0);
+    row_pool().run(bh, 1, [&](int, int b0, int b1) {
+        for (int by = b0; by < b1; ++by) {
+            std::int32_t* const near = rs.near.data() + static_cast<std::size_t>(by) * w;
+            std::uint8_t* const stop = rs.stop.data() + static_cast<std::size_t>(by) * w;
+            for (int y = by * kRaySkipRows; y < std::min(h, (by + 1) * kRaySkipRows); ++y) {
+                const std::size_t o = static_cast<std::size_t>(y) * w;
+                for (int x = 0; x < w; ++x) {
+                    near[x] = std::max(near[x], sp.xz[o + x]);
+                    if ((sp.lift && sp.lift[o + x]) || sky_px(sp, o + x)) stop[x] = 1;
+                }
+            }
+        }
+    });
+    rs.w = w;
+    rs.h = h;
+    rs.picture = picture;
+    rs.xz = sp.xz;
+    rs.lift = sp.lift;
+    rs.codes = sp.scene_codes;
+    rs.kind = sp.kind;
+    return &rs;
+}
+inline RayHit trace_ray(const kol::ScenePixels& sp, const std::uint8_t* src, const std::uint8_t* surface, int w, int h,
+                        int x, int y, const IceCam* cam, int wobble, const std::int16_t* run_top, const RaySkip* skip) {
+    static const bool check = kol::env_set("KOL_RAY_RUN_CHECK");
+    static const bool runs_on = kol::env_not_zero("KOL_RAY_RUNS");   // KOL_RAY_RUNS=0: a pixel a step, as before
+    if (!runs_on) run_top = nullptr;
+    const RayHit r = reflect_ray(sp, src, surface, w, h, x, y, cam, wobble, run_top, skip);
+    if (check && (run_top || skip)) {
+        const RayHit s = reflect_ray(sp, src, surface, w, h, x, y, cam, wobble, nullptr);
+        const long n = g_ray_run_checked.fetch_add(1) + 1;
+        if (s.col != r.col || s.sky != r.sky || s.below != r.below || s.last_ry != r.last_ry) g_ray_run_bad.fetch_add(1);
+        if (n % 2000000 == 0)
+            std::fprintf(stderr, "kol-persp: ray run check: %ld rays, %ld bad\n", n, g_ray_run_bad.load());
+    }
+    return r;
+}
 template <class On, class Wob>
 void block_rays(const kol::ScenePixels& sp, const std::uint8_t* src, const std::uint8_t* surface, int w, int h,
-                const IceCam* cam, std::vector<RayHit>& out, On on, Wob wobble, RayKeep* keep = nullptr) {
+                const IceCam* cam, std::vector<RayHit>& out, On on, Wob wobble, RayKeep* keep = nullptr,
+                const std::int16_t* run_top = nullptr) {
     const int bs = refl_block();
     const int bw = (w + bs - 1) / bs, bh = (h + bs - 1) / bs;
+    const RaySkip* const skip = ray_skip(sp, w, h);
     // Not cleared: a hit is read only on the surface's own pixels, and each
     // of those is written below (the clear, 5.6 MB a call on one thread, was
     // most of what the rays at 30 a second saved on the Thor).
@@ -3289,7 +3411,7 @@ void block_rays(const kol::ScenePixels& sp, const std::uint8_t* src, const std::
                 const std::size_t k = static_cast<std::size_t>(oy) * w + ox;
                 RayHit& r = out[static_cast<std::size_t>(by) * bw + bx];
                 if (!keep) {
-                    r = reflect_ray(sp, src, surface, w, h, ox, oy, cam, wobble(ox, oy, k));
+                    r = trace_ray(sp, src, surface, w, h, ox, oy, cam, wobble(ox, oy, k), run_top, skip);
                     continue;
                 }
                 RayKeep::Hit& kh = keep->now[k];
@@ -3305,7 +3427,7 @@ void block_rays(const kol::ScenePixels& sp, const std::uint8_t* src, const std::
                     }
                 }
                 if (!reused) {
-                    const RayHit t = reflect_ray(sp, src, surface, w, h, ox, oy, cam, wobble(ox, oy, k));
+                    const RayHit t = trace_ray(sp, src, surface, w, h, ox, oy, cam, wobble(ox, oy, k), run_top, skip);
                     keep->now_f[k] = 3;
                     kh.has_col = t.col != nullptr;
                     kh.has_sky = t.sky != nullptr;
@@ -3571,8 +3693,10 @@ void water_effect(const kol::ScenePixels& sp, std::uint8_t* scene, int w, int h,
     auto sin_turns = [&](float turns) { return sine[static_cast<unsigned>(static_cast<int>(std::floor(turns * 256.0f))) & 255u]; };
     const float t = scene_secs(sp);
     const std::size_t pixels = static_cast<std::size_t>(w) * h;
+    kol::WorkerTimer lt("water.copy");
     static std::vector<std::uint8_t> src;
     src.assign(scene, scene + pixels * 3);
+    lt.lap("water.runs");
     auto wet = [&](int x, int y) { return x >= 0 && y >= 0 && x < w && y < h && water[static_cast<std::size_t>(y) * w + x] == 1u; };
     // The waves are phased on the world, not on the scene's pixels: the
     // scene is the screen (a column is (X - Z) / 2 + kx, kx following the
@@ -3611,13 +3735,15 @@ void water_effect(const kol::ScenePixels& sp, std::uint8_t* scene, int w, int h,
     static std::vector<RayHit> rays;
     static RayKeep water_keep;
     static const bool column_mirror = kol::env_set("KOL_WATER_COLUMN_MIRROR");   // (see the reflection below)
+    lt.lap("water.rays");
     if (!column_mirror)
         block_rays(sp, src.data(), water, w, h, cam, rays, [&](std::size_t k) { return water[k] == 1u; },
-                   [&](int x, int, std::size_t k) { return wobble_at(x, k); }, &water_keep);
+                   [&](int x, int, std::size_t k) { return wobble_at(x, k); }, &water_keep, run_top.data());
     // No shore foam on kNoFoamMaps: map 16's marsh, puddles in the grass
     // (the user, 2026-11-01, states/thor/0072, asked to drop the white
     // border effect on the water there).
     const bool no_foam = kol::map_flag(kol::MapFlag::NoFoam, sp.map);   // (map_settings.cfg `no_foam`)
+    lt.lap("water.pixels");
     row_pool().run(h, fine_rows(), [&](int, int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
             for (int x = 0; x < w; ++x) {
@@ -4630,6 +4756,7 @@ int flat_provider(const std::uint8_t* layers, std::uint8_t* scene, int w, int h,
     apply_lighting(sp, layers, ground_extra, scene, pixels);
     sea_foam(sp, scene, pixels);
     magic_circle(sp, scene, w, h);
+    ++g_effects_picture;
     water_effect(sp, scene, w, h, nullptr, unlit);
     falls_effect(sp, scene, w, h, true);
     ice_effect(sp, scene, w, h);
@@ -4812,6 +4939,8 @@ struct WarpFrame {
     std::size_t verts = 0, all_verts = 0, mesh_verts = 0;
     const std::uint8_t* prop_lift = nullptr;   // g_prop_lift, or null (see front() in warp_corners)
     int dmin = 0, dmax = 0;                    // the scene runs' depths (warp_runs)
+    bool mesh_kept = false;   // the scene's corners, kept corners and runs are the last picture's (mesh_keep_take)
+    bool same_runs = false;   // and the sorted runs too: the index list stands (warp_buckets, warp_zip)
     bool overlay_lifted = false;               // KOL_PERSP_OVERLAY_LIFTED (moved_overlay)
 
     // A lifted prop's pixel under interface the combat camera moved with a
@@ -6127,6 +6256,7 @@ void warp_light(WarpFrame& wf, kol::WorkerTimer& wt) {
     wt.lap("warp.water");
 
     {
+        ++g_effects_picture;
         water_effect(sp, scene, w, h, &wf.cam, unlit);
         falls_effect(sp, scene, w, h);
         ice_effect(sp, scene, w, h, &wf.cam);
@@ -6450,6 +6580,18 @@ void warp_flat(WarpFrame& wf, gbarecomp::PresentWarpMesh* mesh) {
 
 // 4. The mesh: a vertex per pixel corner.
 // The corners placed, the surface cuts, the strips' own corners (pass 1).
+// KOL_PERSP_HASH's line after the corners (warp_corners; mesh_keep_take
+// prints the same over a kept mesh).
+void trace_pass1(const std::uint8_t* scene, std::size_t pixels) {
+    if (!kol::persp_hash_trace()) return;
+    std::fprintf(stderr, "kol-persp-hash f=%ld in: kind=%08x xz=%08x y=%08x scene=%08x | pass1: xy=%08x used=%08x cut=%08x\n",
+                 g_trace_frame, kol::fnv_bytes(g_kind), kol::fnv_bytes(g_xz), kol::fnv_bytes(g_y),
+                 kol::fnv_bytes(std::vector<std::uint8_t>(scene, scene + pixels * 3)),
+                 kol::fnv_bytes(g_xy), kol::fnv_bytes(g_used), kol::fnv_bytes(g_cut));
+}
+// The kept corners' two trace hashes (warp_keep), for a kept mesh's lines.
+std::uint32_t g_trace_keep2 = 0, g_trace_keep3 = 0;
+
 void warp_corners(WarpFrame& wf) {
     const kol::ScenePixels& sp = *wf.sp;
     const std::uint8_t* const scene = wf.scene;
@@ -6699,11 +6841,7 @@ void warp_corners(WarpFrame& wf) {
         for (int j = j0; j < std::min(j1, h); ++j) cut_row(j);
     });
 
-    if (kol::persp_hash_trace())
-        std::fprintf(stderr, "kol-persp-hash f=%ld in: kind=%08x xz=%08x y=%08x scene=%08x | pass1: xy=%08x used=%08x cut=%08x\n",
-                     g_trace_frame, kol::fnv_bytes(g_kind), kol::fnv_bytes(g_xz), kol::fnv_bytes(g_y),
-                     kol::fnv_bytes(std::vector<std::uint8_t>(scene, scene + pixels * 3)),
-                     kol::fnv_bytes(g_xy), kol::fnv_bytes(g_used), kol::fnv_bytes(g_cut));
+    trace_pass1(scene, pixels);
     if (check) {
         // A left-out place must land wholly outside the view: every corner of
         // it on the far side of the view's edge it came from.
@@ -6827,7 +6965,10 @@ void warp_keep(WarpFrame& wf) {
     row_pool().run(vh, kChunkRows, [&](int, int j0, int j1) {
         for (int j = j0; j < j1; ++j) keep_row(j);
     });
-    if (kol::persp_hash_trace()) std::fprintf(stderr, "kol-persp-hash f=%ld pass2: keep=%08x\n", g_trace_frame, kol::fnv_bytes(g_keep));
+    if (kol::persp_hash_trace()) {
+        g_trace_keep2 = kol::fnv_bytes(g_keep);
+        std::fprintf(stderr, "kol-persp-hash f=%ld pass2: keep=%08x\n", g_trace_frame, g_trace_keep2);
+    }
     // A corner kept in one corner row is kept in the rows either side too
     // (where they place one), so both edges of every strip have a corner at
     // each column either edge keeps. Zipped with a corner on one edge only,
@@ -6856,7 +6997,10 @@ void warp_keep(WarpFrame& wf) {
         });
     }
 
-    if (kol::persp_hash_trace()) std::fprintf(stderr, "kol-persp-hash f=%ld pass3: keep=%08x\n", g_trace_frame, kol::fnv_bytes(g_keep));
+    if (kol::persp_hash_trace()) {
+        g_trace_keep3 = kol::fnv_bytes(g_keep);
+        std::fprintf(stderr, "kol-persp-hash f=%ld pass3: keep=%08x\n", g_trace_frame, g_trace_keep3);
+    }
 }
 
 // Runs: a pixel row's scene pixels between surface cuts, each one strip
@@ -6916,6 +7060,173 @@ void warp_runs(WarpFrame& wf) {
     }
     wf.dmin = dmin;
     wf.dmax = dmax;
+}
+
+// The scene's mesh, kept from one picture to the next (2026-11-20, Thor
+// states 0311 and 0312: map 102's narration with the camera still built the
+// same corners, cuts, kept corners and runs every picture, 1.3 ms of an
+// 11.8 ms job on the Mac). warp_corners, warp_keep and warp_runs read the
+// places (kind, xz, y), the props' lifted pixels, the camera, the far
+// scenery's pixels and the runs' split marks, and nothing else: when all of
+// those are the last picture's, so is what they make, and it is taken as it
+// stands (the corners from a copy: warp_output moves them into the view's
+// pixels in place). The units' cards and their runs are made every picture
+// as before. KOL_MESH_KEEP=0: built every picture. KOL_MESH_KEEP_CHECK=1:
+// built every picture and compared with what would have been kept.
+struct MeshKeep {
+    bool valid = false;
+    int w = 0, h = 0, slots = 0, run_drift = 0;
+    WarpCam cam;
+    bool has_prop_lift = false, has_far = false, has_split = false;
+    std::vector<std::uint8_t> kind, prop_lift, far, split;
+    std::vector<std::int32_t> xz, yy;
+    // What was made.
+    std::vector<float> xy;   // the scene's corners, as placed
+    std::size_t quads = 0;   // the scene's runs, first in g_quads
+    int dmin = 0, dmax = 0;
+    std::uint32_t trace_keep2 = 0, trace_keep3 = 0;
+    // (The check's copies.)
+    std::vector<std::uint8_t> c_used, c_cut, c_keep;
+    std::vector<int> c_own_px;
+    std::vector<float> c_own_xy;
+    std::vector<std::int8_t> c_own_dir;
+    std::vector<Quad> c_quads;
+    long hits = 0, misses = 0, bad = 0;
+};
+MeshKeep g_mesh_keep;
+bool mesh_keep_on() {
+    static const bool on = kol::env_not_zero("KOL_MESH_KEEP");
+    return on;
+}
+bool mesh_keep_check() {
+    static const bool on = kol::env_set("KOL_MESH_KEEP_CHECK");
+    return on;
+}
+bool same_cam(const WarpCam& a, const WarpCam& b) {
+    return a.base == b.base && a.dref == b.dref && a.yref == b.yref && a.K == b.K && a.pitch == b.pitch &&
+           a.zoom == b.zoom && a.cx == b.cx && a.cy == b.cy && a.cxp == b.cxp && (a.far != nullptr) == (b.far != nullptr) &&
+           a.far_share == b.far_share && a.rest_K == b.rest_K && a.rest_pitch == b.rest_pitch &&
+           a.rest_zoom == b.rest_zoom && a.rest_cxp == b.rest_cxp;
+}
+int mesh_run_drift(const WarpFrame& wf) { return wf.sp->run_split_drift; }
+// Whether everything the scene's mesh is made from is the last picture's.
+bool mesh_keep_same(const WarpFrame& wf) {
+    const MeshKeep& m = g_mesh_keep;
+    const std::size_t n = wf.pixels;
+    const kol::ScenePixels& sp = *wf.sp;
+    const int slots = wf.lift ? sp.atlas_per_row * (sp.atlas_h / kol::ScenePixels::kSpriteSlot) : 0;
+    if (!m.valid || m.w != wf.w || m.h != wf.h || m.slots != slots || !same_cam(m.cam, wf.cam) ||
+        m.run_drift != mesh_run_drift(wf) || m.has_prop_lift != !g_prop_lift.empty() ||
+        m.has_far != (wf.cam.far != nullptr) || m.has_split != (sp.run_split != nullptr) || m.kind.size() != n)
+        return false;
+    // KOL_MESH_KEEP_LOG=1: what changed, when the places did (the pixels, their box).
+    static const bool log = kol::env_set("KOL_MESH_KEEP_LOG");
+    if (log) {
+        int x0 = wf.w, x1 = -1, y0 = wf.h, y1 = -1;
+        long nk = 0, nx = 0, ny = 0;
+        for (std::size_t k = 0; k < n; ++k) {
+            const bool dk = m.kind[k] != wf.kind[k], dx = m.xz[k] != wf.xz[k], dy = m.yy[k] != wf.yy[k];
+            if (!dk && !dx && !dy) continue;
+            nk += dk; nx += dx; ny += dy;
+            const int px = static_cast<int>(k % wf.w), py = static_cast<int>(k / wf.w);
+            x0 = std::min(x0, px); x1 = std::max(x1, px); y0 = std::min(y0, py); y1 = std::max(y1, py);
+        }
+        if (x1 >= 0)
+            std::fprintf(stderr, "kol-persp: mesh places changed: kind %ld xz %ld y %ld px, box %d,%d-%d,%d of %dx%d\n",
+                         nk, nx, ny, x0, y0, x1, y1, wf.w, wf.h);
+    }
+    if (std::memcmp(m.kind.data(), wf.kind, n) != 0 || std::memcmp(m.xz.data(), wf.xz, n * 4) != 0 ||
+        std::memcmp(m.yy.data(), wf.yy, n * 4) != 0)
+        return false;
+    if (m.has_prop_lift && (g_prop_lift.size() != n || std::memcmp(m.prop_lift.data(), g_prop_lift.data(), n) != 0)) return false;
+    if (m.has_far && std::memcmp(m.far.data(), wf.cam.far, n) != 0) return false;
+    if (m.has_split && std::memcmp(m.split.data(), sp.run_split, n) != 0) return false;
+    return true;
+}
+// After warp_corners, warp_keep and warp_runs made it: kept, with what it
+// was made from.
+void mesh_keep_store(const WarpFrame& wf) {
+    MeshKeep& m = g_mesh_keep;
+    const std::size_t n = wf.pixels;
+    const kol::ScenePixels& sp = *wf.sp;
+    m.w = wf.w;
+    m.h = wf.h;
+    m.slots = wf.slots;
+    m.cam = wf.cam;
+    m.run_drift = mesh_run_drift(wf);
+    m.has_prop_lift = !g_prop_lift.empty();
+    m.has_far = wf.cam.far != nullptr;
+    m.has_split = sp.run_split != nullptr;
+    m.kind.assign(wf.kind, wf.kind + n);
+    m.xz.assign(wf.xz, wf.xz + n);
+    m.yy.assign(wf.yy, wf.yy + n);
+    if (m.has_prop_lift) m.prop_lift = g_prop_lift;
+    if (m.has_far) m.far.assign(wf.cam.far, wf.cam.far + n);
+    if (m.has_split) m.split.assign(sp.run_split, sp.run_split + n);
+    m.xy.assign(g_xy.begin(), g_xy.begin() + static_cast<std::ptrdiff_t>(wf.verts * 2));
+    m.quads = g_quads.size();
+    m.dmin = wf.dmin;
+    m.dmax = wf.dmax;
+    m.trace_keep2 = g_trace_keep2;
+    m.trace_keep3 = g_trace_keep3;
+    m.valid = m.has_prop_lift ? g_prop_lift.size() == n : true;
+    if (mesh_keep_check()) {
+        m.c_used = g_used;
+        m.c_cut = g_cut;
+        m.c_keep = g_keep;
+        m.c_own_px = g_own_px;
+        m.c_own_xy = g_own_xy;
+        m.c_own_dir = g_own_dir;
+        m.c_quads = g_quads;
+    }
+}
+// The scene's mesh for this picture: the last one's as it stands (true), or
+// to be made (false; then mesh_keep_store).
+bool mesh_keep_take(WarpFrame& wf) {
+    MeshKeep& m = g_mesh_keep;
+    if (!mesh_keep_on() || wf.check || !mesh_keep_same(wf)) {
+        ++m.misses;
+        return false;
+    }
+    ++m.hits;
+    if (mesh_keep_check()) return false;   // made again, compared by mesh_keep_compare
+    const int vw = wf.w + 1, vh = wf.h + 1;
+    constexpr int kSlotCorners = (kol::ScenePixels::kSpriteSlot + 1) * (kol::ScenePixels::kSpriteSlot + 1);
+    wf.vw = vw;
+    wf.vh = vh;
+    wf.verts = static_cast<std::size_t>(vw) * vh;
+    wf.slots = m.slots;
+    wf.all_verts = wf.verts + static_cast<std::size_t>(m.slots) * kSlotCorners;
+    wf.prop_lift = g_prop_lift.empty() ? nullptr : g_prop_lift.data();
+    wf.dmin = m.dmin;
+    wf.dmax = m.dmax;
+    g_xy.resize(wf.all_verts * 2);
+    std::copy(m.xy.begin(), m.xy.end(), g_xy.begin());
+    g_quads.resize(m.quads);
+    if (kol::persp_hash_trace()) {
+        trace_pass1(wf.scene, wf.pixels);
+        std::fprintf(stderr, "kol-persp-hash f=%ld pass2: keep=%08x\n", g_trace_frame, m.trace_keep2);
+        std::fprintf(stderr, "kol-persp-hash f=%ld pass3: keep=%08x\n", g_trace_frame, m.trace_keep3);
+    }
+    return true;
+}
+// KOL_MESH_KEEP_CHECK: a mesh that would have been kept, made again, against the kept one.
+void mesh_keep_compare(const WarpFrame& wf, bool would_keep) {
+    MeshKeep& m = g_mesh_keep;
+    if (!mesh_keep_check()) return;
+    if (would_keep) {
+        const bool ok = m.xy.size() == wf.verts * 2 && std::memcmp(m.xy.data(), g_xy.data(), m.xy.size() * 4) == 0 &&
+                        m.c_used == g_used && m.c_cut == g_cut && m.c_keep == g_keep && m.c_own_px == g_own_px &&
+                        m.c_own_xy == g_own_xy && m.c_own_dir == g_own_dir && m.quads == g_quads.size() &&
+                        std::memcmp(m.c_quads.data(), g_quads.data(), m.quads * sizeof(Quad)) == 0 &&
+                        m.dmin == wf.dmin && m.dmax == wf.dmax;
+        if (!ok) {
+            ++m.bad;
+            std::fprintf(stderr, "kol-persp: MESH KEEP CHECK FAILED (picture %ld)\n", m.hits + m.misses);
+        }
+    }
+    if ((m.hits + m.misses) % 300 == 0)
+        std::fprintf(stderr, "kol-persp: mesh keep check: %ld kept, %ld made, %ld bad\n", m.hits, m.misses, m.bad);
 }
 
 // Each unit's sprite: its square's corners placed as an upright thing at
@@ -7260,9 +7571,15 @@ void warp_buckets(WarpFrame& wf) {
     }
 
     for (int bkt = 1; bkt <= buckets; ++bkt) g_bucket[bkt] += g_bucket[bkt - 1];
+    // The last picture's sorted runs are kept beside this one's: with the
+    // scene's mesh kept (mesh_keep_take) and the same runs in the same order,
+    // warp_zip's index list is the last picture's too.
+    g_sorted_last.swap(g_sorted);
     g_sorted.resize(g_quads.size());
     for (std::size_t q = 0; q < g_quads.size(); ++q)
         g_sorted[g_bucket[g_quad_key[q]]++] = g_quads[q];
+    wf.same_runs = wf.mesh_kept && g_idx_valid && g_sorted.size() == g_sorted_last.size() &&
+                   std::memcmp(g_sorted.data(), g_sorted_last.data(), g_sorted.size() * sizeof(Quad)) == 0;
 }
 
 // The strips' own vertices, then every run zipped into triangles (the
@@ -7295,6 +7612,9 @@ void warp_zip(WarpFrame& wf) {
         g_uv[static_cast<std::size_t>(v) * 2 + 1] = static_cast<float>(c / vw);
     }
     const std::size_t mesh_verts = all_verts + own_n;
+    wf.mesh_verts = mesh_verts;
+    // The same runs over the same kept mesh: the same triangles (same_runs).
+    if (wf.same_runs) return;
     // Each run is zipped into triangles on its own, so the sorted runs are
     // split into chunks, each chunk's triangles kept apart, and the chunks
     // joined in order: the same list as one pass would make.
@@ -7379,7 +7699,7 @@ void warp_zip(WarpFrame& wf) {
                   g_idx.begin() + static_cast<std::ptrdiff_t>(at));
         at += part.n;
     }
-    wf.mesh_verts = mesh_verts;
+    g_idx_valid = true;
 }
 
 // The mesh handed over: the traces and dumps, the smoothed pan, the
@@ -7504,6 +7824,7 @@ int warp_provider(const std::uint8_t* layers, std::uint8_t* scene, int w, int h,
     palette_lag(sp, layers, scene, pixels);
     model_recolour(sp, scene, pixels);
     const std::uint8_t* iface = sp.iface;
+    wt.lap("warp.sky");
     if (sp.sky != kol::kSkyGame) recolour_backdrop(sp, layers, iface, scene, pixels, sp.sky, sp.sky_desat, sp.sky_mix);
     smooth_sky(sp, layers, iface, scene, w, h);
     // The view in the scene: the scene may go on past it (the overscan, see
@@ -7529,8 +7850,10 @@ int warp_provider(const std::uint8_t* layers, std::uint8_t* scene, int w, int h,
     // (KOL_PERSP_OVERLAY_LIFTED=1: WarpFrame::moved_overlay as before.)
     static const bool overlay_lifted = std::getenv("KOL_PERSP_OVERLAY_LIFTED") != nullptr;
     wf.overlay_lifted = overlay_lifted;
+    wt.lap("warp.places");
     warp_places(wf);
     warp_camera(wf);
+    wt.lap("warp.cards");
     warp_cards(wf);
 
     wt.lap("warp.backdrop");
@@ -7551,11 +7874,17 @@ int warp_provider(const std::uint8_t* layers, std::uint8_t* scene, int w, int h,
     // (The mesh by step, 2026-11-18: as one "warp.mesh" it was half the job
     // on the Steam Deck's map 55 and said nothing of where.)
     wt.lap("mesh.corners");
-    warp_corners(wf);
-    wt.lap("mesh.keep");
-    warp_keep(wf);
-    wt.lap("mesh.runs");
-    warp_runs(wf);
+    const bool would_keep = mesh_keep_check() && mesh_keep_on() && !wf.check && mesh_keep_same(wf);
+    wf.mesh_kept = mesh_keep_take(wf);
+    if (!wf.mesh_kept) {
+        warp_corners(wf);
+        wt.lap("mesh.keep");
+        warp_keep(wf);
+        wt.lap("mesh.runs");
+        warp_runs(wf);
+        mesh_keep_compare(wf, would_keep);
+        mesh_keep_store(wf);
+    }
     wt.lap("mesh.card_runs");
     warp_card_runs(wf);
     if (g_quads.empty()) return 0;

@@ -124,7 +124,9 @@ float sun_degrees_base() {
             // Stepped 10 times a second (a 6th of the way's frames): each
             // move of the sun rebuilds the terrain's shadows, every frame
             // the sunset cost the worker most of its time.
-            const float q = std::min(1.0f, std::floor(p * s->frames / 6.0f) * 6.0f / s->frames);
+            float n = std::floor(p * s->frames / 6.0f);
+            if (t_sun_ahead_steps) n += static_cast<float>(t_sun_ahead_steps);
+            const float q = std::min(1.0f, n * 6.0f / s->frames);
             d += (std::min(d, s->to_degrees) - d) * q;
         }
     return std::max(std::min(d, kArcLowest), d - sun_turn_drop());
@@ -307,7 +309,89 @@ namespace kol_focus_detail {
 // Ambient Occl. on.
 bool unit_shadows_on() { return kol::setting_on(kol::Setting::UnitShadows); }
 bool units_cast() { return unit_shadows_on() && g_shadow_on && shadow_strength() > 0.0f; }
+namespace {
+std::vector<PropGroup> scene_props_make(int w, int h, std::vector<int>& prop_of);
+// Counts the times scene_props gave a new answer on this thread: while it
+// stands, each call's groups and prop_of are the last call's (cast_prop_shadows
+// keeps its keys by it). 0: not kept (KOL_SCENE_PROPS_KEEP=0, the check).
+thread_local std::uint64_t t_props_gen = 0;
+thread_local bool t_props_gen_ok = false;
+}
+// The props' groups, kept while what they are made from stands (2026-11-20,
+// Thor state 0311: map 102's narration asked twice a picture, the foot spots
+// and the shadows, and each time every pixel was grouped again through a
+// hash map, 0.7 ms of the worker's job on the Mac, on a scene that had not
+// changed). What the grouping reads is listed exactly: each pixel a prop
+// reached (g_prop_dist) with its place, kind, flame, cell and shape, and the
+// props' pixels past the scene; the same list gives the same groups, copied
+// out. KOL_SCENE_PROPS_KEEP=0: grouped every time. KOL_SCENE_PROPS_CHECK=1:
+// grouped every time and compared with the kept.
 std::vector<PropGroup> scene_props(int w, int h, std::vector<int>& prop_of) {
+    static const bool keep_on = kol::env_not_zero("KOL_SCENE_PROPS_KEEP");
+    static const bool check = kol::env_set("KOL_SCENE_PROPS_CHECK");
+    t_props_gen_ok = keep_on && !check;
+    if (!keep_on) return scene_props_make(w, h, prop_of);
+    struct Id {
+        std::uint32_t q, kind;
+        std::int32_t xz, y, cell, shape;
+        bool operator==(const Id&) const = default;
+    };
+    struct Kept {
+        bool valid = false;
+        int w = 0, h = 0;
+        bool has_cell = false, has_shape = false;
+        std::vector<Id> id;
+        std::vector<PropOutPx> out;
+        std::vector<PropGroup> props;
+        std::vector<int> prop_of;
+    };
+    static thread_local Kept kept;
+    static thread_local std::vector<Id> id;
+    const std::size_t n = static_cast<std::size_t>(w) * h;
+    const bool has_cell = g_prop_cell.size() == n, has_shape = g_bg1_shape.size() == n;
+    id.clear();
+    for (std::size_t q = 0; q < n; ++q) {
+        if (g_prop_dist[q] == kUnreached) continue;
+        id.push_back({static_cast<std::uint32_t>(q), static_cast<std::uint32_t>(g_kind[q]) | (is_flame(q) ? 256u : 0u),
+                      g_xz[q], g_y[q], has_cell ? g_prop_cell[q] : 0, has_shape ? g_bg1_shape[q] : 0});
+    }
+    const bool same = kept.valid && kept.w == w && kept.h == h && kept.has_cell == has_cell &&
+                      kept.has_shape == has_shape && kept.id == id && kept.out == g_prop_out;
+    static thread_local long asked = 0, taken = 0, bad = 0;
+    ++asked;
+    if (same && !check) {
+        ++taken;
+        prop_of = kept.prop_of;
+        return kept.props;
+    }
+    std::vector<PropGroup> props = scene_props_make(w, h, prop_of);
+    if (same && check) {
+        ++taken;
+        bool ok = props.size() == kept.props.size() && prop_of == kept.prop_of;
+        for (std::size_t i = 0; ok && i < props.size(); ++i) {
+            const PropGroup& a = props[i];
+            const PropGroup& b = kept.props[i];
+            ok = a.xz == b.xz && a.y == b.y && a.x0 == b.x0 && a.y0 == b.y0 && a.x1 == b.x1 && a.y1 == b.y1 &&
+                 a.shape == b.shape && a.cell == b.cell && a.out == b.out;
+        }
+        if (!ok) ++bad;
+    }
+    if (check && asked % 600 == 0)
+        std::fprintf(stderr, "kol-focus: scene props check: asked %ld, kept %ld, bad %ld\n", asked, taken, bad);
+    ++t_props_gen;
+    kept.valid = true;
+    kept.w = w;
+    kept.h = h;
+    kept.has_cell = has_cell;
+    kept.has_shape = has_shape;
+    kept.id.swap(id);
+    kept.out = g_prop_out;
+    kept.props = props;
+    kept.prop_of = prop_of;
+    return props;
+}
+namespace {
+std::vector<PropGroup> scene_props_make(int w, int h, std::vector<int>& prop_of) {
     const std::size_t n = static_cast<std::size_t>(w) * h;
     std::vector<PropGroup> props;
     prop_of.assign(n, -1);
@@ -386,6 +470,7 @@ std::vector<PropGroup> scene_props(int w, int h, std::vector<int>& prop_of) {
     }
     return props;
 }
+}  // namespace
 }  // namespace kol_focus_detail
 
 namespace {
@@ -536,29 +621,127 @@ void cast_prop_shadows(int w, int h, int ox, int oy, int kx, int ky, std::uint32
     // the rain most props' are, and they were cast again every frame.
     // KOL_PROP_SHADOW_EMPTY_RECAST=1: as before.
     static const bool empty_recast = std::getenv("KOL_PROP_SHADOW_EMPTY_RECAST") != nullptr;
-    static long n_still = 0, n_moved = 0, n_cast = 0;   // KOL_PROP_SHADOW_LOG=1
+    static std::atomic<long> n_still{0}, n_moved{0}, n_cast{0};   // KOL_PROP_SHADOW_LOG=1
     static const bool cast_log = std::getenv("KOL_PROP_SHADOW_LOG") != nullptr;
-    for (int pi = 0; pi < static_cast<int>(props.size()); ++pi) {
+    // In three steps (2026-11-20, Thor state 0311: map 102's seventy-odd
+    // props were all cast again on one thread at each step of the sunset,
+    // 2 to 3 ms of that picture, and every other picture each one's mask was
+    // made and hashed for a key that had not changed, 0.3 ms):
+    // 1. each prop's key, from its mask: on the row pool; none of it while
+    //    the groups (scene_props' count), the sun, the heights, the view and
+    //    the camera are the last picture's, when the keys are too;
+    // 2. on this thread, in order: each prop's shadow of the last picture
+    //    found by its key (a still camera takes it whole);
+    // 3. the rest moved with the camera or cast again, on the row pool: a
+    //    prop's cast writes its own list and reads the scene.
+    // KOL_PROP_SHADOW_SERIAL=1: on this thread alone, a key every picture.
+    static const bool serial = kol::env_set("KOL_PROP_SHADOW_SERIAL");
+    const int np = static_cast<int>(props.size());
+    const int camx = kx + ox, camy = ky + oy;
+    static thread_local std::vector<std::vector<std::uint8_t>> masks_tl;
+    static thread_local std::vector<std::uint32_t> keys_tl;
+    static thread_local std::vector<std::uint8_t> mask_made_tl;
+    struct KeysFor {
+        bool valid = false;
+        std::uint64_t gen = 0;
+        std::uint32_t base = 0, stale = 0;
+        int w = 0, h = 0, camx = 0, camy = 0, np = 0;
+    };
+    static thread_local KeysFor keys_for;
+    // (This thread's, by reference: a helper naming a thread_local reaches its own.)
+    std::vector<std::vector<std::uint8_t>>& masks = masks_tl;
+    std::vector<std::uint32_t>& keys = keys_tl;
+    std::vector<std::uint8_t>& mask_made = mask_made_tl;
+    const int* const pof = prop_of.data();
+    if (static_cast<int>(masks.size()) < np) masks.resize(np);
+    const std::uint32_t key_base = by_view ? view_key : g_shadow_key;
+    auto make_mask = [&](int pi) {
         const PropGroup& p = props[pi];
         const int bw = p.x1 - p.x0 + 1, bh = p.y1 - p.y0 + 1;
-        static thread_local std::vector<std::uint8_t> mask;
+        std::vector<std::uint8_t>& mask = masks[pi];
         mask.assign(static_cast<std::size_t>(bw) * bh, 0);
-        const int camx = kx + ox, camy = ky + oy;
-        std::uint32_t key = by_view ? view_key : g_shadow_key;
-        if (!by_view)
-            kol::fnv_ints(key, {w, h});
-        kol::fnv_ints(key, {p.xz, p.y, by_view ? p.x0 : p.x0 - camx, by_view ? p.y0 : p.y0 - camy, bw, bh});
         for (int j = 0; j < bh; ++j)
             for (int i = 0; i < bw; ++i) {
                 const int px = p.x0 + i, py = p.y0 + j;   // (past the scene: p.out)
                 if (px >= 0 && py >= 0 && px < w && py < h)
-                    mask[static_cast<std::size_t>(j) * bw + i] = prop_of[static_cast<std::size_t>(py) * w + px] == pi;
+                    mask[static_cast<std::size_t>(j) * bw + i] = pof[static_cast<std::size_t>(py) * w + px] == pi;
             }
         for (const auto& [px, py] : p.out) mask[static_cast<std::size_t>(py - p.y0) * bw + (px - p.x0)] = 1;
-        for (std::uint8_t v : mask) kol::fnv_mix(key, v);
-        g_prop_cast_next.push_back({key, {}});
-        CastCache& cur = g_prop_cast_next.back();
-        std::vector<std::uint32_t>& list = cur.px;
+        mask_made[pi] = 1;
+    };
+    // A step of the sun recasts every prop's shadow at once (1.3 ms of that
+    // picture on the Mac, map 102's sunset, 2026-11-20). Spread instead over
+    // `spread` pictures: a share of them cast each picture, the rest keep their
+    // shadow from the sun before (found by the key it was made with, `stale`)
+    // until their turn. Only when the sun alone moved (the heights are the
+    // same) and the props and camera are as they were: a prop keeps a shadow
+    // only for the very same mask at the very same place. For a picture or
+    // two, part of the props' shadows are a step of the sun behind the
+    // terrain's (a few pixels at the sunset's end, at most).
+    // KOL_PROP_SHADOW_SPREAD=<pictures> (3); 0 or 1: all at once, as before.
+    static const int spread = std::max(0, static_cast<int>(kol::env_num_or("KOL_PROP_SHADOW_SPREAD", 3.0f)));
+    struct Before {
+        bool valid = false;
+        std::uint32_t base = 0, heights = 0;   // the sun's key the shadows were all made with, and the heights'
+    };
+    static thread_local Before before;
+    const bool spreading = spread > 1 && !by_view && before.valid && before.base != key_base &&
+                           before.heights == g_cast_heights_key;
+    const std::uint32_t stale_base = spreading ? before.base : 0u;
+    static thread_local std::vector<std::uint32_t> stale_tl;
+    std::vector<std::uint32_t>& stale = stale_tl;
+    const bool keys_same = !serial && t_props_gen_ok && keys_for.valid && keys_for.gen == t_props_gen &&
+                           keys_for.base == key_base && keys_for.stale == stale_base && keys_for.w == w &&
+                           keys_for.h == h && keys_for.camx == camx && keys_for.camy == camy && keys_for.np == np &&
+                           static_cast<int>(keys.size()) == np && static_cast<int>(stale.size()) == np;
+    mask_made.assign(np, 0);
+    if (!keys_same) {
+        keys.assign(np, 0);
+        stale.assign(np, 0);
+        auto key_range = [&](int p0, int p1) {
+            for (int pi = p0; pi < p1; ++pi) {
+                const PropGroup& p = props[pi];
+                const int bw = p.x1 - p.x0 + 1, bh = p.y1 - p.y0 + 1;
+                make_mask(pi);
+                auto key_of = [&](std::uint32_t base) {
+                    std::uint32_t key = base;
+                    if (!by_view)
+                        kol::fnv_ints(key, {w, h});
+                    kol::fnv_ints(key, {p.xz, p.y, by_view ? p.x0 : p.x0 - camx, by_view ? p.y0 : p.y0 - camy, bw, bh});
+                    for (std::uint8_t v : masks[pi]) kol::fnv_mix(key, v);
+                    return key;
+                };
+                keys[pi] = key_of(key_base);
+                if (spreading) stale[pi] = key_of(stale_base);
+            }
+        };
+        if (serial || np < 8) key_range(0, np);
+        else kol::parallel_rows(np, 4, [&](int, int p0, int p1) { key_range(p0, p1); });
+        keys_for.valid = t_props_gen_ok;
+        keys_for.gen = t_props_gen;
+        keys_for.base = key_base;
+        keys_for.stale = stale_base;
+        keys_for.w = w;
+        keys_for.h = h;
+        keys_for.camx = camx;
+        keys_for.camy = camy;
+        keys_for.np = np;
+    }
+    g_prop_cast_next.resize(np);
+    static thread_local std::vector<CastCache*> old_of_tl;
+    static thread_local std::vector<int> work_tl;
+    std::vector<CastCache*>& old_of = old_of_tl;
+    std::vector<int>& work = work_tl;
+    old_of.assign(np, nullptr);
+    work.clear();
+    // While spreading: this picture casts at most `budget` (the misses
+    // beyond it keep their old shadow when they have one).
+    int budget = spreading ? (np + spread - 1) / spread : np;
+    int kept_stale = 0;
+    for (int pi = 0; pi < np; ++pi) {
+        const std::uint32_t key = keys[pi];
+        g_prop_cast_next[pi] = CastCache{key, {}};
+        CastCache& cur = g_prop_cast_next[pi];
         cur.camx = camx;
         cur.camy = camy;
         cur.wx0 = -camx; cur.wy0 = -camy; cur.wx1 = w - 1 - camx; cur.wy1 = h - 1 - camy;
@@ -566,14 +749,49 @@ void cast_prop_shadows(int w, int h, int ox, int oy, int kx, int ky, std::uint32
         for (CastCache& old : g_prop_cast_cache)
             if (old.key == key && !old.taken && !(empty_recast && old.px.empty())) { old_hit = &old; break; }
         if (cast_log && pi == 0 && (n_still + n_moved + n_cast) > 0 && (n_still + n_moved + n_cast) % 2000 < 60)
-            std::fprintf(stderr, "prop_shadows: still %ld moved %ld cast %ld\n", n_still, n_moved, n_cast);
+            std::fprintf(stderr, "prop_shadows: still %ld moved %ld cast %ld\n", n_still.load(), n_moved.load(), n_cast.load());
         if (old_hit && old_hit->camx == camx && old_hit->camy == camy) {   // a still camera
             ++n_still;
-            list.swap(old_hit->px);
+            cur.px.swap(old_hit->px);
             old_hit->taken = true;
             cur.wx0 = old_hit->wx0; cur.wy0 = old_hit->wy0; cur.wx1 = old_hit->wx1; cur.wy1 = old_hit->wy1;
             continue;
         }
+        if (spreading && budget <= 0) {
+            CastCache* old_stale = nullptr;
+            for (CastCache& old : g_prop_cast_cache)
+                if (old.key == stale[pi] && !old.taken && !(empty_recast && old.px.empty())) { old_stale = &old; break; }
+            if (old_stale && old_stale->camx == camx && old_stale->camy == camy) {
+                cur.key = stale[pi];   // (found by it again next picture)
+                cur.px.swap(old_stale->px);
+                old_stale->taken = true;
+                cur.wx0 = old_stale->wx0; cur.wy0 = old_stale->wy0; cur.wx1 = old_stale->wx1; cur.wy1 = old_stale->wy1;
+                ++kept_stale;
+                continue;
+            }
+        }
+        old_of[pi] = old_hit;
+        work.push_back(pi);
+        --budget;
+    }
+    static const bool spread_log = kol::env_true("KOL_PROP_SHADOW_SPREAD_LOG");
+    if (spread_log && (spreading || !work.empty()))
+        std::fprintf(stderr, "prop-spread: props %d cast %zu kept-old %d spreading %d\n", np, work.size(), kept_stale,
+                     spreading ? 1 : 0);
+    // Every shadow is the sun's now: the next step spreads from here.
+    if (!kept_stale) {
+        before.valid = !by_view;
+        before.base = key_base;
+        before.heights = g_cast_heights_key;
+    }
+    auto cast_one = [&](int pi) {
+        const PropGroup& p = props[pi];
+        const int bw = p.x1 - p.x0 + 1, bh = p.y1 - p.y0 + 1;
+        if (!mask_made[pi]) make_mask(pi);
+        const std::vector<std::uint8_t>& mask = masks[pi];
+        CastCache& cur = g_prop_cast_next[pi];
+        std::vector<std::uint32_t>& list = cur.px;
+        CastCache* const old_hit = old_of[pi];
         // The card: at the prop's place, across its pixels' middle column;
         // its foot the prop's ground (its pixels' place) on its foot row.
         const float feet_hx = 0.5f * static_cast<float>(p.x0 + p.x1 + 1);
@@ -582,7 +800,7 @@ void cast_prop_shadows(int w, int h, int ox, int oy, int kx, int ky, std::uint32
         const float cx = 0.5f * (p.xz + cdx), cz = 0.5f * (p.xz - cdx);
         const float foot = static_cast<float>(p.y);
         const float card_h = 2.0f * (feet_hy - p.y0);   // world units up to its top
-        if (card_h <= 0.0f) continue;
+        if (card_h <= 0.0f) return;
         static thread_local BoxSum box;
         box.build(bw, bh, [&](int i, int j) { return mask[static_cast<std::size_t>(j) * bw + i]; });
         // Where the shadow can lie, as for a unit.
@@ -610,7 +828,7 @@ void cast_prop_shadows(int w, int h, int ox, int oy, int kx, int ky, std::uint32
                 }
                 cur.wx0 = old_hit->wx0; cur.wy0 = old_hit->wy0; cur.wx1 = old_hit->wx1; cur.wy1 = old_hit->wy1;
                 ++n_moved;
-                continue;
+                return;
             }
         }
         ++n_cast;
@@ -649,6 +867,14 @@ void cast_prop_shadows(int w, int h, int ox, int oy, int kx, int ky, std::uint32
                 if (sun_blocked(static_cast<int>(X), static_cast<int>(Z), Y)) continue;   // the terrain's, an awning's
                 list.push_back(static_cast<std::uint32_t>(q) | (alpha << 24));
             }
+        });
+    };
+    const int nwork = static_cast<int>(work.size());
+    if (serial || nwork < 4) {
+        for (const int pi : work) cast_one(pi);
+    } else {
+        kol::parallel_rows(nwork, 2, [&](int, int i0, int i1) {
+            for (int i = i0; i < i1; ++i) cast_one(work[i]);
         });
     }
     g_prop_cast_cache.swap(g_prop_cast_next);

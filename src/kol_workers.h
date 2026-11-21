@@ -112,6 +112,8 @@ int fine_rows();
 // fn must write only its own rows' results (and read no static thread_local
 // the caller filled: each helper has its own).
 void parallel_rows(int rows, int chunk, const std::function<void(int, int, int)>& fn);
+// The threads a parallel_rows run has: the caller and the pool's helpers.
+int row_threads();
 
 // KOL_WORKER_TIME=1: the present worker's time by section (kol_focus's
 // scene build, kol_perspective's warp), the means over each 300 jobs printed

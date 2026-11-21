@@ -343,7 +343,24 @@ void SceneBuild::gather_lamps() {
         if (g_occ && !by_heights) top_all = std::max(top_all, (g_occ->iy0 + g_occ->ny) / 4 + 1);
         if (key != g_lamp_key || g_lamp_vis.size() != lamps.size()) {
             g_lamp_key = key;
+            // A lamp that stands where it stood keeps its grid: what a cube
+            // sees of it depends on the lamp's place, the map's heights and
+            // its model alone (lamp_seen), and on map 58 at night, where
+            // every character carries a torch, one of them walking emptied
+            // every other's grid each step, all of them filled again by the
+            // light's rebuild. Not a lamp with a ring: a cube's first read
+            // gives its exact share and the later ones the byte's (lamp_seen's
+            // note), so a kept grid would light differently from a fresh one.
+            // KOL_LAMP_VIS_KEEP=0: every grid emptied, as before.
+            // KOL_LAMP_VIS_CHECK=1: each kept cube worked out again and compared.
+            static const bool keep_on = kol::env_not_zero("KOL_LAMP_VIS_KEEP");
+            std::vector<LampVis> old;
+            old.swap(g_lamp_vis);
             g_lamp_vis.assign(lamps.size(), LampVis{});
+            std::uint32_t base = heights_key;
+            kol::fnv_mix(base, static_cast<std::uint32_t>(map));
+            kol::fnv_mix(base, static_cast<std::uint32_t>(top_all));
+            kol::fnv_mix(base, static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(g_occ)));
             for (std::size_t i = 0; i < lamps.size(); ++i) {
                 const int r4 = static_cast<int>(std::ceil(lamps[i].reach / 4.0f)) + 1;
                 LampVis& v = g_lamp_vis[i];
@@ -351,7 +368,20 @@ void SceneBuild::gather_lamps() {
                 v.iz0 = static_cast<int>(std::floor(lamps[i].z / 4.0f)) - r4;
                 v.nx = v.nz = 2 * r4 + 1;
                 v.ny = 4 * (top_all + 2);
-                v.vis.assign(static_cast<std::size_t>(v.nx) * v.nz * v.ny, 0);
+                v.base = base;
+                const float at[4] = {lamps[i].x, lamps[i].y, lamps[i].z, lamps[i].reach};
+                std::memcpy(v.at, at, sizeof at);
+                const std::size_t n = static_cast<std::size_t>(v.nx) * v.nz * v.ny;
+                if (keep_on && !(lamps[i].ring > 0.0f))
+                    for (LampVis& o : old)
+                        if (o.vis.size() == n && o.base == base && std::memcmp(o.at, at, sizeof at) == 0 && o.ix0 == v.ix0 &&
+                            o.iz0 == v.iz0 && o.nx == v.nx && o.ny == v.ny) {
+                            v.vis.swap(o.vis);
+                            o.vis.clear();
+                            v.kept = true;
+                            break;
+                        }
+                if (!v.kept) v.vis.assign(n, 0);
             }
         }
     }
@@ -443,6 +473,33 @@ void SceneBuild::gather_lamps() {
     // looked off). KOL_LAMP_SKIP=<units> sets it on any map.
     static const float env_skip = kol::env_num("KOL_LAMP_SKIP", -1.0f);
     lamp_skip = env_skip >= 0.0f ? env_skip : (map == 63 || map == 64) ? 12.0f : kOccluderSkip;
+    // KOL_LAMP_VIS_CHECK=1: the kept grids' cubes against a fresh answer.
+    static const bool vis_check = kol::env_true("KOL_LAMP_VIS_CHECK");
+    static const bool vis_log = kol::env_true("KOL_LAMP_VIS_LOG");
+    if ((vis_check || vis_log) && glow_on) {
+        static long kept = 0, fresh = 0, cubes = 0, bad = 0, pictures = 0;
+        for (std::size_t i = 0; i < g_lamp_vis.size() && i < lamps.size(); ++i) {
+            LampVis& v = g_lamp_vis[i];
+            if (!v.kept) continue;
+            if (vis_check)
+                for (int iy = 0; iy < v.ny; ++iy)
+                    for (int iz = 0; iz < v.nz; ++iz)
+                        for (int ix = 0; ix < v.nx; ++ix) {
+                            const std::uint8_t m = v.vis[(static_cast<std::size_t>(iy) * v.nz + iz) * v.nx + ix];
+                            if (!m) continue;
+                            ++cubes;
+                            const float seen = lamp_seen_cube(i, ix, iy, iz);
+                            if (m != static_cast<std::uint8_t>(1 + std::lround(254.0f * seen)) || (m != 1 && m != 255)) ++bad;
+                        }
+        }
+        for (LampVis& v : g_lamp_vis) {
+            (v.kept ? kept : fresh) += 1;
+            v.kept = false;   // (counted once: the grids stay while the key does)
+        }
+        if (++pictures % 300 == 0)
+            std::fprintf(stderr, "[lamp-vis] %ld pictures: %ld grids kept, %ld emptied; check %ld cubes, %ld bad\n", pictures,
+                         kept, fresh, cubes, bad);
+    }
 }
 
 // How much of lamp `i` the 4-unit cube holding world point (X, Y, Z)
@@ -459,6 +516,19 @@ float SceneBuild::lamp_seen(std::size_t i, float X, float Y, float Z) {
     if (ix < 0 || iz < 0 || iy < 0 || ix >= v.nx || iz >= v.nz || iy >= v.ny) return 1.0f;
     std::uint8_t& m = v.vis[(static_cast<std::size_t>(iy) * v.nz + iz) * v.nx + ix];
     if (m) return static_cast<float>(m - 1) / 254.0f;
+    const float seen = lamp_seen_cube(i, ix, iy, iz);
+    m = static_cast<std::uint8_t>(1 + std::lround(254.0f * seen));
+    // (The read that works a cube out returns the exact share, every later
+    // one the byte's: with a ring, a share between 0 and 1, a pixel's light
+    // then depends on whether it was the first to ask about its cube, that
+    // is on the order the pixels are taken in. So a map with a ring lamp
+    // keeps its lamps' rows on one thread: lamp_and_window_light.)
+    return seen;
+}
+
+// lamp_seen's answer for cube (ix, iy, iz) of lamp i's grid, worked out.
+float SceneBuild::lamp_seen_cube(std::size_t i, int ix, int iy, int iz) const {
+    const LampVis& v = g_lamp_vis[i];
     const Lamp& L = lamps[i];
     const float px = 4.0f * (ix + v.ix0) + 2.0f, pz = 4.0f * (iz + v.iz0) + 2.0f, py = 4.0f * iy + 2.0f;
     const int own_x = static_cast<int>(std::floor(px / 32.0f)), own_z = static_cast<int>(std::floor(pz / 32.0f));
@@ -495,12 +565,6 @@ float SceneBuild::lamp_seen(std::size_t i, float X, float Y, float Z) {
         }
         seen /= 9.0f;
     }
-    m = static_cast<std::uint8_t>(1 + std::lround(254.0f * seen));
-    // (The read that works a cube out returns the exact share, every later
-    // one the byte's: with a ring, a share between 0 and 1, a pixel's light
-    // then depends on whether it was the first to ask about its cube, that
-    // is on the order the pixels are taken in. So a map with a ring lamp
-    // keeps its lamps' rows on one thread: lamp_and_window_light.)
     return seen;
 }
 

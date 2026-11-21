@@ -22,13 +22,22 @@ struct Bg1Px {
     int cell, shape;
     bool operator==(const Bg1Px&) const = default;
 };
-struct Bg1Cache : CacheStats {
+// Eight of them, the least lately used replaced (2026-11-20, Thor state
+// 0311: map 102's BG1 art is animated, its shapes change for two pictures
+// every sixteen and come round again; with one result kept, and only once
+// its key repeated, a fifth of the pictures were worked out). Every result
+// is kept: the store is two swaps and a small copy.
+struct Bg1Slot {
     std::uint64_t key = 0;
     bool valid = false;
+    unsigned long used = 0;
     std::vector<Bg1Px> px;
     std::vector<PropOutPx> out;
     std::vector<int> plants;
-    bool prev_hit = false;   // as PassCache::prev_hit
+};
+struct Bg1Cache : CacheStats {
+    Bg1Slot slot[8];
+    unsigned long clock = 0;
 };
 Bg1Cache g_bg1_cache;
 }  // namespace
@@ -1035,7 +1044,6 @@ void SceneBuild::bg1_shapes() {
         const int W2 = w + 2 * M, H2 = h + 2 * M;
         static thread_local std::vector<std::uint8_t> seen;
         static thread_local std::vector<std::uint32_t> shape, stack;   // padded indices
-        seen.assign(static_cast<std::size_t>(W2) * H2, 0);
         auto pad = [&](int px, int py) { return static_cast<std::uint32_t>((py + M) * W2 + px + M); };
         auto pad_x = [&](std::uint32_t q) { return static_cast<int>(q % W2) - M; };
         auto pad_y = [&](std::uint32_t q) { return static_cast<int>(q / W2) - M; };
@@ -1087,9 +1095,88 @@ void SceneBuild::bg1_shapes() {
             return top <= 1u || top == 5u || bg1_under_light(layers[k]);
         };
         wt.lap("bg1.setup");
+        // The key of everything the opaque map below and in_scene read
+        // (2026-11-20, Thor state 0311: the map was made every picture, 0.46
+        // ms, only to be hashed into the cache's key; and that key took the
+        // frame's layer codes whole, so every letter the narration typed
+        // missed, a fifth of the pictures). Of the layer codes, only what is
+        // asked of them: not composed, BG1 on top, BG1 under a light layer,
+        // the map showing (in_scene). The map is made again only when this
+        // key changes; the cache below is keyed on it too.
+        // KOL_BG1_CACHE_CHECK=1 also makes the map every picture and compares.
+        std::uint64_t ok = 1469598103934665603ull;
+        {
+            auto omix = [&ok](std::uint64_t v) { kol::fnv64x_mix(ok, v); };
+            auto omix_bytes = [&](const void* data, std::size_t n) {
+                const auto* p8 = static_cast<const std::uint8_t*>(data);
+                std::size_t i = 0;
+                for (; i + 8 <= n; i += 8) {
+                    std::uint64_t v;
+                    std::memcpy(&v, p8 + i, 8);
+                    omix(v);
+                }
+                std::uint64_t v = 0;
+                for (; i < n; ++i) v = v << 8 | p8[i];
+                omix(v ^ static_cast<std::uint64_t>(n) << 40);
+            };
+            for (int v : {w, h, M, ax0, ay0, past ? 1 : 0, static_cast<int>(light), past ? ext.rows : 0})
+                omix(static_cast<std::uint64_t>(v + 65536));
+            std::uint8_t cls[256];
+            for (int c = 0; c < 256; ++c) {
+                const unsigned top = static_cast<unsigned>(c) & 0x0Fu;
+                const bool under = bg1_under_light(static_cast<std::uint8_t>(c));
+                cls[c] = c == gba::kLayerNotComposed
+                             ? 8u
+                             : static_cast<std::uint8_t>((top == 1u ? 1u : 0u) | (under ? 2u : 0u) |
+                                                         (top <= 1u || top == 5u || under ? 4u : 0u));
+            }
+            const std::size_t n = static_cast<std::size_t>(w) * h;
+            std::size_t i = 0;
+            for (; i + 8 <= n; i += 8) {
+                std::uint64_t v = 0;
+                for (int j = 0; j < 8; ++j) v = v << 8 | cls[layers[i + j]];
+                omix(v);
+            }
+            for (; i < n; ++i) omix(cls[layers[i]]);
+            omix(g_awning.size());
+            if (!g_awning.empty()) omix_bytes(g_awning.data(), g_awning.size());
+            omix(g_flame.size());
+            if (!g_flame.empty()) omix_bytes(g_flame.data(), g_flame.size());
+            if (past) {
+                // The composed map's entries by their tile and flips (not their
+                // palette), the tiles by which texels are opaque (not their
+                // colours: a tile that animates keeps its shape, and whole,
+                // the key missed three pictures in four).
+                const std::size_t entries = static_cast<std::size_t>(ext.rows) * kol::MapExtent::kCols;
+                for (std::size_t e = 0; e + 4 <= entries; e += 4) {
+                    std::uint64_t v;
+                    std::memcpy(&v, ext.bg1_drawn + e, 8);
+                    omix(v & 0x0FFF0FFF0FFF0FFFull);
+                }
+                const std::size_t cn = cap.bg1_chars.size();
+                omix(cn);
+                std::size_t c = 0;
+                for (; c + 8 <= cn; c += 8) {
+                    std::uint64_t v;
+                    std::memcpy(&v, cap.bg1_chars.data() + c, 8);
+                    v |= v >> 1;
+                    v |= v >> 2;
+                    omix(v & 0x1111111111111111ull);   // a bit a texel: not colour 0
+                }
+                for (; c < cn; ++c) omix((cap.bg1_chars[c] & 0x0Fu ? 1u : 0u) | (cap.bg1_chars[c] & 0xF0u ? 2u : 0u));
+            }
+        }
         // (Worked out once a pixel: asked by each neighbour in the fill,
         // it was a quarter of the worker's time.)
-        static thread_local std::vector<std::uint8_t> opaque;
+        static thread_local std::vector<std::uint8_t> opaque, opaque_was;
+        static thread_local std::uint64_t opaque_key = 0;
+        static thread_local bool opaque_valid = false;
+        static const bool opaque_check = kol::env_true("KOL_BG1_CACHE_CHECK");
+        // (Made when the fill below runs: a kept result needs none of it.)
+        auto make_opaque = [&]() {
+        const bool opaque_kept = opaque_valid && opaque_key == ok && opaque.size() == static_cast<std::size_t>(W2) * H2;
+        if (opaque_kept && opaque_check) opaque_was = opaque;
+        if (!opaque_kept || opaque_check) {
         opaque.assign(static_cast<std::size_t>(W2) * H2, 0);
         // A tile's row of the composed map's BG1, 8 pixels as bits (bit i:
         // the tile's column i on screen).
@@ -1140,6 +1227,12 @@ void SceneBuild::bg1_shapes() {
                 px += span;
             }
         }
+        if (opaque_kept && opaque_check && opaque != opaque_was)
+            std::fprintf(stderr, "kol-focus: BG1 OPAQUE MAP KEPT BUT DIFFERENT\n");
+        opaque_key = ok;
+        opaque_valid = true;
+        }
+        };
         auto shape_px = [&](int px, int py) {
             return px >= -M && py >= -M && px < w + M && py < h + M && opaque[pad(px, py)] != 0;
         };
@@ -1226,17 +1319,6 @@ void SceneBuild::bg1_shapes() {
         // steps keep it), the heights, and the rest below.
         std::uint64_t bk = 1469598103934665603ull ^ (static_cast<std::uint64_t>(place_key) << 32 | heights_key);
         auto bmix = [&bk](std::uint64_t v) { kol::fnv64x_mix(bk, v); };
-        auto bmix_bytes = [&](const std::uint8_t* p, std::size_t n) {
-            std::size_t i = 0;
-            for (; i + 8 <= n; i += 8) {
-                std::uint64_t v;
-                std::memcpy(&v, p + i, 8);
-                bmix(v);
-            }
-            std::uint64_t v = 0;
-            for (; i < n; ++i) v = v << 8 | p[i];
-            bmix(v);
-        };
         for (int v : {w, h, kx, ky, ox, oy, M}) bmix(static_cast<std::uint64_t>(v + 65536));
         {
             std::uint32_t a, b;
@@ -1244,16 +1326,19 @@ void SceneBuild::bg1_shapes() {
             std::memcpy(&b, &sun_lz, 4);
             bmix(static_cast<std::uint64_t>(a) << 32 | b);
         }
-        bmix_bytes(opaque.data(), opaque.size());
-        bmix_bytes(layers, static_cast<std::size_t>(w) * h);
+        bmix(ok);   // the opaque map and in_scene, by what they read (above)
         for (const Foot& m : middles) bmix(static_cast<std::uint64_t>(m.sx + 65536) << 40 ^ static_cast<std::uint64_t>(m.sy + 65536) << 20 ^ static_cast<std::uint64_t>(m.h + 64));
         ++g_bg1_cache.frames;
-        const bool bg1_hit = bg1_cache_on && g_bg1_cache.valid && g_bg1_cache.key == bk;
+        Bg1Slot* hit_slot = nullptr;
+        if (bg1_cache_on)
+            for (Bg1Slot& sl : g_bg1_cache.slot)
+                if (sl.valid && sl.key == bk) hit_slot = &sl;
+        const bool bg1_hit = hit_slot != nullptr;
         static thread_local std::vector<Bg1Px> rec_px;
         static thread_local std::vector<int> rec_plants;
         rec_px.clear();
         rec_plants.clear();
-        auto replay = [&](const Bg1Cache& c) {
+        auto replay = [&](const Bg1Slot& c) {
             for (const Bg1Px& r : c.px) {
                 set_prop_px(r.k, r.xz, r.y, r.cell);
                 g_bg1_shape[r.k] = r.shape;
@@ -1261,9 +1346,14 @@ void SceneBuild::bg1_shapes() {
             g_prop_out = c.out;
             for (int cell : c.plants) g_plant_cell[cell] = true;
         };
-        if (bg1_hit) ++g_bg1_cache.hits;
-        if (bg1_hit && !bg1_cache_check) replay(g_bg1_cache);
-        else
+        if (bg1_hit) {
+            ++g_bg1_cache.hits;
+            hit_slot->used = ++g_bg1_cache.clock;
+        }
+        if (bg1_hit && !bg1_cache_check) replay(*hit_slot);
+        else {
+        make_opaque();
+        seen.assign(static_cast<std::size_t>(W2) * H2, 0);
         for (int sy0 = -kSeedBand; sy0 < h + kSeedBand; ++sy0)
         for (int sx0 = -kSeedBand; sx0 < w + kSeedBand; ++sx0) {
             const std::uint32_t s0 = pad(sx0, sy0);
@@ -1441,23 +1531,25 @@ void SceneBuild::bg1_shapes() {
                 rec_px.push_back({static_cast<std::uint32_t>(k), best->xz, 16 * best->h, gi(best->cx, best->cz), id});
             }
         }
+        }
         if (bg1_cache_on && !(bg1_hit && !bg1_cache_check)) {
             if (bg1_hit) {   // the check: what the loop wrote against the cache
-                const bool same =
-                    rec_px == g_bg1_cache.px && g_prop_out == g_bg1_cache.out && rec_plants == g_bg1_cache.plants;
+                const bool same = rec_px == hit_slot->px && g_prop_out == hit_slot->out && rec_plants == hit_slot->plants;
                 g_bg1_cache.count_check(same, "bg1");
-            } else if (cache_keep(g_bg1_cache.key == bk, g_bg1_cache.prev_hit)) {   // kept
-                g_bg1_cache.key = bk;
-                g_bg1_cache.px.swap(rec_px);   // (scratch: cleared before its next use)
-                g_bg1_cache.out = g_prop_out;
-                g_bg1_cache.plants.swap(rec_plants);
-                g_bg1_cache.valid = true;
-            } else {
-                g_bg1_cache.key = bk;
-                g_bg1_cache.valid = false;
+            } else {   // kept, in the slot least lately used
+                Bg1Slot* to = &g_bg1_cache.slot[0];
+                for (Bg1Slot& sl : g_bg1_cache.slot) {
+                    if (!sl.valid) { to = &sl; break; }
+                    if (sl.used < to->used) to = &sl;
+                }
+                to->key = bk;
+                to->px.swap(rec_px);   // (scratch: cleared before its next use)
+                to->out = g_prop_out;
+                to->plants.swap(rec_plants);
+                to->valid = true;
+                to->used = ++g_bg1_cache.clock;
             }
         }
-        g_bg1_cache.prev_hit = bg1_hit;
     }
 }
 

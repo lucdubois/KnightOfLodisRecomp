@@ -219,6 +219,11 @@ inline std::vector<std::int16_t> g_wx, g_wz;
 struct LampVis {
     int ix0, iz0, nx, nz, ny;
     std::vector<std::uint8_t> vis;
+    // What the grid was filled for (gather_lamps keeps a lamp's grid while
+    // these hold): the map's heights and model, the lamp's place and reach.
+    std::uint32_t base = 0;
+    float at[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bool kept = false;   // this picture's grid came from the last one's
 };
 inline std::vector<LampVis> g_lamp_vis;
 inline std::uint32_t g_lamp_key = 0;
@@ -656,6 +661,9 @@ struct Capture {
 };
 inline Capture g_cap;
 inline thread_local bool t_present = false;
+// Steps of a scene's sunset ahead of now, for sun_degrees_base (the shadow
+// map built ahead, ShadowAhead in kol_focus.cpp); 0 but there.
+inline thread_local int t_sun_ahead_steps = 0;
 
 // (kol_focus.cpp)
 int scroll_lead(int now, int then);
@@ -1794,6 +1802,7 @@ struct SceneBuild {
     float shade_frac(float X, float Z, float y, float tdx = 0.0f, float tdz = 0.0f);
     void roofs_and_shade();    // scene.setup
     float lamp_seen(std::size_t i, float X, float Y, float Z);
+    float lamp_seen_cube(std::size_t i, int ix, int iy, int iz) const;   // worked out, not read
     void gather_lamps();       // scene.setup
     void terrain_pass();       // its key (scene.setup), scene.terrain
     void lamp_and_window_light();

@@ -85,7 +85,12 @@
 #include "gba_bus.h"
 #include "gba_ppu.h"                // latched sprites (claim_unit_sprites)
 
+#include <pthread.h>
 #include <algorithm>
+#include <thread>
+#include <mutex>
+#include <functional>
+#include <condition_variable>
 #include <array>
 #include <atomic>
 #include <iterator>
@@ -1863,21 +1868,35 @@ void SceneBuild::cell_rules() {
 }
 
 // Over the roofs with walls, or (open) the awnings.
-bool SceneBuild::roof_only_y(float X, float Z, float* y, bool open) {
+// A frame's roofs and boxes as plain lists (roof_only_y_in, roof_y_in): the
+// build's own (SceneBuild::roof_set), or a copy the shadow map's ahead
+// thread keeps (ShadowAhead).
+struct RoofSet {
+    const kol::TileRoof* roofs = nullptr;
+    std::size_t n_roofs = 0;
+    const SceneBuild::RoofExtent* roof_ext = nullptr;
+    const std::uint32_t* roof_cell_at = nullptr;
+    const std::uint16_t* roof_cell_list = nullptr;
+    const SceneBuild::Box* boxes = nullptr;
+    std::size_t n_boxes = 0;
+    const std::uint32_t* box_cell_at = nullptr;
+    const std::uint16_t* box_cell_list = nullptr;
+};
+bool roof_only_y_in(const RoofSet& rs, float X, float Z, float* y, bool open) {
     // Only the roofs over the point's cell, in the roofs' order (the first
     // that holds the point answers, as when every roof was asked): the shadow
     // map asks at every step of every ray, and map 89 has 60 roofs: its first
     // picture took 151 ms on the Mac in the map, 335 on the Steam Deck
     // (2026-11-18, "loading stutter"). Off the grid, every roof.
     const int pcx = static_cast<int>(std::floor(X / 32.0f)), pcz = static_cast<int>(std::floor(Z / 32.0f));
-    const bool indexed = roof_cell_at && in_grid(pcx, pcz);
-    const std::size_t n_roofs = indexed ? roof_cell_at[gi(pcx, pcz) + 1] - roof_cell_at[gi(pcx, pcz)] : roofs.size();
-    const std::uint16_t* const cell_roofs = indexed ? roof_cell_list + roof_cell_at[gi(pcx, pcz)] : nullptr;
+    const bool indexed = rs.roof_cell_at && in_grid(pcx, pcz);
+    const std::size_t n_roofs = indexed ? rs.roof_cell_at[gi(pcx, pcz) + 1] - rs.roof_cell_at[gi(pcx, pcz)] : rs.n_roofs;
+    const std::uint16_t* const cell_roofs = indexed ? rs.roof_cell_list + rs.roof_cell_at[gi(pcx, pcz)] : nullptr;
     for (std::size_t li = 0; li < n_roofs; ++li) {
         const std::size_t ri = indexed ? cell_roofs[li] : li;
-        const kol::TileRoof& r = roofs[ri];
+        const kol::TileRoof& r = rs.roofs[ri];
         if (r.open != open) continue;
-        const RoofExtent& ext = roof_ext[ri];
+        const SceneBuild::RoofExtent& ext = rs.roof_ext[ri];
         const float X0 = ext.X0, X1 = ext.X1, Z0 = ext.Z0, Z1 = ext.Z1;
         if (X < X0 || X >= X1 || Z < Z0 || Z >= Z1) continue;
         if (r.shape == 11) {
@@ -1916,22 +1935,33 @@ bool SceneBuild::roof_only_y(float X, float Z, float* y, bool open) {
 }
 
 // The roof's height there, or a box's standing over it (the higher).
-bool SceneBuild::roof_y(float X, float Z, float* y) {
-    bool any = roof_only_y(X, Z, y);
+bool roof_y_in(const RoofSet& rs, float X, float Z, float* y) {
+    bool any = roof_only_y_in(rs, X, Z, y, false);
     // (Only the boxes over the point's cell, as roof_only_y its roofs; the
     // highest answers, whatever their order.)
     const int pcx = static_cast<int>(std::floor(X / 32.0f)), pcz = static_cast<int>(std::floor(Z / 32.0f));
-    const bool indexed = box_cell_at && in_grid(pcx, pcz);
-    const std::size_t n_boxes = indexed ? box_cell_at[gi(pcx, pcz) + 1] - box_cell_at[gi(pcx, pcz)] : boxes.size();
-    const std::uint16_t* const cell_boxes = indexed ? box_cell_list + box_cell_at[gi(pcx, pcz)] : nullptr;
+    const bool indexed = rs.box_cell_at && in_grid(pcx, pcz);
+    const std::size_t n_boxes = indexed ? rs.box_cell_at[gi(pcx, pcz) + 1] - rs.box_cell_at[gi(pcx, pcz)] : rs.n_boxes;
+    const std::uint16_t* const cell_boxes = indexed ? rs.box_cell_list + rs.box_cell_at[gi(pcx, pcz)] : nullptr;
     for (std::size_t li = 0; li < n_boxes; ++li) {
-        const Box& b = boxes[indexed ? cell_boxes[li] : li];
+        const SceneBuild::Box& b = rs.boxes[indexed ? cell_boxes[li] : li];
         if (X < b.X0 || X >= b.X1 || Z < b.Z0 || Z >= b.Z1) continue;
-        const float v = box_h(b, X, Z);
+        const float v = SceneBuild::box_h(b, X, Z);
         if (!any || v > *y) *y = v;
         any = true;
     }
     return any;
+}
+
+bool SceneBuild::roof_only_y(float X, float Z, float* y, bool open) {
+    return roof_only_y_in(RoofSet{roofs.data(), roofs.size(), roof_ext.data(), roof_cell_at, roof_cell_list, boxes.data(),
+                                  boxes.size(), box_cell_at, box_cell_list},
+                          X, Z, y, open);
+}
+bool SceneBuild::roof_y(float X, float Z, float* y) {
+    return roof_y_in(RoofSet{roofs.data(), roofs.size(), roof_ext.data(), roof_cell_at, roof_cell_list, boxes.data(),
+                             boxes.size(), box_cell_at, box_cell_list},
+                     X, Z, y);
 }
 
 // Samples count only on cells as high as the point's own (one across a
@@ -1977,6 +2007,383 @@ float SceneBuild::shade_frac(float X, float Z, float y, float tdx, float tdz) {
             for (int i = -2; i <= 2; ++i) sample(X + 0.5f * r * i, Z + 0.5f * r * j);
     return m ? static_cast<float>(n) / m : (c ? 1.0f : 0.0f);
 }
+
+namespace {
+// The shadow map's inputs (SceneBuild::roofs_and_shade): the heights the
+// cells are drawn at, the field, the map's places, the sun, the roofs'
+// cells (`roofed`, kGridSide squared) and the awnings' bounds.
+struct ShadowMapIn {
+    const int* heights = nullptr;
+    int field_x0 = 0, field_x1 = 0, field_z0 = 0, field_z1 = 0;
+    int sx0 = 0, sz0 = 0, sw = 0, shh = 0, top = 0;
+    float lx = 0.0f, lz = 0.0f, rise = 0.0f;
+    const std::uint8_t* roofed = nullptr;
+    bool any_open = false;
+    int ob_x0 = INT_MAX, ob_x1 = INT_MIN, ob_z0 = INT_MAX, ob_z1 = INT_MIN;
+    bool pool = true;   // its rows over the row pool (not from the ahead thread)
+};
+struct ShadowMapOut {
+    std::vector<std::int16_t> shadow, canopy_lo, canopy_hi;
+    std::vector<std::uint16_t> dist;
+    std::vector<std::uint8_t> edge;
+};
+// The shadow map (g_shadow, g_shadow_dist, g_canopy_lo/hi, g_shadow_edge)
+// for `in`, into `out`. roof_y / roof_only_y: SceneBuild's, asked only over
+// roofed cells and with awnings.
+template <class RoofY, class RoofOnlyY>
+void shadow_map_build(const ShadowMapIn& in, RoofY&& roof_y, RoofOnlyY&& roof_only_y, ShadowMapOut& out) {
+    const int* const H = in.heights;
+    const int field_x0 = in.field_x0, field_x1 = in.field_x1, field_z0 = in.field_z0, field_z1 = in.field_z1;
+    const int sx0 = in.sx0, sz0 = in.sz0, sw = in.sw, shh = in.shh, top = in.top;
+    const float lx = in.lx, lz = in.lz, rise = in.rise;
+    const bool any_open = in.any_open;
+    const std::size_t n = static_cast<std::size_t>(sw) * shh;
+    out.shadow.assign(n, kNoShade);
+    out.dist.assign(n, 0);
+    out.canopy_lo.clear();
+    out.canopy_hi.clear();
+    if (any_open) {
+        out.canopy_lo.assign(n, kNoShade);
+        out.canopy_hi.assign(n, kNoShade);
+    }
+    auto par_rows = [&](int rows, int chunk, const std::function<void(int, int, int)>& fn) {
+        if (in.pool) kol::parallel_rows(rows, chunk, fn);
+        else fn(0, 0, rows);
+    };
+    {
+        {
+            // A ray steps toward the sun 2 units at a time. Off a roof, the
+            // first step into a cell stands highest of that cell's (the same
+            // height, the shortest way), so only those count; and a ray
+            // crosses the cells in the same pattern as any other leaving
+            // the same place inside its own cell. So the pattern is worked
+            // out once for each of the kShadowSub x kShadowSub places: the
+            // cells crossed (from the ray's own) and the step entering each,
+            // up to one off any grid. Every step was marched before (13-18
+            // ms a frame on the Mac while the sun moved).
+            struct Entry { int dx, dz; float t; };
+            std::vector<Entry> paths[kShadowSub * kShadowSub];
+            for (int iz = 0; iz < kShadowSub; ++iz)
+                for (int ix = 0; ix < kShadowSub; ++ix) {
+                    std::vector<Entry>& path = paths[iz * kShadowSub + ix];
+                    const float ox = (ix + 0.5f) * (32.0f / kShadowSub);
+                    const float oz = (iz + 0.5f) * (32.0f / kShadowSub);
+                    for (float t = 2.0f;; t += 2.0f) {
+                        const int dx = static_cast<int>(std::floor((ox + t * lx) / 32.0f));
+                        const int dz = static_cast<int>(std::floor((oz + t * lz) / 32.0f));
+                        if (path.empty() || path.back().dx != dx || path.back().dz != dz) path.push_back({dx, dz, t});
+                        if (std::abs(dx) >= field_x1 - field_x0 + 1 || std::abs(dz) >= field_z1 - field_z0 + 1) break;
+                    }
+                }
+            // Over the field's cells that exist (and the game's grid), a band
+            // of rows on each of the row pool's threads (each place writes
+            // its own; the sunset's step every 6th frame was a multi-ms frame
+            // on the Thor). under_roof is this thread's: read through a pointer.
+            const std::uint8_t* const roofed = in.roofed;
+            // The awnings' cells' bounds, and whether a ray at cell (qx, qz),
+            // going the sun's way (lx, lz), has left them behind for good: it
+            // moves one way along X and one along Z. Then no step further on
+            // can be over an awning, and the ray may stop once nothing
+            // higher is left, as on a map without one. (Map 89, one awning
+            // among 60 roofs: every ray of the map crossed the whole field;
+            // the map's first picture, 2026-11-18. KOL_SHADOW_OPEN_WHOLE=1:
+            // as before.)
+            static const bool open_whole = kol::env_set("KOL_SHADOW_OPEN_WHOLE");
+            const int ob_x0 = in.ob_x0, ob_x1 = in.ob_x1, ob_z0 = in.ob_z0, ob_z1 = in.ob_z1;
+            auto open_past = [&](int qx, int qz) {
+                if (open_whole) return false;
+                const bool past_x = lx > 0.0f ? qx > ob_x1 : lx < 0.0f ? qx < ob_x0 : (qx < ob_x0 || qx > ob_x1);
+                const bool past_z = lz > 0.0f ? qz > ob_z1 : lz < 0.0f ? qz < ob_z0 : (qz < ob_z0 || qz > ob_z1);
+                return past_x || past_z;
+            };
+            par_rows(shh, 8, [&](int, int r0, int r1) {
+            for (int sz = sz0 + r0; sz < sz0 + r1; ++sz)
+                for (int sx = sx0; sx < sx0 + sw; ++sx) {
+                    const float px = (sx + 0.5f) * (32.0f / kShadowSub) + kFieldOrigin;
+                    const float pz = (sz + 0.5f) * (32.0f / kShadowSub) + kFieldOrigin;
+                    const int cx = sx / kShadowSub - kMargin, cz = sz / kShadowSub - kMargin;
+                    const std::vector<Entry>& path = paths[(sz % kShadowSub) * kShadowSub + sx % kShadowSub];
+                    // The highest the terrain toward the sun stands above
+                    // the ray that leaves this spot at ground level.
+                    float shade = -1.0e9f, shade_t = 0.0f;   // and the step that set it
+                    // An awning over the ray: the lowest and the highest
+                    // start the ray would pass it at (see out.canopy_lo). With
+                    // one on the map every ray runs its whole way: a step
+                    // too low to raise `shade` can still be an awning's.
+                    float c_lo = 1.0e9f, c_hi = -1.0e9f;
+                    for (std::size_t e = 0; e < path.size(); ++e) {
+                        const float t = path[e].t;
+                        const int qx = cx + path[e].dx, qz = cz + path[e].dz;
+                        // (With an awning on the map a ray went its whole way
+                        // for the awning's sake. Past the awnings' cells, the
+                        // way the ray travels, there is none left to meet:
+                        // open_past.)
+                        const bool no_awning_left = !any_open || open_past(qx, qz);
+                        if (no_awning_left && 16.0f * top - t * rise <= shade) break;   // nothing higher left
+                        // Past the cells that exist nothing casts a shadow.
+                        if (qx < field_x0 || qz < field_z0 || qx > field_x1 || qz > field_z1) break;
+                        const int hq = H[gi(qx, qz)];
+                        if (roofed[gi(qx, qz)]) {
+                            // A roof's slope: every step in the cell.
+                            for (float u = t; u < path[e + 1].t; u += 2.0f) {
+                                if (no_awning_left && 16.0f * top - u * rise <= shade) break;
+                                float ry = 0.0f;
+                                if (any_open && roof_only_y(px + u * lx, pz + u * lz, &ry, true)) {
+                                    c_lo = std::min(c_lo, ry - u * rise);
+                                    c_hi = std::max(c_hi, ry - u * rise);
+                                }
+                                float v = -1.0e9f;
+                                if (roof_y(px + u * lx, pz + u * lz, &ry)) v = ry - u * rise;
+                                else if (hq >= 0) v = 16.0f * hq - u * rise;
+                                if (v > shade) { shade = v; shade_t = u; }
+                            }
+                        } else if (hq >= 0 && 16.0f * hq - t * rise > shade) {
+                            shade = 16.0f * hq - t * rise;
+                            shade_t = t;
+                        }
+                    }
+                    const std::size_t at = static_cast<std::size_t>(sz - sz0) * sw + (sx - sx0);
+                    if (shade > -32000.0f) {
+                        out.shadow[at] = static_cast<std::int16_t>(std::lround(shade));
+                        out.dist[at] = static_cast<std::uint16_t>(std::min(65535.0f, shade_t));
+                    }
+                    if (c_hi > -32000.0f) {
+                        out.canopy_lo[at] = static_cast<std::int16_t>(std::max(-32000.0f, std::floor(c_lo)));
+                        out.canopy_hi[at] = static_cast<std::int16_t>(std::lround(c_hi));
+                    }
+                }
+            });
+            // The edge places: where a place's ground and its neighbour's (as
+            // high) differ in shadow, grown by the softest blur (in places).
+            out.edge.clear();
+            if (terrain_soft() > 0.0f) {
+                // (Each step over the row pool, 2026-11-20: five walks of the
+                // map's places on one thread were 0.5 ms of each picture the
+                // sunset moves the sun in, Thor state 0311. A row's, or a
+                // column's, results are its own; a place's edge mark, which
+                // the walk set from the place before it and the one above,
+                // is read from them instead.)
+                // KOL_SHADOW_EDGE_SERIAL=1: on this thread alone.
+                static const bool edge_serial = kol::env_set("KOL_SHADOW_EDGE_SERIAL");
+                auto rows_par = [&](int rows, const std::function<void(int, int)>& fn) {
+                    if (edge_serial || !in.pool) fn(0, rows);
+                    else kol::parallel_rows(rows, 32, [&](int, int r0, int r1) { fn(r0, r1); });
+                };
+                const std::size_t np = static_cast<std::size_t>(sw) * shh;
+                std::vector<std::int16_t> ph(np, -1);   // the place's cell height
+                std::vector<std::uint8_t> st(np, 0), e(np, 0), c(np, 0);
+                std::atomic<int> max_d_all{0};
+                rows_par(shh, [&](int z0, int z1) {
+                    int max_d = 0;
+                    for (int z = z0; z < z1; ++z)
+                        for (int x = 0; x < sw; ++x) {
+                            const std::size_t at = static_cast<std::size_t>(z) * sw + x;
+                            const int cx = (sx0 + x) / kShadowSub - kMargin, cz = (sz0 + z) / kShadowSub - kMargin;
+                            const int hq = in_grid(cx, cz) ? H[gi(cx, cz)] : -1;
+                            ph[at] = static_cast<std::int16_t>(hq);
+                            st[at] = hq >= 0 && 16.0f * hq + 0.5f < out.shadow[at];
+                            max_d = std::max(max_d, static_cast<int>(out.dist[at]));
+                        }
+                    int seen = max_d_all.load();
+                    while (max_d > seen && !max_d_all.compare_exchange_weak(seen, max_d)) {}
+                });
+                const int max_d = max_d_all.load();
+                // A place whose ground and the next's (as high), along X or
+                // Z, differ in shadow; it and those two neighbours are edges.
+                rows_par(shh, [&](int z0, int z1) {
+                    for (int z = z0; z < z1; ++z)
+                        for (int x = 0; x < sw; ++x) {
+                            const std::size_t at = static_cast<std::size_t>(z) * sw + x;
+                            if (ph[at] < 0) continue;
+                            c[at] = (x + 1 < sw && ph[at + 1] == ph[at] && st[at + 1] != st[at]) ||
+                                    (z + 1 < shh && ph[at + sw] == ph[at] && st[at + sw] != st[at]);
+                        }
+                });
+                rows_par(shh, [&](int z0, int z1) {
+                    for (int z = z0; z < z1; ++z)
+                        for (int x = 0; x < sw; ++x) {
+                            const std::size_t at = static_cast<std::size_t>(z) * sw + x;
+                            e[at] = c[at] || (x > 0 && c[at - 1]) || (z > 0 && c[at - sw]);
+                        }
+                });
+                const int R = static_cast<int>(std::ceil(
+                                  std::min(kTerrainSoftMax, terrain_soft() * max_d) * kShadowSub / 32.0f)) + 1;
+                std::vector<std::uint8_t> t(np, 0);
+                rows_par(shh, [&](int z0, int z1) {
+                    for (int z = z0; z < z1; ++z) {   // rows, then columns: any edge within R
+                        int run = -1000000;
+                        for (int x = 0; x < sw; ++x) { if (e[static_cast<std::size_t>(z) * sw + x]) run = x; if (x - run <= R) t[static_cast<std::size_t>(z) * sw + x] = 1; }
+                        run = 1000000;
+                        for (int x = sw - 1; x >= 0; --x) { if (e[static_cast<std::size_t>(z) * sw + x]) run = x; if (run - x <= R) t[static_cast<std::size_t>(z) * sw + x] = 1; }
+                    }
+                });
+                out.edge.assign(np, 0);
+                rows_par(sw, [&](int x0, int x1) {
+                    for (int x = x0; x < x1; ++x) {
+                        int run = -1000000;
+                        for (int z = 0; z < shh; ++z) { if (t[static_cast<std::size_t>(z) * sw + x]) run = z; if (z - run <= R) out.edge[static_cast<std::size_t>(z) * sw + x] = 1; }
+                        run = 1000000;
+                        for (int z = shh - 1; z >= 0; --z) { if (t[static_cast<std::size_t>(z) * sw + x]) run = z; if (run - z <= R) out.edge[static_cast<std::size_t>(z) * sw + x] = 1; }
+                    }
+                });
+            }
+        }
+    }
+}
+
+// The next step's shadow map, built ahead on a thread of its own
+// (2026-11-20, Thor state 0311: map 102's sunset lowers the sun every 6th
+// picture, and that picture built the whole map, 1.1 ms on the Mac then,
+// over the others' work). The sun's steps are known in advance (sun_degrees_base,
+// t_sun_ahead_steps), so the map for the next one is made while the pictures
+// before it go by, and the step's picture takes it when what it was made
+// from is exactly what that picture has (`key`: every input, and the heights
+// compared whole); else it is built in place as before. The thread asks its
+// own copy of the roofs and boxes (RoofSet), by the same functions.
+// KOL_SHADOW_AHEAD=0: off. KOL_SHADOW_AHEAD_CHECK=1: built in place as well
+// and compared. KOL_SHADOW_AHEAD_LOG=1: taken and missed, every 60.
+class ShadowAhead {
+public:
+    // A map for `in` (its heights copied), unless that one is made or on its way.
+    void post(const ShadowMapIn& in, const RoofSet& rs, std::uint64_t key) {
+        std::lock_guard<std::mutex> lk(m_);
+        if ((has_job_ && job_key_ == key) || (running_ && running_key_ == key) || (has_result_ && result_key_ == key)) return;
+        constexpr std::size_t kCells = static_cast<std::size_t>(kGridSide) * kGridSide;
+        job_ = in;
+        job_heights_.assign(in.heights, in.heights + kCells);
+        job_roofs_.set(in, rs);
+        job_key_ = key;
+        has_job_ = true;
+        if (!started_) {
+            started_ = true;
+            std::thread([this] { loop(); }).detach();
+        }
+        cv_.notify_one();
+    }
+    // The map for `key` made from these heights, waiting for it if it is being
+    // made; false if there is none.
+    bool take(std::uint64_t key, const int* heights, const std::uint8_t* roofed, ShadowMapOut& out) {
+        std::unique_lock<std::mutex> lk(m_);
+        done_cv_.wait(lk, [&] { return !(running_ && running_key_ == key); });
+        if (!has_result_ || result_key_ != key) return false;
+        if (!std::equal(result_heights_.begin(), result_heights_.end(), heights)) return false;
+        if (!std::equal(result_roofed_.begin(), result_roofed_.end(), roofed)) return false;
+        std::swap(out.shadow, result_.shadow);
+        std::swap(out.dist, result_.dist);
+        std::swap(out.canopy_lo, result_.canopy_lo);
+        std::swap(out.canopy_hi, result_.canopy_hi);
+        std::swap(out.edge, result_.edge);
+        has_result_ = false;
+        return true;
+    }
+
+private:
+    void loop() {
+#if defined(__linux__) || defined(__ANDROID__)
+        pthread_setname_np(pthread_self(), "shadow-ahead");
+#elif defined(__APPLE__)
+        pthread_setname_np("shadow-ahead");
+#endif
+        ShadowMapOut made;
+        std::vector<int> heights;
+        RoofCopy roofs;
+        for (;;) {
+            ShadowMapIn in;
+            std::uint64_t key;
+            {
+                std::unique_lock<std::mutex> lk(m_);
+                cv_.wait(lk, [&] { return has_job_; });
+                in = job_;
+                heights.swap(job_heights_);
+                std::swap(roofs, job_roofs_);
+                key = job_key_;
+                has_job_ = false;
+                running_ = true;
+                running_key_ = key;
+            }
+            in.heights = heights.data();
+            in.roofed = roofs.roofed.data();
+            in.pool = false;
+            const RoofSet rs = roofs.set_of();
+            shadow_map_build(
+                in, [&](float X, float Z, float* y) { return roof_y_in(rs, X, Z, y); },
+                [&](float X, float Z, float* y, bool open) { return roof_only_y_in(rs, X, Z, y, open); }, made);
+            {
+                std::lock_guard<std::mutex> lk(m_);
+                std::swap(result_.shadow, made.shadow);
+                std::swap(result_.dist, made.dist);
+                std::swap(result_.canopy_lo, made.canopy_lo);
+                std::swap(result_.canopy_hi, made.canopy_hi);
+                std::swap(result_.edge, made.edge);
+                result_heights_.swap(heights);
+                result_roofed_.swap(roofs.roofed);
+                result_key_ = key;
+                has_result_ = true;
+                running_ = false;
+            }
+            done_cv_.notify_all();
+        }
+    }
+    // The roofs and boxes a job's map is made with, and their cells.
+    struct RoofCopy {
+        std::vector<kol::TileRoof> roofs;
+        std::vector<SceneBuild::RoofExtent> ext;
+        std::vector<SceneBuild::Box> boxes;
+        std::vector<std::uint32_t> roof_at, box_at;
+        std::vector<std::uint16_t> roof_list, box_list;
+        std::vector<std::uint8_t> roofed;
+        void set(const ShadowMapIn& in, const RoofSet& rs) {
+            constexpr std::size_t kCells = static_cast<std::size_t>(kGridSide) * kGridSide;
+            roofs.assign(rs.roofs, rs.roofs + rs.n_roofs);
+            ext.assign(rs.roof_ext, rs.roof_ext + rs.n_roofs);
+            boxes.assign(rs.boxes, rs.boxes + rs.n_boxes);
+            roof_at.clear(); roof_list.clear(); box_at.clear(); box_list.clear();
+            if (rs.roof_cell_at) {
+                roof_at.assign(rs.roof_cell_at, rs.roof_cell_at + kCells + 1);
+                roof_list.assign(rs.roof_cell_list, rs.roof_cell_list + roof_at[kCells]);
+            }
+            if (rs.box_cell_at) {
+                box_at.assign(rs.box_cell_at, rs.box_cell_at + kCells + 1);
+                box_list.assign(rs.box_cell_list, rs.box_cell_list + box_at[kCells]);
+            }
+            roofed.assign(in.roofed, in.roofed + kCells);
+        }
+        RoofSet set_of() const {
+            return RoofSet{roofs.data(), roofs.size(), ext.data(), roof_at.empty() ? nullptr : roof_at.data(),
+                           roof_at.empty() ? nullptr : roof_list.data(), boxes.data(), boxes.size(),
+                           box_at.empty() ? nullptr : box_at.data(), box_at.empty() ? nullptr : box_list.data()};
+        }
+    };
+    RoofCopy job_roofs_;
+    std::vector<std::uint8_t> result_roofed_;
+    std::mutex m_;
+    std::condition_variable cv_, done_cv_;
+    bool started_ = false;
+    bool has_job_ = false, running_ = false, has_result_ = false;
+    ShadowMapIn job_;
+    std::vector<int> job_heights_, result_heights_;
+    std::uint64_t job_key_ = 0, running_key_ = 0, result_key_ = 0;
+    ShadowMapOut result_;
+};
+ShadowAhead& shadow_ahead() {
+    static ShadowAhead* a = new ShadowAhead();   // (never destroyed: its thread is detached)
+    return *a;
+}
+// Every input of a map as one key (the heights, roofs and boxes by
+// heights_key; take() compares the heights and the roofed cells whole too).
+std::uint64_t shadow_map_key(const ShadowMapIn& in, std::uint32_t heights_key) {
+    std::uint64_t k = 1469598103934665603ull;
+    auto mix = [&](std::uint64_t v) { k = (k ^ v) * 1099511628211ull; };
+    auto bits = [](float f) { std::uint32_t u; std::memcpy(&u, &f, 4); return static_cast<std::uint64_t>(u); };
+    mix(heights_key);
+    for (const int v : {in.field_x0, in.field_x1, in.field_z0, in.field_z1, in.sx0, in.sz0, in.sw, in.shh, in.top})
+        mix(static_cast<std::uint64_t>(static_cast<std::uint32_t>(v)));
+    mix(bits(in.lx)); mix(bits(in.lz)); mix(bits(in.rise)); mix(bits(terrain_soft()));
+    mix(in.any_open ? 1u : 0u);
+    for (const int v : {in.ob_x0, in.ob_x1, in.ob_z0, in.ob_z1}) mix(static_cast<std::uint64_t>(static_cast<std::uint32_t>(v)));
+    return k;
+}
+}  // namespace
 
 // The light's switches, the roofs and boxes, the cells' heights, the sun,
 // the shadow map and how points read it.
@@ -2133,22 +2540,12 @@ void SceneBuild::roofs_and_shade() {
         const int sx0 = (field_x0 + kMargin) * kShadowSub, sz0 = (field_z0 + kMargin) * kShadowSub;
         kol::fnv_mix(key, static_cast<std::uint32_t>(sx0 * 65536 + sz0 + 1));
         kol::fnv_mix(key, static_cast<std::uint32_t>(sw * 65536 + shh + 1));
-        if (key != g_shadow_key || g_shadow.size() != static_cast<std::size_t>(sw) * shh) {
-            g_shadow_key = key;
-            g_shadow_x0 = sx0; g_shadow_z0 = sz0; g_shadow_w = sw; g_shadow_h = shh;
-            g_shadow.assign(static_cast<std::size_t>(sw) * shh, kNoShade);
-            g_shadow_dist.assign(static_cast<std::size_t>(sw) * shh, 0);
-            g_canopy_lo.clear();
-            g_canopy_hi.clear();
-            if (any_open) {
-                g_canopy_lo.assign(static_cast<std::size_t>(sw) * shh, kNoShade);
-                g_canopy_hi.assign(static_cast<std::size_t>(sw) * shh, kNoShade);
-            }
+        // The map's inputs for a sun that rises `rise` (now's, or the next step's).
+        auto shadow_in = [&](float rise) {
             int top = 0;
             for (int i = 0; i < kGridSide * kGridSide; ++i) top = std::max(top, heights[i]);
             for (const kol::TileRoof& r : roofs) top = std::max(top, (r.ridge2 + 1) / 2);
             for (const Box& b : boxes) top = std::max(top, static_cast<int>(std::ceil(b.T / 16.0f)));
-            const float rise = sun_rise;
             // The cells a roof covers: its height changes across them, so
             // every step there counts.
             static thread_local std::vector<std::uint8_t> under_roof;
@@ -2166,43 +2563,7 @@ void SceneBuild::roofs_and_shade() {
                     for (int x = std::max(-kMargin, static_cast<int>(std::floor(b.X0 / 32.0f)));
                          x <= std::min(last, static_cast<int>(std::floor((b.X1 - 0.01f) / 32.0f))); ++x)
                         under_roof[gi(x, z)] = 1;
-            // A ray steps toward the sun 2 units at a time. Off a roof, the
-            // first step into a cell stands highest of that cell's (the same
-            // height, the shortest way), so only those count; and a ray
-            // crosses the cells in the same pattern as any other leaving
-            // the same place inside its own cell. So the pattern is worked
-            // out once for each of the kShadowSub x kShadowSub places: the
-            // cells crossed (from the ray's own) and the step entering each,
-            // up to one off any grid. Every step was marched before (13-18
-            // ms a frame on the Mac while the sun moved).
-            struct Entry { int dx, dz; float t; };
-            std::vector<Entry> paths[kShadowSub * kShadowSub];
-            for (int iz = 0; iz < kShadowSub; ++iz)
-                for (int ix = 0; ix < kShadowSub; ++ix) {
-                    std::vector<Entry>& path = paths[iz * kShadowSub + ix];
-                    const float ox = (ix + 0.5f) * (32.0f / kShadowSub);
-                    const float oz = (iz + 0.5f) * (32.0f / kShadowSub);
-                    for (float t = 2.0f;; t += 2.0f) {
-                        const int dx = static_cast<int>(std::floor((ox + t * lx) / 32.0f));
-                        const int dz = static_cast<int>(std::floor((oz + t * lz) / 32.0f));
-                        if (path.empty() || path.back().dx != dx || path.back().dz != dz) path.push_back({dx, dz, t});
-                        if (std::abs(dx) >= field_x1 - field_x0 + 1 || std::abs(dz) >= field_z1 - field_z0 + 1) break;
-                    }
-                }
-            // Over the field's cells that exist (and the game's grid), a band
-            // of rows on each of the row pool's threads (each place writes
-            // its own; the sunset's step every 6th frame was a multi-ms frame
-            // on the Thor). under_roof is this thread's: read through a pointer.
-            const std::uint8_t* const roofed = under_roof.data();
-            // The awnings' cells' bounds, and whether a ray at cell (qx, qz),
-            // going the sun's way (lx, lz), has left them behind for good: it
-            // moves one way along X and one along Z. Then no step further on
-            // can be over an awning, and the ray may stop once nothing
-            // higher is left, as on a map without one. (Map 89, one awning
-            // among 60 roofs: every ray of the map crossed the whole field;
-            // the map's first picture, 2026-11-18. KOL_SHADOW_OPEN_WHOLE=1:
-            // as before.)
-            static const bool open_whole = kol::env_set("KOL_SHADOW_OPEN_WHOLE");
+            // The awnings' bounds (shadow_map_build's open_past).
             int ob_x0 = INT_MAX, ob_x1 = INT_MIN, ob_z0 = INT_MAX, ob_z1 = INT_MIN;
             for (std::size_t ri = 0; ri < roofs.size(); ++ri) {
                 if (!roofs[ri].open) continue;
@@ -2212,114 +2573,73 @@ void SceneBuild::roofs_and_shade() {
                 ob_z0 = std::min(ob_z0, static_cast<int>(std::floor(x.Z0 / 32.0f)));
                 ob_z1 = std::max(ob_z1, static_cast<int>(std::floor(x.Z1 / 32.0f)));
             }
-            auto open_past = [&](int qx, int qz) {
-                if (open_whole) return false;
-                const bool past_x = lx > 0.0f ? qx > ob_x1 : lx < 0.0f ? qx < ob_x0 : (qx < ob_x0 || qx > ob_x1);
-                const bool past_z = lz > 0.0f ? qz > ob_z1 : lz < 0.0f ? qz < ob_z0 : (qz < ob_z0 || qz > ob_z1);
-                return past_x || past_z;
-            };
+            ShadowMapIn in;
+            in.heights = heights;
+            in.field_x0 = field_x0; in.field_x1 = field_x1; in.field_z0 = field_z0; in.field_z1 = field_z1;
+            in.sx0 = sx0; in.sz0 = sz0; in.sw = sw; in.shh = shh; in.top = top;
+            in.lx = lx; in.lz = lz; in.rise = rise;
+            in.roofed = under_roof.data();
+            in.any_open = any_open;
+            in.ob_x0 = ob_x0; in.ob_x1 = ob_x1; in.ob_z0 = ob_z0; in.ob_z1 = ob_z1;
+            return in;
+        };
+        bool map_now = false;   // made (or taken) this picture
+        if (key != g_shadow_key || g_shadow.size() != static_cast<std::size_t>(sw) * shh) {
+            map_now = true;
+            g_shadow_key = key;
+            g_shadow_x0 = sx0; g_shadow_z0 = sz0; g_shadow_w = sw; g_shadow_h = shh;
+            ShadowMapIn in = shadow_in(sun_rise);
+            static thread_local ShadowMapOut made;
+            static const bool ahead_on = kol::env_not_zero("KOL_SHADOW_AHEAD");
+            static const bool ahead_check = kol::env_true("KOL_SHADOW_AHEAD_CHECK");
+            static const bool ahead_log = kol::env_true("KOL_SHADOW_AHEAD_LOG");
+            bool took = false;
             wt.lap("shade.map");
-            kol::parallel_rows(shh, 8, [&](int, int r0, int r1) {
-            for (int sz = sz0 + r0; sz < sz0 + r1; ++sz)
-                for (int sx = sx0; sx < sx0 + sw; ++sx) {
-                    const float px = (sx + 0.5f) * (32.0f / kShadowSub) + kFieldOrigin;
-                    const float pz = (sz + 0.5f) * (32.0f / kShadowSub) + kFieldOrigin;
-                    const int cx = sx / kShadowSub - kMargin, cz = sz / kShadowSub - kMargin;
-                    const std::vector<Entry>& path = paths[(sz % kShadowSub) * kShadowSub + sx % kShadowSub];
-                    // The highest the terrain toward the sun stands above
-                    // the ray that leaves this spot at ground level.
-                    float shade = -1.0e9f, shade_t = 0.0f;   // and the step that set it
-                    // An awning over the ray: the lowest and the highest
-                    // start the ray would pass it at (see g_canopy_lo). With
-                    // one on the map every ray runs its whole way: a step
-                    // too low to raise `shade` can still be an awning's.
-                    float c_lo = 1.0e9f, c_hi = -1.0e9f;
-                    for (std::size_t e = 0; e < path.size(); ++e) {
-                        const float t = path[e].t;
-                        const int qx = cx + path[e].dx, qz = cz + path[e].dz;
-                        // (With an awning on the map a ray went its whole way
-                        // for the awning's sake. Past the awnings' cells, the
-                        // way the ray travels, there is none left to meet:
-                        // open_past.)
-                        const bool no_awning_left = !any_open || open_past(qx, qz);
-                        if (no_awning_left && 16.0f * top - t * rise <= shade) break;   // nothing higher left
-                        // Past the cells that exist nothing casts a shadow.
-                        if (qx < field_x0 || qz < field_z0 || qx > field_x1 || qz > field_z1) break;
-                        const int hq = heights[gi(qx, qz)];
-                        if (roofed[gi(qx, qz)]) {
-                            // A roof's slope: every step in the cell.
-                            for (float u = t; u < path[e + 1].t; u += 2.0f) {
-                                if (no_awning_left && 16.0f * top - u * rise <= shade) break;
-                                float ry = 0.0f;
-                                if (any_open && roof_only_y(px + u * lx, pz + u * lz, &ry, true)) {
-                                    c_lo = std::min(c_lo, ry - u * rise);
-                                    c_hi = std::max(c_hi, ry - u * rise);
-                                }
-                                float v = -1.0e9f;
-                                if (roof_y(px + u * lx, pz + u * lz, &ry)) v = ry - u * rise;
-                                else if (hq >= 0) v = 16.0f * hq - u * rise;
-                                if (v > shade) { shade = v; shade_t = u; }
-                            }
-                        } else if (hq >= 0 && 16.0f * hq - t * rise > shade) {
-                            shade = 16.0f * hq - t * rise;
-                            shade_t = t;
-                        }
-                    }
-                    const std::size_t at = static_cast<std::size_t>(sz - sz0) * sw + (sx - sx0);
-                    if (shade > -32000.0f) {
-                        g_shadow[at] = static_cast<std::int16_t>(std::lround(shade));
-                        g_shadow_dist[at] = static_cast<std::uint16_t>(std::min(65535.0f, shade_t));
-                    }
-                    if (c_hi > -32000.0f) {
-                        g_canopy_lo[at] = static_cast<std::int16_t>(std::max(-32000.0f, std::floor(c_lo)));
-                        g_canopy_hi[at] = static_cast<std::int16_t>(std::lround(c_hi));
-                    }
-                }
-            });
-            // The edge places: where a place's ground and its neighbour's (as
-            // high) differ in shadow, grown by the softest blur (in places).
-            wt.lap("shade.edge");
-            g_shadow_edge.clear();
-            if (terrain_soft() > 0.0f) {
-                const std::size_t np = static_cast<std::size_t>(sw) * shh;
-                std::vector<std::int16_t> ph(np, -1);   // the place's cell height
-                std::vector<std::uint8_t> st(np, 0), e(np, 0);
-                int max_d = 0;
-                for (int z = 0; z < shh; ++z)
-                    for (int x = 0; x < sw; ++x) {
-                        const std::size_t at = static_cast<std::size_t>(z) * sw + x;
-                        const int cx = (sx0 + x) / kShadowSub - kMargin, cz = (sz0 + z) / kShadowSub - kMargin;
-                        const int hq = in_grid(cx, cz) ? heights[gi(cx, cz)] : -1;
-                        ph[at] = static_cast<std::int16_t>(hq);
-                        st[at] = hq >= 0 && 16.0f * hq + 0.5f < g_shadow[at];
-                        max_d = std::max(max_d, static_cast<int>(g_shadow_dist[at]));
-                    }
-                for (int z = 0; z < shh; ++z)
-                    for (int x = 0; x < sw; ++x) {
-                        const std::size_t at = static_cast<std::size_t>(z) * sw + x;
-                        if (ph[at] < 0) continue;
-                        if ((x + 1 < sw && ph[at + 1] == ph[at] && st[at + 1] != st[at]) ||
-                            (z + 1 < shh && ph[at + sw] == ph[at] && st[at + sw] != st[at])) {
-                            e[at] = 1;
-                            if (x + 1 < sw) e[at + 1] = 1;
-                            if (z + 1 < shh) e[at + sw] = 1;
-                        }
-                    }
-                const int R = static_cast<int>(std::ceil(
-                                  std::min(kTerrainSoftMax, terrain_soft() * max_d) * kShadowSub / 32.0f)) + 1;
-                std::vector<std::uint8_t> t(np, 0);
-                for (int z = 0; z < shh; ++z) {   // rows, then columns: any edge within R
-                    int run = -1000000;
-                    for (int x = 0; x < sw; ++x) { if (e[static_cast<std::size_t>(z) * sw + x]) run = x; if (x - run <= R) t[static_cast<std::size_t>(z) * sw + x] = 1; }
-                    run = 1000000;
-                    for (int x = sw - 1; x >= 0; --x) { if (e[static_cast<std::size_t>(z) * sw + x]) run = x; if (run - x <= R) t[static_cast<std::size_t>(z) * sw + x] = 1; }
-                }
-                g_shadow_edge.assign(np, 0);
-                for (int x = 0; x < sw; ++x) {
-                    int run = -1000000;
-                    for (int z = 0; z < shh; ++z) { if (t[static_cast<std::size_t>(z) * sw + x]) run = z; if (z - run <= R) g_shadow_edge[static_cast<std::size_t>(z) * sw + x] = 1; }
-                    run = 1000000;
-                    for (int z = shh - 1; z >= 0; --z) { if (t[static_cast<std::size_t>(z) * sw + x]) run = z; if (run - z <= R) g_shadow_edge[static_cast<std::size_t>(z) * sw + x] = 1; }
+            if (ahead_on) took = shadow_ahead().take(shadow_map_key(in, heights_key), heights, in.roofed, made);
+            auto roof_y_of = [this](float X, float Z, float* y) { return roof_y(X, Z, y); };
+            auto roof_only_y_of = [this](float X, float Z, float* y, bool open) { return roof_only_y(X, Z, y, open); };
+            if (!took) {
+                shadow_map_build(in, roof_y_of, roof_only_y_of, made);
+            } else if (ahead_check) {
+                ShadowMapOut here;
+                shadow_map_build(in, roof_y_of, roof_only_y_of, here);
+                const bool same = here.shadow == made.shadow && here.dist == made.dist && here.canopy_lo == made.canopy_lo &&
+                                  here.canopy_hi == made.canopy_hi && here.edge == made.edge;
+                static long checked = 0, bad = 0;
+                ++checked;
+                if (!same) ++bad;
+                std::fprintf(stderr, "shadow-ahead-check: %s (%ld checked, %ld with a difference)\n",
+                             same ? "the same" : "DIFFERENT", checked, bad);
+            }
+            if (ahead_log) {
+                static long taken = 0, built = 0;
+                ++(took ? taken : built);
+                if ((taken + built) % 60 == 0)
+                    std::fprintf(stderr, "shadow-ahead: %ld taken, %ld built here\n", taken, built);
+            }
+            g_shadow.swap(made.shadow);
+            g_shadow_dist.swap(made.dist);
+            g_canopy_lo.swap(made.canopy_lo);
+            g_canopy_hi.swap(made.canopy_hi);
+            g_shadow_edge.swap(made.edge);
+        }
+        // The next step of a scene's sunset, ahead (ShadowAhead).
+        static const bool ahead_on = kol::env_not_zero("KOL_SHADOW_AHEAD");
+        const SceneSunset* ss = scene_sunset();
+        // (Not on the picture the map changed in: the thread's work then
+        // competed with this picture's terrain pass, which reads the new map.)
+        if (ahead_on && ss && !map_now) {
+            const float p = scene_sunset_now();
+            if (p > 0.0f && p < 1.0f) {
+                t_sun_ahead_steps = 1;
+                const float rise_next = shadow_rise();
+                t_sun_ahead_steps = 0;
+                if (rise_next != sun_rise) {
+                    const ShadowMapIn in = shadow_in(rise_next);
+                    shadow_ahead().post(in,
+                                        RoofSet{roofs.data(), roofs.size(), roof_ext.data(), roof_cell_at, roof_cell_list,
+                                                boxes.data(), boxes.size(), box_cell_at, box_cell_list},
+                                        shadow_map_key(in, heights_key));
                 }
             }
         }
@@ -2445,17 +2765,21 @@ void SceneBuild::terrain_pass() {
     // moved to their new place in the rectangle [rx0, rx1) x [ry0, ry1), and
     // only the pixels outside it are drawn: each pixel is the last cell
     // drawn over it, whatever is drawn beside it.
-    auto run_pass = [&](bool clear, int rx0, int rx1, int ry0, int ry1) {
+    // `by0`, `by1`: only rows by0 .. by1 - 1 are drawn (a band of the whole
+    // pass on one of the row pool's threads, run_whole below: by the same
+    // rule, a row's pixels do not depend on which other rows are drawn).
+    // `phases`: 1 the clear, 2 the cells, 3 both.
+    auto run_pass = [&](bool clear, int rx0, int rx1, int ry0, int ry1, int by0, int by1, int phases) {
     // A column with a pixel to draw, a pixel to draw.
     auto draw_col = [&](int px) {
         if (px < 0 || px >= w) return false;
         return clear || px < rx0 || px >= rx1 || ry0 > 0 || ry1 < h;
     };
     auto draw_at = [&](int px, int py) {
-        if (py < 0 || py >= h) return false;
+        if (py < by0 || py >= by1 || py < 0 || py >= h) return false;
         return clear || px < rx0 || px >= rx1 || py < ry0 || py >= ry1;
     };
-    if (clear) {
+    if (clear && (phases & 1)) {
     // Each pixel's cell, face and occlusion start empty (on a hit the cache
     // restored them: a hit always holds the owners and faces, and the
     // occlusion exactly when shade_on, a bit of the key).
@@ -2482,6 +2806,7 @@ void SceneBuild::terrain_pass() {
         std::fill_n(g_xz.begin() + static_cast<std::size_t>(py) * w, w, xz);
     }
     }   // (clear)
+    if (!(phases & 2)) return;
     // The heights the pass draws with: a round tower's cells are the ground
     // at its foot (its lowest neighbour), its top the cells' stored height.
     static thread_local std::vector<int> round_top, round_base;
@@ -2789,6 +3114,11 @@ void SceneBuild::terrain_pass() {
             const int sx = 16 * (cx - cy) + kx;
             const int sy = 8 * (cx + cy) - 8 * ch + ky + lw / 2;
             const int top_y = 16 * ch - lw;
+            // (A band: a whole cell clear of it is passed at once. Its rows
+            // run from its top's back corner down its walls, to the ground
+            // at most, give or take the lowered cells' halves: 256 rows of
+            // slack. A cell in parts is left to draw_at.)
+            if (nparts == 1 && (sy + oy - 256 >= by1 || sy + 16 + 8 * std::max(0, ch) + oy + 256 < by0)) continue;
             // Walls stop at the neighbour in front, which covers the rest. (A split
             // neighbour in front whose span starts inside it: its back edge is at its
             // stored height.)
@@ -2885,7 +3215,7 @@ void SceneBuild::terrain_pass() {
                 const int face_bottom = sy + 16 - half;
                 const int floor = c >= 0 ? right_floor : left_floor;
                 const int wall_bottom = face_bottom + std::max(0, 8 * (ch - floor) + ((c >= 0 ? right_lw : left_lw) - lw) / 2);
-                for (int r = face_top; r < wall_bottom; ++r) {
+                for (int r = std::max(face_top, by0 - oy); r < std::min(wall_bottom, by1 - oy); ++r) {
                     const int py = r + oy;
                     if (!draw_at(px, py)) continue;
                     if (nparts > 1) {   // (this part's pixels only)
@@ -3090,14 +3420,14 @@ void SceneBuild::terrain_pass() {
             std::fill_n(row, rx0, xz);
             std::fill_n(row + rx1, w - rx1, xz);
         }
-        if (dx != 0 || dy != 0) run_pass(false, rx0, rx1, ry0, ry1);
+        if (dx != 0 || dy != 0) run_pass(false, rx0, rx1, ry0, ry1, 0, h, 3);
         ++g_shift.shifts;
         if (shift_check) {
             PassBuffers whole;
             const std::vector<std::uint8_t> span_shift = g_span_px;
             whole.swap_globals();   // (the shifted pass set aside; the globals empty)
             if (world_on) { g_wx.assign(whole.wx.begin(), whole.wx.end()); g_wz.assign(whole.wz.begin(), whole.wz.end()); }
-            run_pass(true, 0, 0, 0, 0);
+            run_pass(true, 0, 0, 0, 0, 0, h, 3);
             bool same = whole.xz == g_xz && whole.y == g_y && whole.covered == g_covered && whole.kind == g_kind &&
                         whole.owner == g_cell_owner && whole.face == g_face && whole.round_n == g_round_n &&
                         span_shift == g_span_px && (!shade_on || whole.ao == g_ao) &&
@@ -3114,7 +3444,63 @@ void SceneBuild::terrain_pass() {
             // (The frame goes on with the whole pass's, which the check trusts.)
         }
     } else if (!pass_hit || checking) {
-        run_pass(true, 0, 0, 0, 0);
+        // The whole pass, a band of rows on each of the row pool's threads
+        // (2026-11-20, Thor state 0311: map 102's sunset moves the sun every
+        // 6th picture, and the whole pass drawn again for it on one thread was
+        // 3 ms of that picture's 6.7 over the others, on the Mac). A band
+        // goes over every cell and draws its own rows of each, so each pixel
+        // is still the last cell drawn over it; one band a thread, since each
+        // walks all the cells. The clear first, once. A helper takes this
+        // thread's t_present for its band.
+        // KOL_PASS_SERIAL=1: on this thread alone, as before.
+        // KOL_PASS_PAR_CHECK=1: drawn again on this thread and compared.
+        static const bool pass_serial = kol::env_set("KOL_PASS_SERIAL");
+        static const bool par_check = kol::env_true("KOL_PASS_PAR_CHECK");
+        const int bands = pass_serial ? 1 : kol::row_threads();
+        if (bands <= 1 || h < 4 * bands) {
+            run_pass(true, 0, 0, 0, 0, 0, h, 3);
+        } else {
+            run_pass(true, 0, 0, 0, 0, 0, 0, 1);
+            const bool present = t_present;
+            // `rounds` is thread_local too: a helper's own list is empty (or
+            // another scene's), while round_of points into this thread's. It
+            // crashed on the Deck (2026-11-20, state 0302 and others: every
+            // map with a rounded cell). A helper takes this thread's list for
+            // its band and gives its own back.
+            const std::vector<DrawnRound>* const caller_rounds = &rounds;
+            kol::parallel_rows(h, (h + bands - 1) / bands, [&](int, int r0, int r1) {
+                const bool was = t_present;
+                t_present = present;
+                const bool helper = &rounds != caller_rounds;
+                std::vector<DrawnRound> own;
+                if (helper) { own.swap(rounds); rounds = *caller_rounds; }
+                run_pass(true, 0, 0, 0, 0, r0, r1, 2);
+                if (helper) rounds.swap(own);
+                t_present = was;
+            });
+            if (par_check) {
+                PassBuffers split;
+                const std::vector<std::uint8_t> span_split = g_span_px;
+                split.swap_globals();   // (the bands' pass set aside; the globals empty)
+                if (world_on) { g_wx.assign(split.wx.begin(), split.wx.end()); g_wz.assign(split.wz.begin(), split.wz.end()); }
+                run_pass(true, 0, 0, 0, 0, 0, h, 3);
+                bool same = split.xz == g_xz && split.y == g_y && split.covered == g_covered && split.kind == g_kind &&
+                            split.owner == g_cell_owner && split.face == g_face && split.round_n == g_round_n &&
+                            span_split == g_span_px && (!shade_on || split.ao == g_ao) &&
+                            (!record_back || (split.back_xz == g_back_xz && split.back_y == g_back_y &&
+                                              split.back_kind == g_back_kind && (!shade_on || split.back_ao == g_back_ao)));
+                if (same && world_on && world_dirty)
+                    for (std::size_t k = 0; k < npix && same; ++k)
+                        same = !g_covered[k] || (split.wx[k] == g_wx[k] && split.wz[k] == g_wz[k]);
+                static long checked = 0, mismatched = 0;
+                ++checked;
+                if (!same) ++mismatched;
+                if (!same || checked % 60 == 1)
+                    std::fprintf(stderr, "pass-par-check: %s (%ld checked, %ld with a difference)\n",
+                                 same ? "the same" : "DIFFERENT", checked, mismatched);
+                // (The frame goes on with the one-thread pass's.)
+            }
+        }
     }
     // This pass's own pixels, for the next one's shift (not on a hit: the
     // cache's are this view's, and the last kept are still the last pass's).
@@ -3214,6 +3600,7 @@ void SceneBuild::prop_light_pass() {
     // foot line: hard edges along that line beside the prop and along the
     // tile's sides (the user reported hard edges in every prop's shadow, from
     // the added shade).
+    wt.lap("proplight.spots");
     if (base_rows > 0.0f && base_dark > 0.0f && g_ao.size() == pixels) {
         static thread_local std::vector<int> prop_of;
         constexpr float kReach = 22.627417f;   // 16 sqrt 2
@@ -3264,6 +3651,7 @@ void SceneBuild::prop_light_pass() {
     // With the perspective, the scene as it is without units, for the pixels
     // lifted out to draw units from their own sprites (build_sprite_atlas).
     // KOL_PERSP_NO_SPRITES=1 draws units from the frame as before.
+    wt.lap("proplight.iface");
     static const bool no_sprites = std::getenv("KOL_PERSP_NO_SPRITES") != nullptr;
     // Flat (the light without the perspective, kol_perspective's
     // flat_provider): the units' squares are still made, for their shadows
@@ -3350,6 +3738,7 @@ void SceneBuild::prop_light_pass() {
         g_unit_sky[u] = all[u].y > kSkyY && all[u].y - 16 * std::max(0, gh) > kSkyRise;
         g_unit_hanging[u] = !g_unit_sky[u] && all[u].y - 16 * std::max(0, gh) > kHangRise;
     }
+    wt.lap("proplight.claim");
     if (!box_only)
         claim_unit_sprites(layers, w, h, ox, oy, kx, ky, all, count, props,
                            cursor, cursor_sx + kx, cursor_sy + ky,
@@ -3365,12 +3754,40 @@ void SceneBuild::prop_light_pass() {
     // feet and took its occlusion and shadow away (BK). With the prop lifted
     // (lift_prop_pixels) they go into its card too: left in the scene, the
     // corner stayed behind as a floating piece of rock.
+    wt.lap("proplight.front");
     if (g_scene_codes && g_prop_dist.size() == pixels) {
         const bool one_foot = kol::map_flag(kol::MapFlag::OneFoot, current_map());
         static thread_local std::vector<std::uint32_t> front;   // (kept: tens of thousands a frame)
         front.clear();
-        for (std::size_t k = 0; k < pixels; ++k)
-            if (g_prop_dist[k] != kUnreached && !g_iface[k]) front.push_back(static_cast<std::uint32_t>(k));
+        // Only a prop's pixel beside an interface sprite's can pass anything
+        // on (a pixel takes a prop's place while it is no prop's, interface
+        // and a sprite's: none becomes so on the way), so only those start
+        // the walk, in the same order: on most pictures none (every prop
+        // pixel was walked and its four neighbours tested, 0.3 ms on map
+        // 102, 2026-11-20). KOL_PROP_FRONT_ALL=1: every prop pixel, as before.
+        static const bool front_all = kol::env_set("KOL_PROP_FRONT_ALL");
+        if (front_all) {
+            for (std::size_t k = 0; k < pixels; ++k)
+                if (g_prop_dist[k] != kUnreached && !g_iface[k]) front.push_back(static_cast<std::uint32_t>(k));
+        } else {
+            static thread_local std::vector<std::uint8_t> beside;
+            bool any = false;
+            for (std::size_t m = 0; m < pixels; ++m) {
+                if (!g_iface[m] || g_prop_dist[m] != kUnreached || (g_scene_codes[m] & 0x0Fu) != kol::kLayerObj) continue;
+                if (!any) {
+                    beside.assign(pixels, 0);
+                    any = true;
+                }
+                const int mx = static_cast<int>(m % w);
+                if (mx > 0) beside[m - 1] = 1;
+                if (mx + 1 < w) beside[m + 1] = 1;
+                if (m >= static_cast<std::size_t>(w)) beside[m - w] = 1;
+                if (m + w < pixels) beside[m + w] = 1;
+            }
+            if (any)
+                for (std::size_t k = 0; k < pixels; ++k)
+                    if (beside[k] && g_prop_dist[k] != kUnreached && !g_iface[k]) front.push_back(static_cast<std::uint32_t>(k));
+        }
         for (std::size_t head = 0; head < front.size(); ++head) {
             const std::uint32_t k = front[head];
             const int px = static_cast<int>(k % w), py = static_cast<int>(k / w);

@@ -32,6 +32,10 @@ int fine_rows() { return std::max(1, chunk_rows() / 4); }
 void parallel_rows(int rows, int chunk, const std::function<void(int, int, int)>& fn) {
     row_pool().run(rows, chunk, fn);
 }
+int row_threads() {
+    static const int n = 1 + std::max(0, std::min(7, static_cast<int>(kol::env_num_or("KOL_PERSP_THREADS", 2.0f))));
+    return n;
+}
 
 namespace {
 bool worker_time_on() {
@@ -39,7 +43,7 @@ bool worker_time_on() {
     return on;
 }
 struct WorkerSec { const char* name; double ms; };
-WorkerSec g_worker_secs[64];
+WorkerSec g_worker_secs[96];
 int g_worker_nsec = 0;
 long g_worker_jobs = 0;
 long long worker_now_ns() {
@@ -49,7 +53,7 @@ long long worker_now_ns() {
 // than that from its first timer to its end is printed by section (the
 // first picture of a map, a view that changes size: the means over 300 jobs
 // hide them).
-WorkerSec g_job_secs[64];
+WorkerSec g_job_secs[96];
 int g_job_nsec = 0;
 long long g_job_t0 = 0;
 void worker_time_add(const char* name, long long ns) {
@@ -57,11 +61,11 @@ void worker_time_add(const char* name, long long ns) {
         int i = 0;
         for (; i < g_job_nsec; ++i)
             if (std::strcmp(g_job_secs[i].name, name) == 0) { g_job_secs[i].ms += ns / 1e6; break; }
-        if (i == g_job_nsec && g_job_nsec < 64) g_job_secs[g_job_nsec++] = {name, ns / 1e6};
+        if (i == g_job_nsec && g_job_nsec < 96) g_job_secs[g_job_nsec++] = {name, ns / 1e6};
     }
     for (int i = 0; i < g_worker_nsec; ++i)
         if (std::strcmp(g_worker_secs[i].name, name) == 0) { g_worker_secs[i].ms += ns / 1e6; return; }
-    if (g_worker_nsec < 64) g_worker_secs[g_worker_nsec++] = {name, ns / 1e6};
+    if (g_worker_nsec < 96) g_worker_secs[g_worker_nsec++] = {name, ns / 1e6};
 }
 }  // namespace
 WorkerTimer::WorkerTimer(const char* section) : name(section), t0(worker_time_on() ? worker_now_ns() : 0) {
