@@ -407,13 +407,30 @@ public:
         }
         return w;
     }
+    // Text drawn greyed (a row that does nothing now: Window Size in full
+    // screen): each colour's brightness taken 55% of the way to white. The
+    // text is dark on the light window, so darkening it as icon() greys
+    // changed nothing to see.
+    bool dim_text = false;
+    const std::uint32_t* text_pal() {
+        if (!dim_text) return a_.bg_pal[kFrameBank];
+        for (int i = 0; i < 16; ++i) {
+            const std::uint32_t v = a_.bg_pal[kFrameBank][i];
+            const float y = 0.299f * ((v >> 16) & 0xFF) + 0.587f * ((v >> 8) & 0xFF) + 0.114f * (v & 0xFF);
+            const unsigned l = static_cast<unsigned>(std::lround(y + (255.0f - y) * 0.55f));
+            text_grey_[i] = (v & 0xFF000000u) | (l << 16) | (l << 8) | l;
+        }
+        return text_grey_;
+    }
+    std::uint32_t text_grey_[16] = {};
     void glyph(std::uint32_t addr, int x0, int y0) {
         if (addr - kRomBase + 64u > a_.rom_size) return;
         const std::uint8_t* g = a_.rom + (addr - kRomBase);
+        const std::uint32_t* pal = text_pal();
         for (int y = 0; y < 16; ++y)
             for (int x = 0; x < 8; ++x) {
                 const std::uint8_t b = g[y * 4 + x / 2];
-                put(x0 + x, y0 + y, (x & 1) ? (b >> 4) : (b & 0xF), a_.bg_pal[kFrameBank]);
+                put(x0 + x, y0 + y, (x & 1) ? (b >> 4) : (b & 0xF), pal);
             }
     }
     // One line of text (up to a newline); returns the width.
@@ -436,7 +453,7 @@ public:
     void stand_in(const StandIn& s, int x0, int y0) {
         for (int y = 0; y < 16; ++y)
             for (int x = 0; s.rows[y][x]; ++x)
-                if (s.rows[y][x] == '#') put(x0 + x, y0 + y, 1, a_.bg_pal[kFrameBank]);
+                if (s.rows[y][x] == '#') put(x0 + x, y0 + y, 1, text_pal());
     }
     std::uint32_t* px() { return px_; }
     // ARGB pixels as they are (a picture), clipped as the rest.
@@ -478,7 +495,9 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Mod,        // a mod (a ROM patch): the platform's dialog
                                  UnlinkRom,     // Debug: back to the setup screen
                                  Licenses,      // the third-party notices (the platform shows them)
-                                 Quit };        // a desktop: ends the game, after a question
+                                 Quit,          // a desktop: ends the game, after a question
+                                 DisplayMode,   // a desktop: window or full screen (kol_desktop.h)
+                                 WindowSize };  // a desktop: the window's size
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -495,6 +514,9 @@ const Row kMain[] = {
     {Kind::Game, 10, nullptr, nullptr}, {Kind::Game, 11, nullptr, nullptr},
     {Kind::Heading, 0, "- Enhancements -", nullptr},
     {Kind::Preset, 0, "Preset", "Sets the other options at once:\nEnhanced, or the game as it was."},
+#if !defined(__ANDROID__)
+    {Kind::Page, 9, "Display", "A window or full screen,\nand the window's size."},
+#endif
     {Kind::Page, 4, "Graphics", "View size and each graphics\neffect, on or off."},
     {Kind::Page, 2, "Audio", "Sound quality, volumes\nand effects."},
     {Kind::Page, 5, "Gameplay", "Controls, rumble and\nquicker battles."},
@@ -511,6 +533,13 @@ const Row kMain[] = {
 #if KOL_DEV_TOOLS
     {Kind::Page, 1, "Debug", "Tools for testing."},   // (a public build has no Debug page: kol_dev.h)
 #endif
+};
+// Page 9, Display (a desktop's): the window, not the game's view (Graphics >
+// View Size): the picture is fitted into the window, whatever its size.
+const Row kDisplay[] = {
+    {Kind::Back, 0, "Back", "Return to the options."},
+    {Kind::DisplayMode, 0, "Display", "A window, or the whole screen.\nAlt+Enter switches too."},
+    {Kind::WindowSize, 0, "Window Size", "The window's size, in Window\nmode. The game's view is fitted."},
 };
 const Row kGraphics[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
@@ -715,7 +744,8 @@ struct LoginForm {
 LoginForm g_login;
 std::string g_login_last_user;   // the name of the last attempt, to start from
 int g_page = 0;            // 0 the options, 1 Debug, 2 Audio, 3 Layers (in Debug), 4 Graphics,
-                           // 5 Gameplay, 6 Cheats, 7 Save States (in Debug)
+                           // 5 Gameplay, 6 Cheats, 7 Save States (in Debug), 8 Achievements,
+                           // 9 Display (a desktop's)
 int g_return_sel = 0;      // the main page's row that opened a page
 int g_states_parent = 0;   // the page Save States was opened from (0 main, 1 Debug)
 int g_sel = 0;             // the selected row
@@ -771,6 +801,7 @@ const Row* rows(int* n) {
     if (g_page == 4) { *n = static_cast<int>(sizeof kGraphics / sizeof kGraphics[0]); return kGraphics; }
     if (g_page == 5) { *n = static_cast<int>(sizeof kGameplay / sizeof kGameplay[0]); return kGameplay; }
     if (g_page == 6) { *n = static_cast<int>(sizeof kCheats / sizeof kCheats[0]); return kCheats; }
+    if (g_page == 9) { *n = static_cast<int>(sizeof kDisplay / sizeof kDisplay[0]); return kDisplay; }
     *n = static_cast<int>(sizeof kMain / sizeof kMain[0]);
     return kMain;
 }
@@ -816,7 +847,9 @@ void set_game_value(int k, int v) {
         for (int i = 0; i < 7; ++i) queue_byte(i, kDefaults[i]);
 }
 
-bool selectable(const Row& r) { return r.kind != Kind::Heading; }
+// A row greyed: it does nothing now (the window's size in full screen).
+bool row_off(const Row& r) { return r.kind == Kind::WindowSize && display_full_screen(); }
+bool selectable(const Row& r) { return r.kind != Kind::Heading && !row_off(r); }
 
 float max_scroll();
 void states_scroll_to(float scroll);
@@ -898,6 +931,16 @@ Text value_text(const Art& a, const Row& r) {
         case Kind::Page: return encode(">");
         case Kind::Licenses: return encode(">");
         case Kind::Quit: return encode(">");
+        case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
+        case Kind::WindowSize: {   // the chosen size, else the window's own
+            int w = 0, h = 0;
+            const int i = window_size_current();
+            if (i >= 0) window_size_at(static_cast<unsigned>(i), &w, &h);
+            else window_size_now(&w, &h);
+            if (w <= 0 || h <= 0) return encode("-");
+            std::snprintf(buf, sizeof buf, "%dx%d", w, h);
+            return encode(buf);
+        }
         case Kind::Mod: {   // the patch's name without its extension, cut to fit
             const char* m = rom_patch_name();
             if (!m) return encode("None");
@@ -1174,6 +1217,8 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             if (r.id == 7) { g_st_sel = 0; states_scroll_to(0); g_st_armed = -1; }
             break;
         case Kind::Back: leave_page(); break;
+        case Kind::DisplayMode: display_full_screen_set(!display_full_screen()); break;
+        case Kind::WindowSize: window_size_step(dir); break;
         case Kind::Licenses:
             if (g_platform.show_licenses) g_platform.show_licenses();
             else open_dialog("Licenses", "See licenses.txt beside the game.", {"OK"}, 0, nullptr);
@@ -2135,7 +2180,10 @@ bool menu_render(std::uint32_t* argb) {
     c.option_tab(2, kWinTop);
     int n = 0;
     const Row* r = rows(&n);
-    if (g_sel >= n || !selectable(r[g_sel])) g_sel = 0;
+    if (g_sel >= n) g_sel = 0;
+    // A row that went grey under the hand (Alt+Enter on Window Size): the
+    // hand goes to the row above.
+    while (g_sel > 0 && !selectable(r[g_sel])) --g_sel;
     // The rows, clipped to the window's inner band.
     c.set_clip(kListTop, kListBottom);
     const int first = static_cast<int>(g_scroll) / kRowH;
@@ -2169,8 +2217,10 @@ bool menu_render(std::uint32_t* argb) {
             c.text(value, kSheetW - 16 - c.width(value), y);
             continue;
         }
+        c.dim_text = row_off(row);
         c.text(name, kLabelX, y);
         c.text(value_text(a, row), kValueX, y);
+        c.dim_text = false;
     }
     c.clear_clip();
     // The hand points at the selected row, over the window's left edge.

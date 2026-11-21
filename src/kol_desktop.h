@@ -47,4 +47,18 @@ bool desktop_player_mode();
 // (L3 is the state combos').
 void desktop_r3(int down, bool l3_held);
 
+// Options > Display (a desktop's; 2026-11-20, players on Windows: Alt+Enter
+// did nothing with a controller connected). The window or full screen, and
+// the window's size, which is the window's own and not the game's view size
+// (Graphics > View Size): the picture is fitted into it. Saved in player
+// mode to display.cfg beside enhancements.cfg (mode=, window=WxH), read at
+// start before the window opens; Alt+Enter's toggle is saved too.
+bool display_full_screen();                 // the window's mode now
+void display_full_screen_set(bool full);
+unsigned window_size_count();               // the sizes that fit this display
+void window_size_at(unsigned i, int* w, int* h);
+int window_size_current();                  // the chosen size's index, -1 none
+void window_size_now(int* w, int* h);       // the window's size now
+void window_size_step(int dir);             // the next size up (+1) or down (-1)
+
 }  // namespace kol

@@ -201,7 +201,9 @@ void clear_outside(std::uint32_t* px) {
 // Called at every present, on the presenting thread. The menu is drawn anew
 // each time while it is open (its hand bobs, a touch or the pad changes it);
 // closed, nothing is drawn and nothing is rendered.
+void display_poll();
 int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out_h) {
+    display_poll();
     // Desktop check: KOL_DESKTOP_MENU_AT=<n> opens the menu at the nth present
     // (a present dump after it shows the overlay). Not in a public build.
     if constexpr (kDevTools) {
@@ -299,6 +301,10 @@ int key_hook(int scancode, int down) {
     // (With a controller, the keyboard is not a second one in player mode:
     // the Deck's Desktop Mode types Escape from its Start button.)
     const bool keyboard_live = !g_player || SDL_NumJoysticks() <= 0;
+    // Alt+Enter is the host's full-screen toggle, controller or not (with one
+    // connected every other key was taken here, so it did nothing: players on
+    // Windows, 2026-11-20).
+    if (scancode == SDL_SCANCODE_RETURN && (SDL_GetModState() & KMOD_ALT) && !menu_login_up()) return 0;
     // The menu's login form (kol_menu login_open): every key is the form's
     // while it is up; the text itself comes as text (text_hook). With a
     // controller only Backspace, and Enter on a field, act (menu_login_key).
@@ -378,6 +384,68 @@ void quit_game() {
     SDL_Event e{};
     e.type = SDL_QUIT;
     SDL_PushEvent(&e);
+}
+
+// ── Options > Display ───────────────────────────────────────────────────
+// The window's mode and size go to gbarecomp as requests (runtime.h
+// g_host_window_*), taken on the window's thread at its next frame; what the
+// window is now comes back the same way. Saved in display.cfg in player mode.
+
+std::string g_display_cfg;          // display.cfg's path, empty outside player mode
+int g_saved_full = -1;              // display.cfg's mode=, -1 none
+int g_saved_w = 0, g_saved_h = 0;   // display.cfg's window=, 0 none
+
+// Common window sizes, smallest first, 16:9 and 16:10. A display offers its
+// own shape's (the Steam Deck's 1280x800 is 16:10: its taskbar left no 16:10
+// size that fit, only 16:9 ones, 2026-11-20); one of neither shape, all.
+constexpr int kWindowSizes[][2] = {
+    {960, 540},   {960, 600},   {1024, 640},  {1152, 720},  {1280, 720},  {1280, 800},
+    {1366, 768},  {1440, 900},  {1600, 900},  {1680, 1050}, {1920, 1080}, {1920, 1200},
+    {2560, 1440}, {2560, 1600}, {3200, 1800}, {3840, 2160}};
+
+// The shape a size or a display is: 0 16:9 (or near: 1366x768), 1 16:10, -1 other.
+int size_shape(int w, int h) {
+    if (w <= 0 || h <= 0) return -1;
+    const double r = static_cast<double>(w) / h;
+    if (std::fabs(r - 16.0 / 9.0) < 0.03) return 0;
+    if (std::fabs(r - 16.0 / 10.0) < 0.03) return 1;
+    return -1;
+}
+
+void display_save() {
+    if (g_display_cfg.empty()) return;
+    std::FILE* f = std::fopen(g_display_cfg.c_str(), "w");
+    if (!f) return;
+    if (g_saved_full >= 0) std::fprintf(f, "mode=%d\n", g_saved_full);
+    if (g_saved_w > 0 && g_saved_h > 0) std::fprintf(f, "window=%dx%d\n", g_saved_w, g_saved_h);
+    std::fclose(f);
+}
+
+void display_load() {
+    if (g_display_cfg.empty()) return;
+    std::FILE* f = std::fopen(g_display_cfg.c_str(), "r");
+    if (!f) return;
+    char line[128];
+    while (std::fgets(line, sizeof line, f)) {
+        int a = 0, b = 0;
+        if (std::sscanf(line, "mode=%d", &a) == 1 && (a == 0 || a == 1)) g_saved_full = a;
+        else if (std::sscanf(line, "window=%dx%d", &a, &b) == 2 && a >= 320 && b >= 200 && a <= 0xFFFF && b <= 0xFFFF) {
+            g_saved_w = a;
+            g_saved_h = b;
+        }
+    }
+    std::fclose(f);
+}
+
+// Each present: a mode changed by Alt+Enter (the host's toggle) is saved too.
+void display_poll() {
+    static int last = -1;
+    const int now = gbarecomp::g_host_window_mode_now;
+    if (last >= 0 && now != last && now != g_saved_full) {
+        g_saved_full = now;
+        display_save();
+    }
+    last = now;
 }
 
 // ── Player mode ─────────────────────────────────────────────────────────
@@ -479,6 +547,18 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     const bool force_setup = setup_flag != rest.end();
     if (force_setup) rest.erase(setup_flag);
     const bool rom_given = std::find(rest.begin(), rest.end(), "--rom") != rest.end();
+    // Options > Display's choice, when one was made, wins over the launcher's
+    // --fullscreen (the AppImage passes it unless --windowed); the window
+    // opens at the chosen size.
+    g_display_cfg = dir + "/display.cfg";
+    display_load();
+    if (g_saved_full >= 0) {
+        rest.erase(std::remove_if(rest.begin(), rest.end(),
+                                  [](const std::string& a) { return a.rfind("--fullscreen", 0) == 0; }),
+                   rest.end());
+        if (g_saved_full == 1) rest.emplace_back("--fullscreen");
+    }
+    if (g_saved_w > 0 && g_saved_h > 0) gbarecomp::g_host_window_size_request = (g_saved_w << 16) | g_saved_h;
     const bool fullscreen = std::find(rest.begin(), rest.end(), "--fullscreen") != rest.end();
     // The setup screen (kol_setup): with no ROM in the directory, or one that
     // is not this game's. Play there means the right ROM is in place.
@@ -509,6 +589,23 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
 #else
     SDL_setenv("GBARECOMP_SELFHEAL_RECOMPILE", "0", 0);
 #endif
+    // A late picture does not hold the game back (2026-11-20, the Deck: the
+    // music wobbled where the present worker ran late): the last picture is
+    // shown again and the guest, and its sound, go on at their own speed, as
+    // on Android. gbarecomp leaves it off on the desktop for its picture tests,
+    // which need every frame's own picture: so not with the dummy video driver
+    // (every headless test) nor with a present dump.
+    {
+        const char* vd = std::getenv("SDL_VIDEODRIVER");
+        const bool test = (vd && std::strcmp(vd, "dummy") == 0) || std::getenv("GBARECOMP_PRESENT_DUMP");
+        if (!test && !std::getenv("GBARECOMP_PRESENT_SKIP_LATE")) {
+#if defined(_WIN32)
+            _putenv_s("GBARECOMP_PRESENT_SKIP_LATE", "1");
+#else
+            SDL_setenv("GBARECOMP_PRESENT_SKIP_LATE", "1", 0);
+#endif
+        }
+    }
     // With a controller, the keyboard is not a second one (key_hook's note).
     gbarecomp::g_host_keyboard_yields_to_pad = 1;
 
@@ -570,11 +667,97 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     return args;
 }
 
+// Options > Display (kol_desktop.h).
+bool display_full_screen() {
+    // (A request not yet taken is what the window is about to be: the menu
+    // draws its row at once.)
+    const int req = gbarecomp::g_host_window_mode_request;
+    return req >= 0 ? req != 0 : gbarecomp::g_host_window_mode_now != 0;
+}
+
+void display_full_screen_set(bool full) {
+    gbarecomp::g_host_window_mode_request = full ? 1 : 0;
+    // Back to a window: at the chosen size, not the one before full screen.
+    if (!full && g_saved_w > 0 && g_saved_h > 0) gbarecomp::g_host_window_size_request = (g_saved_w << 16) | g_saved_h;
+    g_saved_full = full ? 1 : 0;
+    display_save();
+}
+
+namespace {
+// The sizes that fit the display's usable area (all, until it is known).
+std::vector<int> window_sizes_fitting() {
+    const int usable = gbarecomp::g_host_display_usable;
+    const int uw = (usable >> 16) & 0xFFFF, uh = usable & 0xFFFF;
+    const int full = gbarecomp::g_host_display_size;
+    const int shape = size_shape((full >> 16) & 0xFFFF, full & 0xFFFF);
+    std::vector<int> fit;
+    for (int i = 0; i < static_cast<int>(std::size(kWindowSizes)); ++i)
+        if ((usable == 0 || (kWindowSizes[i][0] <= uw && kWindowSizes[i][1] <= uh)) &&
+            (shape < 0 || size_shape(kWindowSizes[i][0], kWindowSizes[i][1]) == shape))
+            fit.push_back(i);
+    if (fit.empty()) fit.push_back(0);
+    return fit;
+}
+}  // namespace
+
+unsigned window_size_count() { return static_cast<unsigned>(window_sizes_fitting().size()); }
+
+void window_size_at(unsigned i, int* w, int* h) {
+    const std::vector<int> fit = window_sizes_fitting();
+    const int k = fit[std::min<std::size_t>(i, fit.size() - 1)];
+    *w = kWindowSizes[k][0];
+    *h = kWindowSizes[k][1];
+}
+
+int window_size_current() {
+    const std::vector<int> fit = window_sizes_fitting();
+    for (std::size_t i = 0; i < fit.size(); ++i)
+        if (kWindowSizes[fit[i]][0] == g_saved_w && kWindowSizes[fit[i]][1] == g_saved_h) return static_cast<int>(i);
+    return -1;
+}
+
+void window_size_now(int* w, int* h) {
+    const int s = gbarecomp::g_host_window_size_now;
+    *w = (s >> 16) & 0xFFFF;
+    *h = s & 0xFFFF;
+}
+
+void window_size_step(int dir) {
+    const int n = static_cast<int>(window_size_count());
+    int cur = window_size_current();
+    int next;
+    if (cur >= 0) {
+        next = ((cur + (dir < 0 ? -1 : 1)) % n + n) % n;
+    } else {   // none chosen: the next size past the window's own
+        int ww = 0, wh = 0;
+        window_size_now(&ww, &wh);
+        const long area = static_cast<long>(ww) * wh;
+        next = dir < 0 ? n - 1 : 0;
+        for (int i = 0; i < n; ++i) {
+            int w = 0, h = 0;
+            window_size_at(static_cast<unsigned>(i), &w, &h);
+            const long a = static_cast<long>(w) * h;
+            if (dir > 0 && a > area) { next = i; break; }
+            if (dir < 0 && a < area) next = i;
+        }
+    }
+    window_size_at(static_cast<unsigned>(next), &g_saved_w, &g_saved_h);
+    gbarecomp::g_host_window_size_request = (g_saved_w << 16) | g_saved_h;
+    display_save();
+}
+
 }  // namespace kol
 
 #else   // Android has its own front end (android/app/jni/main_android.cpp).
 
 namespace kol {
+bool display_full_screen() { return true; }
+void display_full_screen_set(bool) {}
+unsigned window_size_count() { return 1; }
+void window_size_at(unsigned, int* w, int* h) { *w = *h = 0; }
+int window_size_current() { return -1; }
+void window_size_now(int* w, int* h) { *w = *h = 0; }
+void window_size_step(int) {}
 bool desktop_player_mode() { return false; }
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;
