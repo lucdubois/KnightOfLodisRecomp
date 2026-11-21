@@ -45,6 +45,7 @@ bool persisted(int i) {
     return i < static_cast<int>(Setting::DebugHideBG0) || i > static_cast<int>(Setting::DebugHideOBJ);
 }
 std::string g_dir;
+int g_file_version = -1;   // enhancements.cfg's settings_version= (0 a file without it), -1 no file
 unsigned g_widescreen_width = 320;
 unsigned g_widescreen_height = 160;
 bool g_settings_ready = false;
@@ -241,6 +242,11 @@ const char* const kLabels[kCount] = {"See-through move range",
                                      "Swap face buttons (A/B, X/Y)",
                                      "Rewind (L2)"};
 
+// enhancements.cfg's settings_version=: 2 since lifting went back into
+// Enhanced (2026-11-20); a file without it is older, and is moved to the new
+// Enhanced once if it was 1.1's Enhanced exactly.
+constexpr int kSettingsVersion = 2;
+
 std::string cfg_path() { return g_dir.empty() ? std::string() : g_dir + "/enhancements.cfg"; }
 
 void apply(Setting s) {
@@ -326,6 +332,7 @@ void save() {
     std::fprintf(f, "debug_map=%u\n", g_debug_map.load());
     std::fprintf(f, "width=%u\n", g_widescreen_width);
     std::fprintf(f, "height=%u\n", g_widescreen_height);
+    std::fprintf(f, "settings_version=%d\n", kSettingsVersion);
     std::fclose(f);
 }
 
@@ -516,14 +523,13 @@ struct Preset {
 // Special Effects on in Enhanced, off in Original (asked 2026-11-16: Enhanced is
 // the default, so special effects are on by default; it was in
 // no preset, so a fresh install had it off).
-// Lifted Props and Lifted Walls off in Enhanced, on every device (asked
-// 2026-11-18): the heaviest pair of switches (on the Steam Deck's map 100 the
-// present worker 14.6 -> 12.0 ms a job without them, frames over 20 ms 177 ->
-// 18 of 1201), and the Deck could not hold 60 with them. Their rows say they
-// are heavy. A device whose saved settings have them on keeps them (its
-// preset then reads Custom).
+// Lifted Props and Lifted Walls were taken out of Enhanced for 1.1 (asked
+// 2026-11-18: the heaviest pair, and the Deck could not hold 60 with them),
+// then put back (asked 2026-11-20, after the worker's cuts that night).
+// Saved settings that were 1.1's Enhanced exactly are moved to this one once
+// (kSettingsVersion, settings_init).
 const Preset kPresets[] = {
-    {"Enhanced", 384u, true, true, 1u, 1u, 1u, true, true, false, false, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 2},
+    {"Enhanced", 384u, true, true, 1u, 1u, 1u, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 2},
     {"Original", 240u, false, false, 1u, 0u, 0u, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 1},
 };
 constexpr unsigned kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
@@ -723,6 +729,7 @@ void settings_init(const char* dir, unsigned widescreen_width,
             // A new key, so an old sound=2 is never taken for HD.
             bool quality_saved = false;
             int old_sound = -1;
+            int version = 0;
             char line[128];
             while (std::fgets(line, sizeof line, f)) {
                 char* eq = std::strchr(line, '=');
@@ -778,6 +785,10 @@ void settings_init(const char* dir, unsigned widescreen_width,
                     quality_saved = true;
                     continue;
                 }
+                if (std::strcmp(line, "settings_version") == 0) {
+                    version = value;
+                    continue;
+                }
                 if (std::strcmp(line, "sound") == 0) {   // before 2026-10-18: the mode
                     old_sound = value;
                     continue;
@@ -793,6 +804,7 @@ void settings_init(const char* dir, unsigned widescreen_width,
             }
             std::fclose(f);
             if (!quality_saved && old_sound >= 0) g_sound_choice = old_sound == 0 ? 0u : 1u;
+            g_file_version = version;
         }
     }
     // A wide view not on the list (a phone's old 20:9 size, from before the
@@ -806,6 +818,20 @@ void settings_init(const char* dir, unsigned widescreen_width,
                     g_widescreen_width = g_choices[c].width;
                     g_widescreen_height = g_choices[c].height;
                 }
+    }
+    // Settings saved before version 2 that are 1.1's Enhanced exactly (lifting
+    // off, all else Enhanced: a player who never changed anything) become
+    // today's Enhanced, once: saved with the version, so turning them off
+    // again sticks.
+    if (g_file_version >= 0 && g_file_version < 2) {
+        Preset old = kPresets[0];
+        old.lift_props = old.lift_walls = false;
+        if (preset_matches(old)) {
+            g_on[static_cast<int>(Setting::LiftProps)] = true;
+            g_on[static_cast<int>(Setting::LiftWalls)] = true;
+            std::fprintf(stderr, "settings: 1.1's Enhanced moved to today's (Lifted Props and Walls on)\n");
+        }
+        save();   // (the version, whichever way)
     }
     // KOL_SETTINGS_ON / KOL_SETTINGS_OFF over the file or the preset, for a
     // test run in player mode (setting_on's own pass ran before the file was
