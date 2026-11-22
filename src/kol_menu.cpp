@@ -497,7 +497,8 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Licenses,      // the third-party notices (the platform shows them)
                                  Quit,          // a desktop: ends the game, after a question
                                  DisplayMode,   // a desktop: window or full screen (kol_desktop.h)
-                                 WindowSize };  // a desktop: the window's size
+                                 WindowSize,    // a desktop: the window's size
+                                 Ratio };       // the picture's shape (kol_settings ratio_choice_*)
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -505,26 +506,15 @@ struct Row {
     const char* help;
 };
 
+// The main page (2026-11-21, asked: the game's options on a page of their
+// own, every enhancement on another; Save States and Achievements stay here).
+// Quit Game stays here too: it is how a computer with only a controller (the
+// Deck in Desktop Mode) leaves the game, and Debug is a dev build's.
 const Row kMain[] = {
-    {Kind::Game, 0, nullptr, nullptr}, {Kind::Game, 1, nullptr, nullptr},
-    {Kind::Game, 2, nullptr, nullptr}, {Kind::Game, 3, nullptr, nullptr},
-    {Kind::Game, 4, nullptr, nullptr}, {Kind::Game, 5, nullptr, nullptr},
-    {Kind::Game, 6, nullptr, nullptr}, {Kind::Game, 7, nullptr, nullptr},
-    {Kind::Game, 8, nullptr, nullptr}, {Kind::Game, 9, nullptr, nullptr},
-    {Kind::Game, 10, nullptr, nullptr}, {Kind::Game, 11, nullptr, nullptr},
-    {Kind::Heading, 0, "- Enhancements -", nullptr},
-    {Kind::Preset, 0, "Preset", "Sets the other options at once:\nEnhanced, or the game as it was."},
-#if !defined(__ANDROID__)
-    {Kind::Page, 9, "Display", "A window or full screen,\nand the window's size."},
-#endif
-    {Kind::Page, 4, "Graphics", "View size and each graphics\neffect, on or off."},
-    {Kind::Page, 2, "Audio", "Sound quality, volumes\nand effects."},
-    {Kind::Page, 5, "Gameplay", "Controls, rumble and\nquicker battles."},
-    {Kind::Page, 6, "Cheats", "Shortcuts past the\ngame's rules."},
+    {Kind::Page, 10, "Game Options", "The game's own options, as\nits OPTION command shows them."},
+    {Kind::Page, 11, "Enhancement Options", "Presets, display, graphics,\nsound, gameplay, cheats, mods."},
     {Kind::Page, 7, "Save States", "Every numbered state:\ntap one to load it."},
     {Kind::Page, 8, "Achievements", "RetroAchievements: log in and\nsee what you have unlocked."},
-    {Kind::Mod, 0, "Mod", "Load a mod file made\nfor this game."},
-    {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
 #if !defined(__ANDROID__)
     // A computer with a controller has no gesture that closes the game (the
     // Steam Deck in Desktop Mode); Android has its own.
@@ -534,12 +524,45 @@ const Row kMain[] = {
     {Kind::Page, 1, "Debug", "Tools for testing."},   // (a public build has no Debug page: kol_dev.h)
 #endif
 };
-// Page 9, Display (a desktop's): the window, not the game's view (Graphics >
-// View Size): the picture is fitted into the window, whatever its size.
+// Page 10, Game Options: the cartridge's twelve, with its names and HELP.
+const Row kGameOptionsPage[] = {
+    {Kind::Back, 0, "Back", "Return to the options."},
+    {Kind::Game, 0, nullptr, nullptr}, {Kind::Game, 1, nullptr, nullptr},
+    {Kind::Game, 2, nullptr, nullptr}, {Kind::Game, 3, nullptr, nullptr},
+    {Kind::Game, 4, nullptr, nullptr}, {Kind::Game, 5, nullptr, nullptr},
+    {Kind::Game, 6, nullptr, nullptr}, {Kind::Game, 7, nullptr, nullptr},
+    {Kind::Game, 8, nullptr, nullptr}, {Kind::Game, 9, nullptr, nullptr},
+    {Kind::Game, 10, nullptr, nullptr}, {Kind::Game, 11, nullptr, nullptr},
+};
+// Page 11, Enhancement Options: ours, the mod and the licenses.
+const Row kEnhancements[] = {
+    {Kind::Back, 0, "Back", "Return to the options."},
+    {Kind::Preset, 0, "Preset", "Sets the other options at once:\nEnhanced, or the game as it was."},
+#if defined(__ANDROID__)
+    {Kind::Page, 9, "Display", "The picture's shape, to\nsuit this screen."},
+#else
+    {Kind::Page, 9, "Display", "A window or full screen, the\npicture's shape, the size."},
+#endif
+    {Kind::Page, 4, "Graphics", "View size and each graphics\neffect, on or off."},
+    {Kind::Page, 2, "Audio", "Sound quality, volumes\nand effects."},
+    {Kind::Page, 5, "Gameplay", "Controls, rumble and\nquicker battles."},
+    {Kind::Page, 6, "Cheats", "Shortcuts past the\ngame's rules."},
+    {Kind::Mod, 0, "Mod", "Load a mod file made\nfor this game."},
+    {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
+};
+// Page 9, Display: the picture's shape (2026-11-21, both platforms; it picks
+// the sizes Graphics > View Size offers) and a desktop's window, which is not
+// the game's view: the picture is fitted into the window, whatever its size.
+// Ratio comes before Window Size, whose sizes follow it.
 const Row kDisplay[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
+#if !defined(__ANDROID__)
     {Kind::DisplayMode, 0, "Display", "A window, or the whole screen.\nAlt+Enter switches too."},
+#endif
+    {Kind::Ratio, 0, "Ratio", "The picture's shape. View Size\noffers sizes of this shape."},
+#if !defined(__ANDROID__)
     {Kind::WindowSize, 0, "Window Size", "The window's size, in Window\nmode. The game's view is fitted."},
+#endif
 };
 const Row kGraphics[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
@@ -744,10 +767,10 @@ struct LoginForm {
 LoginForm g_login;
 std::string g_login_last_user;   // the name of the last attempt, to start from
 int g_page = 0;            // 0 the options, 1 Debug, 2 Audio, 3 Layers (in Debug), 4 Graphics,
-                           // 5 Gameplay, 6 Cheats, 7 Save States (in Debug), 8 Achievements,
-                           // 9 Display (a desktop's)
-int g_return_sel = 0;      // the main page's row that opened a page
+                           // 5 Gameplay, 6 Cheats, 7 Save States (also in Debug), 8 Achievements,
+                           // 9 Display, 10 Game Options, 11 Enhancement Options (parent_page)
 int g_states_parent = 0;   // the page Save States was opened from (0 main, 1 Debug)
+std::atomic<bool> g_game_option{false};   // the game is waiting on its OPTION window: ours
 int g_sel = 0;             // the selected row
 bool g_value_help = false; // show the value's HELP rather than the option's
 float g_scroll = 0.0f;     // pixels
@@ -802,6 +825,8 @@ const Row* rows(int* n) {
     if (g_page == 5) { *n = static_cast<int>(sizeof kGameplay / sizeof kGameplay[0]); return kGameplay; }
     if (g_page == 6) { *n = static_cast<int>(sizeof kCheats / sizeof kCheats[0]); return kCheats; }
     if (g_page == 9) { *n = static_cast<int>(sizeof kDisplay / sizeof kDisplay[0]); return kDisplay; }
+    if (g_page == 10) { *n = static_cast<int>(sizeof kGameOptionsPage / sizeof kGameOptionsPage[0]); return kGameOptionsPage; }
+    if (g_page == 11) { *n = static_cast<int>(sizeof kEnhancements / sizeof kEnhancements[0]); return kEnhancements; }
     *n = static_cast<int>(sizeof kMain / sizeof kMain[0]);
     return kMain;
 }
@@ -855,23 +880,32 @@ float max_scroll();
 void states_scroll_to(float scroll);
 void follow_selection();
 
-// Back to the main page, the hand on the row that opened the page.
+// The page a page goes back to: Layers to Debug, Save States where it was
+// opened from, Enhancement Options' pages to it, the rest to the main page.
+int parent_page(int page) {
+    switch (page) {
+        case 3: return 1;
+        case 7: return kol::kDevTools ? g_states_parent : 0;
+        case 2: case 4: case 5: case 6: case 9: return 11;
+        default: return 0;
+    }
+}
+
+// Back to the parent page, the hand on the row that opened this one.
 void leave_page() {
-    // Layers goes back to Debug; Save States to where it was opened from
-    // (Debug's row, else the main page's own row).
-    if (kol::kDevTools && (g_page == 3 || (g_page == 7 && g_states_parent == 1))) {
-        const int from = g_page;
-        g_page = 1;
-        g_sel = 0;
-        if constexpr (kol::kDevTools)
-            for (int i = 0; i < static_cast<int>(sizeof kDebug / sizeof kDebug[0]); ++i)
-                if (kDebug[i].kind == Kind::Page && kDebug[i].id == from) g_sel = i;
-        g_scroll = 0;
-        follow_selection();
+    // The game's own OPTION command opened the menu on its options: back
+    // closes it, to the game's menu, as the game's window did.
+    if (g_page == 10 && g_game_option.load(std::memory_order_acquire)) {
+        g_open = false;
         return;
     }
-    g_page = 0;
-    g_sel = g_return_sel;
+    const int from = g_page;
+    g_page = parent_page(from);
+    g_sel = 0;
+    int n = 0;
+    const Row* r = rows(&n);
+    for (int i = 0; i < n; ++i)
+        if (r[i].kind == Kind::Page && r[i].id == from) g_sel = i;
     g_scroll = 0;
     follow_selection();
 }
@@ -932,6 +966,7 @@ Text value_text(const Art& a, const Row& r) {
         case Kind::Licenses: return encode(">");
         case Kind::Quit: return encode(">");
         case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
+        case Kind::Ratio: return encode(ratio_choice_label(ratio_choice_current()));
         case Kind::WindowSize: {   // the chosen size, else the window's own
             int w = 0, h = 0;
             const int i = window_size_current();
@@ -1211,7 +1246,6 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             break;
         }
         case Kind::Page:
-            if (g_page == 0) g_return_sel = g_sel;   // a page's page keeps the way home
             if (r.id == 7) g_states_parent = g_page;
             g_page = r.id; g_sel = 1; g_scroll = 0;
             if (r.id == 7) { g_st_sel = 0; states_scroll_to(0); g_st_armed = -1; }
@@ -1219,6 +1253,10 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Back: leave_page(); break;
         case Kind::DisplayMode: display_full_screen_set(!display_full_screen()); break;
         case Kind::WindowSize: window_size_step(dir); break;
+        case Kind::Ratio:   // the view's sizes, and a desktop's window, follow it
+            ratio_choice_set(wrap(ratio_choice_current(), dir, ratio_choice_count()));
+            display_ratio_changed();
+            break;
         case Kind::Licenses:
             if (g_platform.show_licenses) g_platform.show_licenses();
             else open_dialog("Licenses", "See licenses.txt beside the game.", {"OK"}, 0, nullptr);
@@ -2062,8 +2100,6 @@ void menu_open_states() {
             g_sound_request.store(kSoundClose);
         } else {
             // Back from it goes to the main page's Save States row.
-            for (int i = 0; i < static_cast<int>(sizeof kMain / sizeof kMain[0]); ++i)
-                if (kMain[i].kind == Kind::Page && kMain[i].id == 7) g_return_sel = i;
             g_states_parent = 0;
             g_open = true;
             g_page = 7;
@@ -2849,15 +2885,13 @@ void menu_mod_picked(const char* name, const char* error) {
 constexpr char kOptionInitHookId[] = "kol.game-option-init";
 constexpr char kOptionPollHookId[] = "kol.game-option-poll";
 constexpr std::uint32_t kGameOptionInit = 0x0801C970u, kGameOptionPoll = 0x0801D9C0u;
-std::atomic<bool> g_game_option{false};   // the game is waiting on its OPTION window: ours
-
 int on_game_option_init(std::uint32_t, int, ArmCpuState* cpu) {
     if (!gbarecomp::runtime_excursion_active()) {
         {
             std::lock_guard<std::mutex> lock(g_mu);
             g_open = true;
-            g_page = 0;
-            g_sel = 0;
+            g_page = 10;   // its options' page, on the first of them
+            g_sel = 1;
             g_scroll = 0;
             g_value_help = false;
             g_pressed = g_dragging = false;

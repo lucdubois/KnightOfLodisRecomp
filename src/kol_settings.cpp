@@ -1,6 +1,7 @@
 #include "kol_dev.h"
 #include "kol_settings.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -106,11 +107,10 @@ bool g_second_screen_wanted = true;
 std::atomic<bool> g_second_screen_present{false};
 
 // ── The width ladder ──────────────────────────────────────────────────────
-// Built once at init from the panel's own geometry, by the same arithmetic
-// widescreen.cfg=auto uses, so the menu offers what this display can actually
-// do rather than a hard-coded list. 480 is the PPU's compile-time ceiling
-// (kMaxRenderWidth) and 240 is the faithful view, which the Widescreen toggle
-// owns, so neither appears here.
+// The view sizes of one shape (the ratio below) plus the authentic 240x160,
+// built from the panel's own geometry so each is labelled by how it scales
+// into it. 480x280 is the PPU's compile-time ceiling (kMaxRenderWidth,
+// kMaxRenderHeight).
 struct WidthChoice {
     unsigned width = 0;
     unsigned height = 160;
@@ -118,16 +118,16 @@ struct WidthChoice {
     bool whole = true;   // scales into the panel by a whole number (or the panel is unknown)
 };
 constexpr unsigned kMaxChoices = 8;
-// Mirrors GbaPpu::kMaxExtraY. A height the PPU would clamp must not be
-// offered, or the menu promises a size it cannot render.
-constexpr unsigned kMaxExtraYRows = 60;
+// Mirrors GbaPpu's caps. A size the PPU would clamp must not be offered, or
+// the menu promises a size it cannot render.
+constexpr unsigned kMaxViewWidth = 480, kMaxViewHeight = 280;
 WidthChoice g_choices[kMaxChoices];
 unsigned g_choice_count = 0;
 
 void add_choice(unsigned width, unsigned height, const char* how) {
-    if (width < 240u || width > 480u) return;
+    if (width < 240u || width > kMaxViewWidth || height < 160u || height > kMaxViewHeight) return;
     for (unsigned i = 0; i < g_choice_count; ++i)
-        if (g_choices[i].width == width) return;
+        if (g_choices[i].width == width && g_choices[i].height == height) return;
     if (g_choice_count >= kMaxChoices) return;
     WidthChoice& c = g_choices[g_choice_count++];
     c.width = width;
@@ -136,49 +136,95 @@ void add_choice(unsigned width, unsigned height, const char* how) {
     std::snprintf(c.label, sizeof c.label, "%ux%u   %s", width, height, how);
 }
 
-void build_width_ladder(unsigned panel_w, unsigned panel_h) {
+// ── The picture's shape (Options > Display > Ratio) ───────────────────────
+// Asked 2026-11-21: a ratio option, 1:1, 4:3, 3:2, 16:10 or 16:9, the one
+// that suits the screen chosen by itself; the view sizes (and a desktop's
+// window sizes) follow it. Until then the list was 16:9 everywhere (asked
+// 2026-11-17), 16:10 on a 16:10 computer (the Deck, 2026-11-18).
+//
+// Each shape's sizes: the renderer's range (240..480 wide, 160..280 tall),
+// ending at 270 or 280 lines; 4:3 and 1:1 are taller rather than wider (at
+// 160 lines they would be narrower than the game). 240x240 is the only one
+// at the game's own width: margins above and below only (checked: B_rictor
+// renders whole at 240x240, 256x192 and 280x280). The authentic 240x160
+// (itself 3:2) comes first in every list.
+struct Size { unsigned w, h; };
+struct Ratio {
+    const char* label;
+    unsigned num, den;
+    Size sizes[6];   // ascending; {0, 0} ends the list
+};
+const Ratio kRatios[] = {
+    {"1:1", 1, 1, {{240u, 240u}, {256u, 256u}, {270u, 270u}, {280u, 280u}}},
+    {"4:3", 4, 3, {{256u, 192u}, {288u, 216u}, {320u, 240u}, {360u, 270u}}},
+    {"3:2", 3, 2, {{270u, 180u}, {300u, 200u}, {324u, 216u}, {360u, 240u}, {420u, 280u}}},
+    {"16:10", 16, 10, {{256u, 160u}, {320u, 200u}, {384u, 240u}, {432u, 270u}}},
+    {"16:9", 16, 9, {{284u, 160u}, {320u, 180u}, {384u, 216u}, {480u, 270u}}},
+};
+constexpr unsigned kRatioCount = sizeof(kRatios) / sizeof(kRatios[0]);
+constexpr unsigned kRatio169 = kRatioCount - 1u;   // with no panel known
+unsigned g_ratio = kRatio169;
+bool g_ratio_chosen = false;            // the player picked it (saved as ratio=)
+unsigned g_panel_w = 0, g_panel_h = 0;  // the display, landscape; 0 unknown
+
+// The shape nearest the panel's (by the ratio of the ratios, so 16:9 is as
+// far from 2:1 as 2:1 is from 2.25:1). A 20:9 phone is nearest 16:9.
+unsigned ratio_for_panel(unsigned w, unsigned h) {
+    if (w == 0u || h == 0u) return kRatio169;
+    const double r = std::log(static_cast<double>(w) / h);
+    unsigned best = kRatio169;
+    double best_d = 1e9;
+    for (unsigned i = 0; i < kRatioCount; ++i) {
+        const double d = std::fabs(r - std::log(static_cast<double>(kRatios[i].num) / kRatios[i].den));
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    return best;
+}
+
+void build_width_ladder() {
     g_choice_count = 0;
     // The authentic view is the first entry, not a checkbox beside the list.
     add_choice(240u, 160u, "original");
-    // Then 16:9 only, whatever the panel (asked 2026-11-17 for 16:9 on
-    // the top screen always, even on a phone): a wider panel (a 20:9 phone) shows
-    // it with bars at the sides, a narrower one above and below; the host
-    // keeps the picture's aspect. Each is labelled by how it scales into the
-    // panel's largest 16:9 box: a whole number fills it with even pixels.
-    struct Size { unsigned w, h; };
-    static constexpr Size kSizes[] = {{284u, 160u}, {320u, 180u}, {384u, 216u}, {480u, 270u}};
-    unsigned bw = 0, bh = 0;   // the panel's 16:9 box, landscape
-    if (panel_w != 0u && panel_h != 0u) {
-        const unsigned w = panel_w > panel_h ? panel_w : panel_h;
-        const unsigned h = panel_w > panel_h ? panel_h : panel_w;
-#if !defined(__ANDROID__)
-        // A 16:10 panel on a computer (the Steam Deck's 1280x800; asked
-        // 2026-11-18 for 16:10 on the Deck build): 16:10 sizes in place of the
-        // 16:9 ones (a size is known by its width, and 320 and 384 are in
-        // both), so the picture fills the panel. 320x200 is 4x on the Deck;
-        // 432x270 is the tallest the 16:9 list reaches, 280 the renderer's cap.
-        if (w * 10u == h * 16u) {
-            static constexpr Size kSizes1610[] = {{320u, 200u}, {384u, 240u}, {432u, 270u}};
-            for (const Size& z : kSizes1610) {
-                char how[40];
-                if (h % z.h == 0u) std::snprintf(how, sizeof how, "%ux", h / z.h);
-                else std::snprintf(how, sizeof how, "uneven pixels");
-                add_choice(z.w, z.h, how);
-            }
-            return;
-        }
-#endif
-        if (w * 9u >= h * 16u) { bh = h; bw = h * 16u / 9u; }
-        else { bw = w; bh = w * 9u / 16u; }
-    }
-    for (const Size& z : kSizes) {
-        char how[40] = "16:9";
-        if (bh != 0u) {
-            if (bh % z.h == 0u) std::snprintf(how, sizeof how, "%ux", bh / z.h);
-            else std::snprintf(how, sizeof how, "uneven pixels");
-        }
+    // Then the shape's sizes, each labelled by how it scales into the panel's
+    // largest box of that shape (the host keeps the picture's aspect: bars
+    // where the panel's shape differs): a whole number fills it with even
+    // pixels.
+    const Ratio& q = kRatios[g_ratio];
+    unsigned bh = 0;   // that box's height
+    if (g_panel_w != 0u && g_panel_h != 0u)
+        bh = g_panel_w * q.den >= g_panel_h * q.num ? g_panel_h : g_panel_w * q.den / q.num;
+    for (const Size& z : q.sizes) {
+        if (z.w == 0u) break;
+        char how[40];
+        if (bh == 0u) std::snprintf(how, sizeof how, "%s", q.label);
+        else if (bh % z.h == 0u) std::snprintf(how, sizeof how, "%ux", bh / z.h);
+        else std::snprintf(how, sizeof how, "uneven pixels");
         add_choice(z.w, z.h, how);
     }
+}
+
+// 480 wide (16:9's 480x270) is never picked for the player: the maps are not
+// made for it, it is experimental (the user, 2026-11-21, after a change of
+// ratio on the Mac went 16:10 384x240 -> 16:9 480x270 by the whole-pixel
+// rule). It stays on the list, to be chosen by hand.
+bool auto_pickable(const WidthChoice& c) { return c.width < kMaxViewWidth; }
+
+// The ladder entry for a size: that size; else the authentic view for one no
+// wider or taller than it; else the wide size nearest it in height (the
+// smaller on a tie), never a 480-wide one. How a size survives a change of
+// shape (16:9's 384x216 becomes 4:3's 288x216) and a size saved for another
+// shape is read.
+unsigned choice_like(unsigned w, unsigned h) {
+    for (unsigned c = 0; c < g_choice_count; ++c)
+        if (g_choices[c].width == w && g_choices[c].height == h) return c;
+    if ((w <= 240u && h <= 160u) || g_choice_count < 2u) return 0u;
+    unsigned best = 1u, best_d = ~0u;
+    for (unsigned c = 1; c < g_choice_count; ++c) {
+        if (!auto_pickable(g_choices[c])) continue;
+        const unsigned d = g_choices[c].height > h ? g_choices[c].height - h : h - g_choices[c].height;
+        if (d < best_d) { best_d = d; best = c; }
+    }
+    return best;
 }
 
 const char* const kKeys[kCount] = {"highlight", "second_screen",
@@ -332,6 +378,8 @@ void save() {
     std::fprintf(f, "debug_map=%u\n", g_debug_map.load());
     std::fprintf(f, "width=%u\n", g_widescreen_width);
     std::fprintf(f, "height=%u\n", g_widescreen_height);
+    // Only a picked shape: otherwise the screen's own decides at each start.
+    if (g_ratio_chosen) std::fprintf(f, "ratio=%s\n", kRatios[g_ratio].label);
     std::fprintf(f, "settings_version=%d\n", kSettingsVersion);
     std::fclose(f);
 }
@@ -354,7 +402,7 @@ unsigned width_choice_height(unsigned i) {
 
 unsigned width_choice_current() {
     for (unsigned i = 0; i < g_choice_count; ++i)
-        if (g_choices[i].width == g_widescreen_width) return i;
+        if (g_choices[i].width == g_widescreen_width && g_choices[i].height == g_widescreen_height) return i;
     return g_choice_count;  // one past the end: no entry matches
 }
 
@@ -368,6 +416,15 @@ void width_choice_set(unsigned i) {
                  g_widescreen_height);
     std::fflush(stderr);
 }
+
+unsigned ratio_choice_count() { return kRatioCount; }
+const char* ratio_choice_label(unsigned i) { return i < kRatioCount ? kRatios[i].label : ""; }
+void ratio_choice_shape(unsigned i, unsigned* num, unsigned* den) {
+    const Ratio& q = kRatios[i < kRatioCount ? i : kRatio169];
+    *num = q.num;
+    *den = q.den;
+}
+unsigned ratio_choice_current() { return g_ratio; }
 
 unsigned view_choice_width()  { return g_settings_ready ? g_widescreen_width : 0u; }
 unsigned view_choice_height() { return g_settings_ready ? g_widescreen_height : 0u; }
@@ -507,7 +564,7 @@ float shadow_sun_degrees() { return g_shadow_choice != 0 ? kShadowSunDegrees : 0
 namespace {
 struct Preset {
     const char* label;
-    unsigned width;          // the view's width (its ladder entry gives the height)
+    unsigned view_h;         // the view's lines: the shape's size nearest (160: the authentic 240x160)
     bool perspective, dof;
     unsigned blur;           // depth of field strength (kBlurChoices)
     unsigned ao, shadows;    // kAoChoices, kShadowChoices
@@ -529,27 +586,26 @@ struct Preset {
 // Saved settings that were 1.1's Enhanced exactly are moved to this one once
 // (kSettingsVersion, settings_init).
 const Preset kPresets[] = {
-    {"Enhanced", 384u, true, true, 1u, 1u, 1u, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 2},
-    {"Original", 240u, false, false, 1u, 0u, 0u, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 1},
+    {"Enhanced", 216u, true, true, 1u, 1u, 1u, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 2},
+    {"Original", 160u, false, false, 1u, 0u, 0u, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 1},
 };
 constexpr unsigned kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
-// The ladder entry for a preset's width: that width, else (a panel whose
-// ladder has no 384) the widest for Enhanced.
+// The ladder entry for a preset's size: the authentic view, or the size of
+// the shape nearest its lines (Enhanced: 384x216 at 16:9, 288x216 at 4:3,
+// 320x200 at 16:10, 240x240 at 1:1).
 unsigned preset_width_choice(const Preset& p) {
-    for (unsigned c = 0; c < g_choice_count; ++c)
-        if (g_choices[c].width == p.width) {
+    if (p.view_h <= 160u || g_choice_count < 2u) return 0u;
+    const unsigned c = choice_like(0u, p.view_h);
 #if !defined(__ANDROID__)
-            // On a computer, a size that scales unevenly into the panel gives
-            // way to the widest one with whole pixels (the Deck: 384x240 is
-            // 3.33x, so Enhanced starts at 320x200, 4x). Android keeps the
-            // preset's own size, as shipped.
-            if (p.width > 240u && !g_choices[c].whole)
-                for (unsigned w = g_choice_count; w-- > 1u;)
-                    if (g_choices[w].whole) return w;
+    // On a computer, a size that scales unevenly into the panel gives way to
+    // the widest one with whole pixels (the Deck: 384x240 is 3.33x, so
+    // Enhanced starts at 320x200, 4x). Android keeps the preset's own size,
+    // as shipped.
+    if (!g_choices[c].whole)
+        for (unsigned w = g_choice_count; w-- > 1u;)
+            if (g_choices[w].whole && auto_pickable(g_choices[w])) return w;
 #endif
-            return c;
-        }
-    return p.width > 240u && g_choice_count > 0 ? g_choice_count - 1u : 0u;
+    return c;
 }
 // The preset's values into the settings, nothing applied or saved.
 void preset_fields(const Preset& p) {
@@ -591,7 +647,8 @@ void preset_fields(const Preset& p) {
 bool preset_matches(const Preset& p) {
     auto on = [](Setting s) { return g_on[static_cast<int>(s)]; };
     const unsigned c = preset_width_choice(p);
-    if (c >= g_choice_count || g_choices[c].width != g_widescreen_width) return false;
+    if (c >= g_choice_count || g_choices[c].width != g_widescreen_width ||
+        g_choices[c].height != g_widescreen_height) return false;
     if (on(Setting::Perspective) != p.perspective || on(Setting::DepthOfField) != p.dof) return false;
     if (p.dof && g_blur_choice != p.blur) return false;
     if (p.sound >= 0 && g_sound_choice != static_cast<unsigned>(p.sound)) return false;
@@ -632,6 +689,32 @@ void preset_apply(unsigned i) {
     apply_view_size();
     save();
     std::fprintf(stderr, "settings: preset %s (view %ux%u)\n", p.label, g_widescreen_width, g_widescreen_height);
+    std::fflush(stderr);
+}
+
+// The view's size after its shape changed: a preset's size for the new shape
+// while the settings are that preset's (so the Preset row stays on it: the
+// Deck's Enhanced is 320x200 at 16:10 and 320x180 at 16:9, both whole), else
+// the new shape's size nearest the old.
+namespace {
+void size_for_new_shape(int preset, unsigned old_w, unsigned old_h) {
+    const unsigned c = preset >= 0 ? preset_width_choice(kPresets[preset]) : choice_like(old_w, old_h);
+    g_widescreen_width = g_choices[c].width;
+    g_widescreen_height = g_choices[c].height;
+}
+}  // namespace
+
+void ratio_choice_set(unsigned i) {
+    if (i >= kRatioCount) return;
+    const int preset = preset_current();
+    g_ratio = i;
+    g_ratio_chosen = true;
+    build_width_ladder();
+    size_for_new_shape(preset, g_widescreen_width, g_widescreen_height);
+    apply_view_size();
+    save();
+    std::fprintf(stderr, "settings: ratio = %s, view = %ux%u\n", kRatios[i].label, g_widescreen_width,
+                 g_widescreen_height);
     std::fflush(stderr);
 }
 
@@ -703,17 +786,22 @@ void setting_set(Setting s, bool on) {
 void settings_init(const char* dir, unsigned widescreen_width,
                    unsigned panel_w, unsigned panel_h) {
     g_dir = dir ? dir : "";
-    build_width_ladder(panel_w, panel_h);
+    g_panel_w = std::max(panel_w, panel_h);
+    g_panel_h = std::min(panel_w, panel_h);
+    // The screen's own shape, until the file names one.
+    g_ratio = ratio_for_panel(g_panel_w, g_panel_h);
+    build_width_ladder();
     // Start at whatever the host already resolved, so a device with no
     // widescreen.cfg does not silently gain the extended view here. Take the
     // ladder's height for that width, so the marker file selects a whole size.
     g_widescreen_width = 240u;
     g_widescreen_height = 160u;
-    for (unsigned c = 0; c < g_choice_count; ++c)
+    for (unsigned c = g_choice_count; c-- > 0;)
         if (g_choices[c].width == widescreen_width) {
             g_widescreen_width = g_choices[c].width;
             g_widescreen_height = g_choices[c].height;
         }
+    unsigned saved_w = 0, saved_h = 0;   // the file's view size, resolved once its shape is known
 
     const std::string path = cfg_path();
     if (!path.empty()) {
@@ -736,24 +824,22 @@ void settings_init(const char* dir, unsigned widescreen_width,
                 if (!eq) continue;
                 *eq = '\0';
                 const int value = std::atoi(eq + 1);
-                if (std::strcmp(line, "width") == 0) {
-                    // Only a size this panel actually offers: a config copied
-                    // from another device must not put the view somewhere the
-                    // display cannot show it. The height comes from the
-                    // ladder, never from the file, so the two cannot disagree.
-                    bool found = false;
-                    for (unsigned c = 0; c < g_choice_count; ++c)
-                        if (g_choices[c].width == static_cast<unsigned>(value)) {
-                            g_widescreen_width = g_choices[c].width;
-                            g_widescreen_height = g_choices[c].height;
-                            found = true;
+                // The size is resolved after the loop, against the shape's
+                // list (ratio= is written after it): only a size this panel
+                // offers, so a config copied from another device cannot put
+                // the view where the display cannot show it.
+                if (std::strcmp(line, "width") == 0) { saved_w = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
+                if (std::strcmp(line, "height") == 0) { saved_h = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
+                if (std::strcmp(line, "ratio") == 0) {
+                    char* v = eq + 1;
+                    v[std::strcspn(v, " \r\n")] = '\0';
+                    for (unsigned r = 0; r < kRatioCount; ++r)
+                        if (std::strcmp(v, kRatios[r].label) == 0) {
+                            g_ratio = r;
+                            g_ratio_chosen = true;
                         }
-                    // A wide size no longer offered: kept wide (the 16:9
-                    // fallback below picks the size), not dropped to 240.
-                    if (!found && value > 240) g_widescreen_width = static_cast<unsigned>(value);
                     continue;
                 }
-                if (std::strcmp(line, "height") == 0) continue;  // derived
                 if (std::strcmp(line, "debug_map") == 0) {
                     if (value >= 0 && static_cast<unsigned>(value) <= kMapCount)
                         g_debug_map = static_cast<unsigned>(value);
@@ -807,17 +893,35 @@ void settings_init(const char* dir, unsigned widescreen_width,
             g_file_version = version;
         }
     }
-    // A wide view not on the list (a phone's old 20:9 size, from before the
-    // list was 16:9 only): the Enhanced size instead.
-    if (g_widescreen_width > 240u) {
-        bool listed = false;
-        for (unsigned c = 0; c < g_choice_count; ++c) listed |= g_choices[c].width == g_widescreen_width;
-        if (!listed)
-            for (unsigned c = 0; c < g_choice_count; ++c)
-                if (g_choices[c].width == 384u) {
-                    g_widescreen_width = g_choices[c].width;
-                    g_widescreen_height = g_choices[c].height;
-                }
+    // The file's shape and size. A size not on the shape's list (another
+    // shape's, or a phone's old 20:9 size from before the list was 16:9 only)
+    // becomes the list's size nearest it in height; a file from before
+    // height= was saved takes 16:9's.
+    if (g_ratio_chosen) build_width_ladder();
+    if (saved_w != 0u) {
+        if (saved_h == 0u) saved_h = saved_w <= 240u ? 160u : saved_w * 9u / 16u;
+        const unsigned c = choice_like(saved_w, saved_h);
+        g_widescreen_width = g_choices[c].width;
+        g_widescreen_height = g_choices[c].height;
+        // Not on the list (saved under another shape): a preset's size there
+        // (as many lines) with the rest of the settings that preset's takes
+        // the preset's size for this shape, as a change of ratio in the menu
+        // does; a size picked by hand stays the nearest.
+        if (g_choices[c].width != saved_w || g_choices[c].height != saved_h)
+            for (unsigned p = 0; p < kPresetCount; ++p) {
+                if (kPresets[p].view_h != saved_h) continue;
+                const unsigned pc = preset_width_choice(kPresets[p]);
+                const unsigned kw = g_widescreen_width, kh = g_widescreen_height;
+                g_widescreen_width = g_choices[pc].width;
+                g_widescreen_height = g_choices[pc].height;
+                if (preset_matches(kPresets[p])) break;
+                g_widescreen_width = kw;
+                g_widescreen_height = kh;
+            }
+    } else if (g_ratio_chosen) {
+        const unsigned c = choice_like(g_widescreen_width, g_widescreen_height);
+        g_widescreen_width = g_choices[c].width;
+        g_widescreen_height = g_choices[c].height;
     }
     // Settings saved before version 2 that are 1.1's Enhanced exactly (lifting
     // off, all else Enhanced: a player who never changed anything) become
@@ -858,10 +962,11 @@ void settings_init(const char* dir, unsigned widescreen_width,
                  g_widescreen_width, g_widescreen_height, g_sound_choice,
                  g_on[0] ? 1 : 0, g_on[1] ? 1 : 0, g_on[2] ? 1 : 0, g_on[3] ? 1 : 0,
                  g_on[4] ? 1 : 0, g_on[5] ? 1 : 0, g_on[8] ? 1 : 0, g_on[9] ? 1 : 0);
-    std::fprintf(stderr, "settings: view ladder (%u):", g_choice_count);
+    std::fprintf(stderr, "settings: ratio %s (%s; panel %ux%u), view ladder (%u):", kRatios[g_ratio].label,
+                 g_ratio_chosen ? "chosen" : "the screen's", g_panel_w, g_panel_h, g_choice_count);
     for (unsigned c = 0; c < g_choice_count; ++c)
         std::fprintf(stderr, " %s%ux%u",
-                     g_choices[c].width == g_widescreen_width ? "*" : "",
+                     c == width_choice_current() ? "*" : "",
                      g_choices[c].width, g_choices[c].height);
     std::fprintf(stderr, "\n");
     std::fflush(stderr);

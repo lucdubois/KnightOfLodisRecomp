@@ -23666,3 +23666,91 @@ off. `settings_version=2` is now written; a file without it whose settings
 are exactly 1.1's Enhanced is moved to today's Enhanced once. Checked: 1.1's
 Enhanced file -> on; with one other change -> untouched; version 2 with
 them off -> stays off.
+
+## Options > Display > Ratio: the picture's shape (2026-11-21)
+
+Asked: a Ratio row in the Display page, 1:1, 4:3, 3:2, 16:10 or 16:9, the
+one that suits the top (or only) screen chosen by itself, on Android and the
+desktop; the desktop's window sizes to follow it. Until now the view sizes
+were 16:9 everywhere (asked 2026-11-17), 16:10 only on a 16:10 computer (the
+Deck): a 4:3 tablet showed a 16:9 picture with an eighth of the screen black
+above and below.
+
+- **kol_settings** `kRatios`: each shape's sizes, the authentic 240x160 first
+  in every list. 1:1 240x240 256x256 270x270 280x280; 4:3 256x192 288x216
+  320x240 360x270; 3:2 270x180 300x200 324x216 360x240 420x280; 16:10
+  256x160 320x200 384x240 432x270; 16:9 284x160 320x180 384x216 480x270. The
+  renderer's range is 240..480 wide, 160..280 tall (GbaPpu kMaxRender*), so
+  4:3 and 1:1 grow taller, not wider. 240x240 is the only size at the game's
+  own width (margins above and below only); 240x240, 256x192 and 280x280
+  were rendered on B_rictor before the lists were made: whole, margins filled.
+- **The screen's shape** (`ratio_for_panel`): nearest by the log of the
+  ratio. 1920x1080 and 20:9 phones 16:9, the Deck 16:10, 1024x768 4:3,
+  2160x1440 3:2, 720x720 1:1 (KOL_PANEL runs). On a Mac the notch is taken off
+  the screen first (`mac_main_screen_top_inset`, NSScreen safeAreaInsets):
+  full screen sits below it, so a notched MacBook's 1512x982 (nearest 3:2)
+  plays as 1512x945, 16:10. Not seen on a notched Mac; this one has no notch.
+- **Saved** as `ratio=4:3` only once picked; otherwise the screen decides at
+  every start. A size is now known by width AND height (320 is 320x180,
+  320x200 or 320x240; 240 is Original or 1:1's 240x240). A saved size not on
+  the shape's list becomes the list's nearest in height, except that a
+  preset's own size (as many lines: Enhanced 216, Original 160) with the
+  rest of the settings that preset's becomes the preset's size for the
+  shape, so the Preset row stays on it. Presets name lines now, not a width:
+  Enhanced is the size nearest 216 lines (384x216, 288x216, 324x216, 320x200,
+  240x240), on a computer the widest whole-pixel size when that one is
+  uneven, as before.
+- **Changing the ratio** (`ratio_choice_set`) rebuilds the list and keeps a
+  preset's size (or the nearest one); Original stays Original.
+- **Menu:** the Display page is on Android too (Ratio only); on a computer
+  Display, Ratio, Window Size.
+- **Desktop window sizes** (`kWindowSizes`): common sizes of each shape
+  (1:1 720..2160, 4:3 800x600..2880x2160, 3:2 720x480..3240x2160, 16:10,
+  16:9); Window Size offers the chosen shape's that fit the usable area. A
+  change of ratio puts the window at the new shape's size nearest its height
+  (at once in Window mode; for going back to a window in full screen);
+  a window already of that shape stays.
+
+Checked (Mac, player mode, KOL_PANEL): the lists and picks above; a 16:9
+Enhanced file on a 4:3 screen -> 256x192 (288x216 is 3.56x at 768) with the
+Preset row on Enhanced; a hand-picked 480x270 on 4:3 -> 360x270; ratio=4:3
+on a 1080p screen kept; the menu's Ratio stepped from 16:9 to 16:10 ->
+432x270 (Enhanced's whole size at 1080), ratio=16:10 saved, the window
+960x600; the Display page and its HELP rendered (KOL_MENU_PPM). Both render
+invariants (66e13ab2 / 9054c456). Not tried on a device.
+
+### The options menu in two pages (2026-11-21)
+
+Asked the same day: the game's options on a page of their own, the
+enhancements on another, Save States and Achievements staying on the first
+level. The main page is now **Game Options** (page 10: the cartridge's
+twelve), **Enhancement Options** (page 11: Preset, Display, Graphics,
+Audio, Gameplay, Cheats, Mod, Licenses), Save States, Achievements, then
+Quit Game on a computer and Debug in a dev build. Quit Game stays on the
+first level (my call, said to the user): it is how a computer with only a
+controller leaves the game. The "- Enhancements -" heading is gone.
+
+- Back goes to the page's parent (`parent_page`: Enhancement Options' five
+  pages to it, Layers to Debug, Save States where it was opened from), the
+  hand on the row that opened the page; `g_return_sel` is gone.
+- The game's own OPTION command (its system menu) opens the menu on Game
+  Options, first option, and Back/B there closes it, back to the game's
+  menu, as its own window did (`g_game_option`).
+
+Checked (KOL_MENU_PPM): the main page, Enhancement Options, Game Options
+(the cartridge's names and HELP), B from Graphics -> Enhancement Options on
+Graphics' row; DZ (the system menu on Option): A opens Game Options, B
+closes it and the game's menu is back (present dump). Not tried on a device.
+
+
+### Never 480 wide by itself (2026-11-21)
+
+The user, on the Mac: a change of ratio went to 480 wide, which the maps are
+not made for (experimental). Their 16:10 Enhanced (384x240) -> 16:9 took
+Enhanced's size, 384x216, uneven on a 1440x900 screen, so the desktop's
+widest-whole-pixel rule picked 480x270 (3x). Now nothing picks a 480-wide
+size for the player (`auto_pickable`): not a preset, the whole-pixel rule, a
+change of ratio, or a size saved under another shape. 480x270 stays in View
+Size, to be chosen by hand; a saved 480x270 of the same shape is kept as the
+player's own choice. Checked: 16:10 384x240 -> 16:9 gives 384x216 at
+1440x900, 1280x800 and 1680x1050 (menu, KOL_MENU_PPM).

@@ -96,16 +96,16 @@ void setting_set(Setting s, bool on);
 
 // ── The extended view's SIZE ──────────────────────────────────────────────
 // The whole extended view is this one list: 240x160 (the authentic view) plus
-// an entry per integer scale the panel supports. Each entry carries its HEIGHT
-// as well as its width, because a view widened at scale N wants the matching
-// height at scale N — on a 1080p handheld 320x180, 384x216 and 480x270 each
-// fill the panel exactly with no bars. Asking for them separately renders a
-// frame at the wrong aspect in between, which is why this is one choice.
+// the sizes of the chosen shape (the ratio below). Each entry carries its
+// HEIGHT as well as its width, because a view widened at scale N wants the
+// matching height at scale N — on a 1080p handheld 320x180, 384x216 and
+// 480x270 each fill the panel exactly with no bars. Asking for them
+// separately renders a frame at the wrong aspect in between, which is why
+// this is one choice. An entry is known by both: 320 wide is 320x180 at
+// 16:9, 320x200 at 16:10, 320x240 at 4:3, and 240 wide is also 1:1's 240x240.
 //
-// The ladder is derived from the panel the game is running on, by the same
-// arithmetic `widescreen.cfg=auto` uses. `auto` still picks the first integer
-// entry at launch; this lets the player move along the ladder while playing.
-// The choice persists beside the toggles.
+// Each entry is labelled by how it scales into the panel. The choice
+// persists beside the toggles (width= and height=).
 unsigned width_choice_count();
 const char* width_choice_label(unsigned i);
 unsigned width_choice_width(unsigned i);
@@ -119,6 +119,18 @@ unsigned width_choice_current();
 unsigned view_choice_width();
 unsigned view_choice_height();
 void width_choice_set(unsigned i);
+
+// ── The picture's SHAPE (Options > Display > Ratio) ──────────────────────
+// 1:1, 4:3, 3:2, 16:10 or 16:9: the list above holds the authentic 240x160
+// and that shape's sizes. Unless the player picks one (saved as ratio=), the
+// shape nearest the screen's own (the top screen on a two-screen device).
+// Setting one rebuilds the list and keeps the view's size as near as it has
+// (16:9's 384x216 becomes 4:3's 288x216; Original stays Original).
+unsigned ratio_choice_count();
+const char* ratio_choice_label(unsigned i);                     // "16:9"
+void ratio_choice_shape(unsigned i, unsigned* num, unsigned* den);   // 16, 9
+unsigned ratio_choice_current();
+void ratio_choice_set(unsigned i);
 
 // ── The depth of field's STRENGTH ─────────────────────────────────────────
 // How far the farthest terrain is blurred: the radius of its blur disc, in

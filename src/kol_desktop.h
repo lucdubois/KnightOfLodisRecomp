@@ -60,5 +60,10 @@ void window_size_at(unsigned i, int* w, int* h);
 int window_size_current();                  // the chosen size's index, -1 none
 void window_size_now(int* w, int* h);       // the window's size now
 void window_size_step(int dir);             // the next size up (+1) or down (-1)
+// Options > Display > Ratio changed (kol_settings ratio_choice_set): the
+// window sizes offered are the new shape's, and the window takes that shape
+// (at once in Window mode; for going back to a window in full screen).
+// Nothing on Android.
+void display_ratio_changed();
 
 }  // namespace kol

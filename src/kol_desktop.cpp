@@ -33,6 +33,12 @@
 #include "kol_sheet.h"
 
 namespace kol {
+#if defined(__APPLE__)
+int mac_main_screen_top_inset();   // kol_setup_mac.mm
+#endif
+}  // namespace kol
+
+namespace kol {
 namespace {
 
 bool g_player = false;
@@ -395,21 +401,32 @@ std::string g_display_cfg;          // display.cfg's path, empty outside player 
 int g_saved_full = -1;              // display.cfg's mode=, -1 none
 int g_saved_w = 0, g_saved_h = 0;   // display.cfg's window=, 0 none
 
-// Common window sizes, smallest first, 16:9 and 16:10. A display offers its
-// own shape's (the Steam Deck's 1280x800 is 16:10: its taskbar left no 16:10
-// size that fit, only 16:9 ones, 2026-11-20); one of neither shape, all.
+// Common window sizes, smallest first. Options > Display > Ratio picks the
+// shape (kol_settings ratio_choice_*; 2026-11-21: the window's sizes follow
+// it, so the window takes the picture's shape); they were the display's own
+// shape's, 16:9 or 16:10, before. Within one shape a size is known by its
+// height, so the window sizes ask nothing of the list's order across shapes.
 constexpr int kWindowSizes[][2] = {
-    {960, 540},   {960, 600},   {1024, 640},  {1152, 720},  {1280, 720},  {1280, 800},
-    {1366, 768},  {1440, 900},  {1600, 900},  {1680, 1050}, {1920, 1080}, {1920, 1200},
-    {2560, 1440}, {2560, 1600}, {3200, 1800}, {3840, 2160}};
+    // 1:1
+    {720, 720},   {800, 800},   {960, 960},   {1080, 1080}, {1200, 1200}, {1440, 1440}, {1600, 1600},
+    {2160, 2160},
+    // 4:3
+    {800, 600},   {960, 720},   {1024, 768},  {1152, 864},  {1280, 960},  {1400, 1050}, {1600, 1200},
+    {1920, 1440}, {2048, 1536}, {2880, 2160},
+    // 3:2 (the game's own: 720x480 is 3x, 960x640 4x, ...)
+    {720, 480},   {960, 640},   {1080, 720},  {1200, 800},  {1440, 960},  {1680, 1120}, {1920, 1280},
+    {2160, 1440}, {2400, 1600}, {3240, 2160},
+    // 16:10
+    {960, 600},   {1024, 640},  {1152, 720},  {1280, 800},  {1440, 900},  {1680, 1050}, {1920, 1200},
+    {2560, 1600},
+    // 16:9
+    {960, 540},   {1280, 720},  {1366, 768},  {1600, 900},  {1920, 1080}, {2560, 1440}, {3200, 1800},
+    {3840, 2160}};
 
-// The shape a size or a display is: 0 16:9 (or near: 1366x768), 1 16:10, -1 other.
-int size_shape(int w, int h) {
-    if (w <= 0 || h <= 0) return -1;
-    const double r = static_cast<double>(w) / h;
-    if (std::fabs(r - 16.0 / 9.0) < 0.03) return 0;
-    if (std::fabs(r - 16.0 / 10.0) < 0.03) return 1;
-    return -1;
+// Whether a size is the chosen ratio's shape (1366x768 passes as 16:9).
+bool size_is_ratio(int w, int h, unsigned num, unsigned den) {
+    if (w <= 0 || h <= 0 || num == 0u || den == 0u) return false;
+    return std::fabs(static_cast<double>(w) * den / (static_cast<double>(h) * num) - 1.0) < 0.01;
 }
 
 void display_save() {
@@ -656,6 +673,14 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
             panel_h = static_cast<unsigned>(bounds.h);
         }
     }
+#if defined(__APPLE__)
+    // A notched MacBook: full screen is below the notch, so that is the
+    // screen's shape (16:10, not the 3:2 the whole panel is nearest).
+    if (panel_w != 0u && panel_h != 0u) {
+        const unsigned inset = static_cast<unsigned>(std::max(mac_main_screen_top_inset(), 0));
+        if (inset > 0u && inset < panel_h / 4u) panel_h -= inset;
+    }
+#endif
     // Desktop check: KOL_PANEL=1280x800 stands in for the display's size (the
     // Deck's, on another machine). Not in a public build.
     if constexpr (kDevTools)
@@ -684,17 +709,21 @@ void display_full_screen_set(bool full) {
 }
 
 namespace {
-// The sizes that fit the display's usable area (all, until it is known).
+// The chosen shape's sizes that fit the display's usable area (all of them,
+// until it is known), by height.
 std::vector<int> window_sizes_fitting() {
     const int usable = gbarecomp::g_host_display_usable;
     const int uw = (usable >> 16) & 0xFFFF, uh = usable & 0xFFFF;
-    const int full = gbarecomp::g_host_display_size;
-    const int shape = size_shape((full >> 16) & 0xFFFF, full & 0xFFFF);
+    unsigned num = 16, den = 9;
+    ratio_choice_shape(ratio_choice_current(), &num, &den);
     std::vector<int> fit;
     for (int i = 0; i < static_cast<int>(std::size(kWindowSizes)); ++i)
         if ((usable == 0 || (kWindowSizes[i][0] <= uw && kWindowSizes[i][1] <= uh)) &&
-            (shape < 0 || size_shape(kWindowSizes[i][0], kWindowSizes[i][1]) == shape))
+            size_is_ratio(kWindowSizes[i][0], kWindowSizes[i][1], num, den))
             fit.push_back(i);
+    if (fit.empty())   // none fits: the shape's smallest
+        for (int i = 0; i < static_cast<int>(std::size(kWindowSizes)) && fit.empty(); ++i)
+            if (size_is_ratio(kWindowSizes[i][0], kWindowSizes[i][1], num, den)) fit.push_back(i);
     if (fit.empty()) fit.push_back(0);
     return fit;
 }
@@ -746,6 +775,33 @@ void window_size_step(int dir) {
     display_save();
 }
 
+// A new ratio: the window takes the new shape at the size nearest its height
+// (the smaller on a tie), at once in Window mode, on going back to a window in
+// full screen. A window already of that shape stays as it is.
+void display_ratio_changed() {
+    int ww = 0, wh = 0;
+    const bool full = display_full_screen();
+    if (full) { ww = g_saved_w; wh = g_saved_h; }
+    else window_size_now(&ww, &wh);
+    if (ww <= 0 || wh <= 0) return;   // nothing chosen, nothing known: the window as it is
+    unsigned num = 16, den = 9;
+    ratio_choice_shape(ratio_choice_current(), &num, &den);
+    if (size_is_ratio(ww, wh, num, den)) return;
+    const unsigned n = window_size_count();
+    int best_w = 0, best_h = 0, best_d = 1 << 30;
+    for (unsigned i = 0; i < n; ++i) {
+        int w = 0, h = 0;
+        window_size_at(i, &w, &h);
+        const int d = std::abs(h - wh);
+        if (d < best_d) { best_d = d; best_w = w; best_h = h; }
+    }
+    if (best_w <= 0) return;
+    g_saved_w = best_w;
+    g_saved_h = best_h;
+    if (!full) gbarecomp::g_host_window_size_request = (g_saved_w << 16) | g_saved_h;
+    display_save();
+}
+
 }  // namespace kol
 
 #else   // Android has its own front end (android/app/jni/main_android.cpp).
@@ -758,6 +814,7 @@ void window_size_at(unsigned, int* w, int* h) { *w = *h = 0; }
 int window_size_current() { return -1; }
 void window_size_now(int* w, int* h) { *w = *h = 0; }
 void window_size_step(int) {}
+void display_ratio_changed() {}
 bool desktop_player_mode() { return false; }
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;

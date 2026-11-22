@@ -24,4 +24,17 @@ bool setup_mac_open_panel(const char* message, std::string* path) {
     }
 }
 
+// The main screen's notch: the height (points) of the strip above the safe
+// area, 0 on a screen without one. A full-screen window is placed below it,
+// so a notched MacBook's 1512x982 plays as 1512x945, 16:10
+// (kol_desktop: Options > Display > Ratio's choice for the screen).
+int mac_main_screen_top_inset() {
+    @autoreleasepool {
+        NSScreen* screen = [[NSScreen screens] firstObject];
+        if (!screen) return 0;
+        if (@available(macOS 12.0, *)) return static_cast<int>(screen.safeAreaInsets.top + 0.5);
+        return 0;
+    }
+}
+
 }  // namespace kol
