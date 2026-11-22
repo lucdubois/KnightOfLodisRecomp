@@ -349,6 +349,11 @@ int key_hook(int scancode, int down) {
     // F5 saves a new numbered state and F6 loads the latest (asked
     // 2026-11-21), as Shift+F1 and F1 do (the host's slot 1, which
     // kol_states numbers); with Shift too, controller or not.
+    // KOL_AI_ARMY=1 (dev): F7 hands this side's army to the AI, and back.
+    if (scancode == SDL_SCANCODE_F7 && ai_army_enabled()) {
+        if (down) ai_army_toggle();
+        return 1;
+    }
     if (scancode == SDL_SCANCODE_F5 || scancode == SDL_SCANCODE_F6) {
         if (down) {
             if (scancode == SDL_SCANCODE_F5) states_save_new();

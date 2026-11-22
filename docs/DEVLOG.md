@@ -23772,3 +23772,51 @@ perspective on the Metal fallback draws none. gbarecomp now asks for the
 The packaged app logs `renderer=opengl`, the GL warp mesh and the disc blur
 ready. The Windows build forces direct3d11 and has the same gap (not
 changed: it has never run on a real Windows PC).
+
+## VS Mode over a linked pair, and an AI opponent (branch vs-link, 2026-11-21)
+
+Asked: how the link-cable battle works, then whether VS Mode could be played
+against an AI. Quest Mode (title screen) has Quest (exploration, no cable),
+VS and Exchange (cable). gbarecomp's `GBARECOMP_LINK` now links two runs
+(ENHANCEMENTS "The link cable between two runs"): VS and Exchange work
+between two windows (the user played setup and turns).
+
+**The protocol** (GBARECOMP_LINK_LOG, both sides logged the same 300k words):
+Nintendo's multiplayer library pattern (SIOCNT 0x6033, timer 3 every ~1.19 ms
+kicks a transfer; state struct 0x0300102A; MultiSioMain 0x08006210). One
+packet per frame per side: FEFE, counter, checksum, 7 words. Messages: idle
+0x0001 / 0x21 / 0x41 / 0x61 / 0x81 handshakes; 0x2A named sync points
+("formend", "atwait", "getemb", "okemb", "atok", "battle"...); blocks
+0x4C header (length, source, destination) / 0x4E chunks / 0x54 end, 0x4F a
+refusal. Battle start: each side sends its 5 units' records (0x68 from
+0x02001420) and battle entries (0x1C from 0x02001AA0) into the other's enemy
+slots, checksummed. Each action: the acting side sends a 4-halfword command
+from 0x0202B570 (0x45 / 0x46). So moves travel as commands, not inputs.
+
+**The AI experiment** (dev `KOL_AI_ARMY=1` + F7 in kol_states / kol_desktop):
+- A battle entry's +0x17 flags: 0x40 player, 0x41 its leader, 0x42 map 2's
+  allied AI army, 0xC0/0xC1 enemies, 0x20 "the other game's, over the link";
+  +0x00 = 0x80 | roster index for a roster unit, 0xFF otherwise.
+- Story battle (BL_enemy_turn): setting bit 1 on the player's units makes
+  the AI play their phase (Alphonse done at +5600 frames, Allos +6400; the
+  control run waits for input). The fork is in unit-turn step 1: 0x0806D924
+  returns a unit (AI path, writes at 0x0806AC5A) or 0 (the player's cursor,
+  0x0806AD6C).
+- VS: the same marks (and also +0x00 = 0xFF, as an allied army) leave the
+  turn the player's: on the linked headless pair the parent's own unit
+  marked 0xFF/0x43 before its first turn still took 0x0806AD6C. Set during
+  the battle-start exchange, the marks break its checksum (endless 0x4F on
+  "Now loading").
+- Mode byte 0x020012E0 = 4 in Quest battles (2 in story); flags 0x020011CC
+  bit 7 = 1, bit 20 = 0 in VS; the picker path in 0x0806D924 then reaches
+  0x08097098 in both, yet VS returns 0. Open: why.
+
+**Headless pair** (session scratchpad rig2.py, gone next session; rebuild
+from this): two `--tcp` runs with GBARECOMP_LINK parent/child; the parent
+steps frames, the child is `resume`d (the link holds it to the parent; frame
+steps of both deadlock, their step ends differ). From `connecting.state`
+(Quest menu, VS, eight NAVI pages): A both = attack order (parent 1st);
+roulette; Winning Condition (parent); FIGHT IT OUT; deploy: A (Alphonse),
+A..., facing; R, A (Start Game), Up, A ("Start battle?" defaults to No);
+leader: A, A, Up, A ("Appoint as leader?" defaults to No); the battle. Pair
+save states fail (the child cannot park mid-link).

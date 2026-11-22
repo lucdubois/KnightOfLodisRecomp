@@ -2243,6 +2243,7 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
     kol::debug_scene_camera_tick();
     kol::tile_edit_test_tick(f->frame_count);
     kol::states_test_tick();
+    kol::ai_army_tick();
     kol::edit_panel_test_tick(f->frame_count);
     // KOL_SAVE_STATE_AT=<frame>[,<slot>] (headless runs): one save state at
     // that absolute frame, to the ROM's .state<slot> (default 9), the way

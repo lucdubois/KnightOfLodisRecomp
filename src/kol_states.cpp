@@ -3,6 +3,7 @@
 #include "kol_states.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@
 
 #include "gba_bus.h"
 #include "gba_ppu.h"
+#include "kol_dev.h"
 #include "kol_menu.h"
 #include "kol_settings.h"
 #include "runtime.h"
@@ -352,6 +354,73 @@ void states_load(int number) {
     }
     std::fprintf(stderr, "states: load %04d picked\n", number);
     gbarecomp::runtime_request_state_load(kPickSlot);
+}
+
+// KOL_AI_ARMY=1 (dev builds; 2026-11-21, the VS-against-the-AI experiment):
+// the game's own AI plays this player's army. A battle entry's flag byte
+// (+0x17) has bit 1 set for the armies the game plays itself (map 2's
+// allied army: 0x42; the player's 0x40, its leader 0x41; enemies 0xC0/0xC1).
+// Set on the player's own units (+0x00 = 0x80 | roster index), the enemy
+// turn runs on into theirs, the AI phase flag stays up and they act by
+// themselves (BL_enemy_turn: Alphonse done +5600 frames, Allos +6400; the
+// control run waits for input). A host poke, for the experiment only: the
+// real thing goes through a reviewed hook.
+//
+// In VS Mode the battle starts with each side sending its units' records and
+// battle entries to the other, checksummed: set during that exchange, the bit
+// broke it (the receiver refused the block, both resent it for ever on "Now
+// loading"). So it is a key now: F7 (desktop, with KOL_AI_ARMY=1) hands the
+// army to the AI once the battle runs, and takes it back.
+namespace {
+std::atomic<bool> g_ai_army_active{false};
+}  // namespace
+
+bool ai_army_enabled() {
+    if constexpr (!kol::kDevTools) return false;
+    static const bool on = [] {
+        const char* e = std::getenv("KOL_AI_ARMY");
+        return e && *e == '1';
+    }();
+    return on;
+}
+
+void ai_army_toggle() {
+    if (!ai_army_enabled()) return;
+    const bool now = !g_ai_army_active.load();
+    g_ai_army_active.store(now);
+    std::fprintf(stderr, "ai-army: the AI %s this army\n", now ? "plays" : "no longer plays");
+}
+
+void ai_army_tick() {
+    if (!ai_army_enabled()) return;
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
+    if (!ew) return;
+    // The slots taken (this game's own units, linked to its roster: +0x00 =
+    // 0x80 | index, on either side) and their roster byte, to give back.
+    // In VS Mode bit 1 alone did not do it (the child's own units, in the
+    // enemy slots at 0xC1, stayed the player's), so they are made what the
+    // game's own AI armies are: no roster link (0xFF) and bit 1 (map 2's
+    // allied army: 0xFF / 0x42). The other game's units there are 0xFF with
+    // +0x20 (theirs, over the link): never touched.
+    static std::uint8_t taken[16] = {};   // the roster byte, 0 = not taken
+    const bool on = g_ai_army_active.load();
+    for (int i = 0; i < 16; ++i) {
+        std::uint8_t* e = ew + 0x1AA0 + i * 0x1C;
+        if (taken[i] && (e[0x17] & 0x20)) {   // the slot now holds the other game's unit: let go
+            e[0x17] &= static_cast<std::uint8_t>(~0x02u);
+            taken[i] = 0;
+            continue;
+        }
+        if (on) {
+            if (!taken[i] && (e[0] & 0x80) && e[0] != 0xFF && !(e[0x17] & 0x20)) taken[i] = e[0];
+            if (taken[i]) { e[0] = 0xFF; e[0x17] |= 0x02; }
+        } else if (taken[i]) {
+            e[0] = taken[i];
+            e[0x17] &= static_cast<std::uint8_t>(~0x02u);
+            taken[i] = 0;
+        }
+    }
 }
 
 void states_test_tick() {
