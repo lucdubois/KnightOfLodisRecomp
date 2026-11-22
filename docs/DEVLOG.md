@@ -23923,8 +23923,24 @@ those frames; pairs cannot save states):
 - The leader: "Please select a leader." (A), the map cursor, A on a unit
   (its cell blinks), A again, then "Appoint X as leader?".
 
-Test: `KOL_KEY_SCRIPT=<file>` (gbarecomp replay lines) presses the setup
-before the preparation (NAVI pages, attack order, winning condition), since
-GBARECOMP_INPUT_REPLAY would override the filter; `KOL_AI_SEED`,
-`KOL_AI_BOT_LOG=1`. The screens before the preparation are not played by the
-computer yet.
+Test: `KOL_KEY_SCRIPT=<file>` (gbarecomp replay lines) presses keys up to
+its last line (GBARECOMP_INPUT_REPLAY would override the filter);
+`KOL_AI_SEED`, `KOL_AI_BOT_LOG=1`.
+
+Then the screens before it (same day; linked runs only, gbarecomp's SioLink
+has a peer; VS Mode's byte 0x020012E0 is still 0 there):
+- "Connecting... Please wait.", then "Decide which player attacks 1st.":
+  IWRAM 0x03000EF0 is 2 while it takes input; the hand opens on Attack 1st
+  in the parent's game and Attack 2nd in the child's, so A in both agrees.
+- A roulette on the world map picks the battlefield by itself.
+- "<town> is the battlefield. 1st attacker sets Winning Condition.": the
+  world map's state pointer 0x02029BD0 is 0x08246D50 and 0x02029BD4 is 1
+  (0x08246D18 before, 0x08246D34 at FIGHT IT OUT); the hand opens on Defeat
+  Leader, which A takes in the first attacker's game (the other only shows
+  it). Found by dumping both games at each screen and keeping the bytes
+  that differ only there.
+With both games run by the computer from `connecting.state` and no key
+script, both reached the battle (Solea, Defeat Leader) in about 1,700 frames
+and the AIs fought; fully static. A pair where the parent replayed the old
+scripted presses fell out of step (the presses were timed for the slower
+flow): a test-harness limit, not the bot's.

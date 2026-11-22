@@ -27,6 +27,19 @@
 //   the Yes/No box 0x020376A0: +0x1F 3 while it takes input, +0x1E the hand
 //     (0 Yes, 1 No; it opens on No)
 //
+// Before the preparation (from "Connecting... Please wait.", linked runs only:
+// gbarecomp's SioLink has a peer), found the same way on the pair:
+//   "Decide which player attacks 1st.": IWRAM 0x03000EF0 is 2 while it takes
+//     input. A takes the hand's choice, which opens on Attack 1st in the
+//     parent's game and Attack 2nd in the child's: the two defaults agree.
+//   a roulette on the world map picks the battlefield by itself
+//   "<town> is the battlefield. 1st attacker sets Winning Condition.": the
+//     world map's state pointer 0x02029BD0 is 0x08246D50 and 0x02029BD4 is 1;
+//     the hand opens on Defeat Leader, which A takes (when this game attacks
+//     first; the other game only shows it)
+//   "FIGHT IT OUT!", then the preparation (VS Mode's byte 0x020012E0 is 0
+//   until then: it is 4 from the preparation on).
+//
 // A press that changes nothing is pressed again after the state settles; the
 // same press three times on the same target gives the target up (a unit the
 // game will not dispatch, a cell it will not take), and three units given up
@@ -53,6 +66,7 @@
 #include "kol_states.h"
 #include "runtime.h"
 #include "runtime_bus_bridge.h"
+#include "sio_link.h"
 
 namespace kol {
 namespace {
@@ -77,6 +91,9 @@ constexpr std::uint32_t kEntries = 0x1AA0u;
 constexpr std::uint32_t kCellsPtr = 0x29CCCu;
 constexpr std::uint32_t kYesNo = 0x376A0u;
 constexpr std::uint32_t kCursor = 0x0FA0u;        // IWRAM
+constexpr std::uint32_t kAttackMenu = 0x0EF0u;    // IWRAM: 2 while "attacks 1st" takes input
+constexpr std::uint32_t kWorldState = 0x29BD0u;   // the world map's state pointer
+constexpr std::uint32_t kWinCondition = 0x08246D50u;
 
 std::atomic<std::uint16_t> g_out{0};              // keys pressed now (active high)
 std::uint16_t (*g_prev_filter)(std::uint16_t) = nullptr;
@@ -99,6 +116,7 @@ std::vector<int> g_bad_cells;
 int g_leader = -1;               // the leader's cell (x + 32 z)
 bool g_leader_picked = false;    // A pressed on the leader
 unsigned long g_confirm_frame = 0;   // the last confirming A
+unsigned long g_before_frame = 0;    // the last press before the preparation
 bool g_active = false;
 
 bool in(const std::vector<int>& v, int x) {
@@ -270,6 +288,24 @@ void decide(const std::uint8_t* ew, const std::uint8_t* iw, std::uint64_t state)
     }
 }
 
+// The screens before the preparation: only the two menus wait for this game.
+void decide_before(const std::uint8_t* ew, const std::uint8_t* iw, std::uint64_t state) {
+    const std::uint32_t world = ew[kWorldState] | ew[kWorldState + 1] << 8 | ew[kWorldState + 2] << 16 |
+                                static_cast<std::uint32_t>(ew[kWorldState + 3]) << 24;
+    const bool attack = iw[kAttackMenu] == 2;
+    const bool win = world == kWinCondition && ew[kWorldState + 4] == 1;
+    if (!attack && !win) return;
+    // A menu that stays (the other game's to answer): once a second.
+    if (g_repeats >= 2 && g_last_press_state == state && g_frame - g_before_frame < 60) return;
+    g_before_frame = g_frame;
+    press(kA, state, attack ? "attack order (the default)" : "Winning Condition (Defeat Leader)");
+}
+
+bool linked() {
+    gba::SioLink* l = gba::SioLink::instance();
+    return l && l->connected();
+}
+
 }  // namespace
 
 void vs_bot_install() {
@@ -307,7 +343,8 @@ void vs_bot_tick(unsigned long frame) {
     const std::uint8_t* iw = bus ? bus->iwram_ptr() : nullptr;
     if (!ew || !iw) return;
     const bool prep = ew[kMode] == 4 && ew[kPrep] == 0 && (ew[kPhase] == 2 || ew[kPhase] == 3);
-    const bool on = ai_army_active() && prep && !(!g_script.empty() && frame <= g_script.back().first);
+    const bool before = !prep && ew[kMode] != 4 && linked();
+    const bool on = ai_army_active() && (prep || before) && !(!g_script.empty() && frame <= g_script.back().first);
     if (!on) {
         if (g_active) {
             g_active = false;
@@ -331,6 +368,19 @@ void vs_bot_tick(unsigned long frame) {
         return;
     }
     if (g_wait_left > 0) { --g_wait_left; return; }
+    if (before) {
+        const std::uint64_t st = 0xB0000000ull | iw[kAttackMenu] | static_cast<std::uint64_t>(ew[kWorldState]) << 8 |
+                                 static_cast<std::uint64_t>(ew[kWorldState + 4]) << 16;
+        if (st != g_last_state) {
+            g_last_state = st;
+            g_settle = 0;
+            return;
+        }
+        if (++g_settle < kSettle) return;
+        g_settle = 0;
+        decide_before(ew, iw, st);
+        return;
+    }
     // The state the presses act on: phase, sub-state, the map cursor (mode
     // and cell), the list's cursor and the Yes/No box.
     const std::uint64_t state = static_cast<std::uint64_t>(ew[kPhase]) | static_cast<std::uint64_t>(ew[kSub]) << 8 |
