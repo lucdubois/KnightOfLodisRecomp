@@ -23762,3 +23762,13 @@ takes them (Shift with them too, controller or not) to `states_save_new` /
 `states_load_latest` (the host's slot 1, which kol_states numbers), as
 Shift+F1 and F1; the host's own F5/F6 slots are no longer reached. README's
 keyboard table updated. Not pressed on a real keyboard here.
+
+### Depth of field on the Mac app (2026-11-21)
+
+The user: Depth of Field on in the settings, no blur in the Mac app. SDL
+chose Metal there (no hint on macOS); the disc pass needs GL, and with the
+perspective on the Metal fallback draws none. gbarecomp now asks for the
+`opengl` renderer on a Mac window (ENHANCEMENTS "OpenGL on a Mac window").
+The packaged app logs `renderer=opengl`, the GL warp mesh and the disc blur
+ready. The Windows build forces direct3d11 and has the same gap (not
+changed: it has never run on a real Windows PC).
