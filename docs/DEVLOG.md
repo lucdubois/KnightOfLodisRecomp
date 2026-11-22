@@ -23820,3 +23820,70 @@ roulette; Winning Condition (parent); FIGHT IT OUT; deploy: A (Alphonse),
 A..., facing; R, A (Start Game), Up, A ("Start battle?" defaults to No);
 leader: A, A, Up, A ("Appoint as leader?" defaults to No); the battle. Pair
 save states fail (the child cannot park mid-link).
+
+### The AI plays a VS army (2026-11-22)
+
+Both linked games handed to the AI fight each other: units walk up, attack,
+use talents (Atropos), HP drops on both sides, and both games agree on every
+unit's cell and HP at every turn (12,000 frames of battle checked). Dev only:
+`KOL_AI_ARMY=1` and F7, or `KOL_AI_ARMY_AT=<frame>` for a headless pair. In
+VS Mode the switch changes no memory (no slot marks), so it can be on from
+the start, before the battle-start exchange.
+
+How VS Mode decides who plays, and the three answers it needs
+(src/kol_states.cpp, two `[[mod_function_hook]]`s in game.toml: the fork,
+which only logs, and the variables):
+
+- The turn fork 0x0806D924's first test, 0x080A16F8, is "this game's own
+  phase": story flag 7 (the second attacker's phase) XOR flag 20 (set in the
+  first attacker's game). That was the open "why" above: flag 7 alone is not
+  whose turn it is. On its own phase the game asks the AI picker 0x08097098;
+  on the other's, the link.
+- Story variables 0 and 1 (byte 0x0200122C + n, read by 0x08142FAC, 222
+  callers) say whether side 0 / side 1 is the computer's: 0 and 1 in a story
+  battle, both 0 in VS Mode. The picker asks them (0x0809711E, 0x08097230,
+  0x08097242), and so does the unit-turn machine's sub-state 2 (0x0806AE68,
+  0x0806AE80): in VS Mode it runs the AI controller only with variable 1 set
+  (after variable 0 or flag 7), so VS against the computer on side 1 looks
+  built in. The hook answers yes to those five calls on this game's own
+  phase, whichever side it is; every other caller reads the real variable.
+- The AI controller is a function pointer at battle task +0x1A4 (0x0809F511,
+  installed at every battle's start by 0x0806045A -> 0x0809F35C), called
+  from sub-state 2 with the unit and its work block (+0x1A8, 0x0202B340,
+  0x1E0 bytes). It plans the move: the destination goes to task +0x1AC/+0x1AD
+  (setter 0x0806BA68), the executor copies it to +0x148/+0x14C and moves the
+  unit there (0x08066C4A).
+- The unit's AI profile: battle entry +0x0F picks an 8-byte row of 0x08622618
+  (read by 0x0809E438). Story enemies use 1, 2, 4, 0x4B; a roster unit has 0,
+  whose row ends in 3 where the others end in 2. Giving our units profile 1
+  while the planner read it changed nothing: the same cells and HP at every
+  turn as with 0, so it was taken out.
+
+Wrong turns, for the record: answering the fork itself with the unit made
+the AI path run without a plan: each unit "vanished" and stood on cell 0,0
+(the executor moved it to an unset destination). A logging hook on the unit
+removal routine 0x0805FE54 (taken out again) showed no removal in the turn
+(only the three during deployment), and a write watch on the object's X/Z
+found 0x08066C4A. A profile hook on 0x0809E438 put in alone never fired: the
+controller was not running.
+
+The link's IWRAM routines are compiled now (game.toml `iwram_link_irq`
+0x03002B70 from 0x08006474, `iwram_link_2ca0` 0x03002CA0 from 0x08006434,
+copied by the link's init with CpuSet): linked runs were bridged ~280k times
+in 20,000 frames. Once the armies fought, one more: 0x03006DF0, an entry of
+the resident sound driver reached through a pointer (`iwram_sound_6df0`,
+from 0x087D6908).
+
+Tools: `KOL_AI_TRACE=<pc>,...` logs entries of guest functions through
+gbarecomp's function-entry hook (it sees calls made through dispatch only,
+not direct calls inside generated code); gbarecomp
+`GBARECOMP_PRESENT_DUMP_EVERY=K` (one present in K). The headless pair now
+runs without the TCP rig: both games load `connecting.state` with
+`GBARECOMP_INPUT_REPLAY` files made from the rig's plan (setup ends at frame
+7552; the first turn's fork at 7314 is the parent's) and `--window` with SDL's
+dummy driver, so KoL's hooks run.
+
+Not done: the opponent is a second copy of the game driven by a script up to
+the battle; the user plays one window, the AI the other. A single-player
+"VS against the computer" still needs the second game hidden and its menus
+(army, leader, Start) played for it.

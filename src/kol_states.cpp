@@ -10,13 +10,16 @@
 #include <ctime>
 #include <filesystem>
 #include <mutex>
+#include <vector>
 
 #include "gba_bus.h"
 #include "gba_ppu.h"
 #include "kol_dev.h"
 #include "kol_menu.h"
 #include "kol_settings.h"
+#include "mod_function_hooks.h"
 #include "runtime.h"
+#include "runtime_arm.h"
 #include "runtime_bus_bridge.h"
 
 namespace kol {
@@ -373,7 +376,145 @@ void states_load(int number) {
 // army to the AI once the battle runs, and takes it back.
 namespace {
 std::atomic<bool> g_ai_army_active{false};
+// The battle slots the switch took (this game's own units): the roster byte
+// to give back, 0 = not taken. Written by ai_army_tick, read by the hook.
+std::uint8_t g_taken[16] = {};
+unsigned long g_frame = 0;   // the frame hook's last frame, for the log
+bool g_turn_logged = false;   // sub-state 2's answer logged since the last fork
+
+// How VS Mode decides who plays (2026-11-22, two linked games):
+//
+// The turn fork 0x0806D924 (game.toml) answers a map object for a unit the
+// game's AI plays, 0 for the player's choice. Its first test, 0x080A16F8, is
+// "this game's own phase": story flag 7 (the second attacker's phase) XOR
+// flag 20 (set in the first attacker's game). On its own phase the game asks
+// the AI picker 0x08097098; on the other's, the link (0x080A1634, then
+// 0x080A1130 for the unit the other game sent). The picker, and then the
+// unit-turn machine's sub-state 2, ask story variables 0 / 1 whether a side is
+// the computer's (on_story_var below): answered yes on this game's own phase,
+// the picker chooses the unit and sub-state 2 runs the AI controller, which
+// plans the move and the action; the moves cross the link as a player's do.
+// Answering the fork itself with a unit (tried first) skipped the plan: the
+// unit walked to cell 0,0, its destination never set. The fork now only logs
+// (each unit's HP and cell). This game's own units: the slots linked to its
+// roster (+0x00 = 0x80 | index) and not the other game's (+0x17 bit 5), or
+// the ones ai_army_tick took in a story battle.
+constexpr char kForkHookId[] = "kol.ai-army-fork";
+constexpr std::uint32_t kTurnFork = 0x0806D924u;
+
+int on_turn_fork(std::uint32_t, int, ArmCpuState* cpu) {
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    const std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
+    if (!ew) return 0;
+    auto rd32 = [&](std::uint32_t a) {
+        const std::uint8_t* p = ew + (a - 0x02000000u);
+        return std::uint32_t(p[0]) | std::uint32_t(p[1]) << 8 | std::uint32_t(p[2]) << 16 | std::uint32_t(p[3]) << 24;
+    };
+    const bool vs = ew[0x12E0] == 4u;                   // VS Mode (0x08143070: mode 4)
+    const bool f7 = (ew[0x11CC] & 0x80u) != 0u, f20 = (ew[0x11CE] & 0x10u) != 0u;
+    const bool on = g_ai_army_active.load(std::memory_order_relaxed);
+    unsigned own = 0, done = 0;
+    for (int i = 0; i < 16; ++i) {
+        const std::uint8_t* e = ew + 0x1AA0u + i * 0x1Cu;
+        if (g_taken[i] || ((e[0] & 0x80u) && e[0] != 0xFFu && !(e[0x17] & 0x20u))) own |= 1u << i;
+        if (e[0x0C]) done |= 1u << i;
+    }
+    // The units on the map: slot:HP@cell, for the log.
+    char units[160] = {};
+    {
+        const std::uint32_t list = rd32(0x0202A238u);
+        std::size_t at = 0;
+        if (list >= 0x02000000u && list + 26u * 0xD0u <= 0x02040000u)
+            for (int n = 0; n < 26 && at + 24 < sizeof units; ++n) {
+                const std::uint32_t obj = list + n * 0xD0u;
+                const std::uint32_t rec = rd32(obj);
+                if (rec < 0x02001420u || (rec - 0x02001420u) % 0x68u != 0u || (rec - 0x02001420u) / 0x68u >= 16u) continue;
+                const std::uint8_t* r = ew + (rec - 0x02000000u);
+                if (r[0x4E] == 0u) continue;
+                const std::uint8_t* o = ew + (obj - 0x02000000u);
+                at += std::snprintf(units + at, sizeof units - at, " %u:%u@%u,%u", (rec - 0x02001420u) / 0x68u,
+                                    r[0x40] | r[0x41] << 8, (o[0x10] | o[0x11] << 8) >> 5, (o[0x14] | o[0x15] << 8) >> 5);
+            }
+    }
+    std::fprintf(stderr, "ai-army: frame %lu fork caller %08X vs=%d f7=%d f20=%d on=%d own=%04X done=%04X |%s\n",
+                 g_frame, cpu->R[14] & ~1u, vs, f7, f20, on, own, done, units);
+    g_turn_logged = false;
+    return 0;
+}
+
+// The picker's question "is side n the computer's?" (story variable n, read by
+// 0x08142FAC): yes for this game's own side, in VS Mode, with the switch on,
+// asked from the picker's three calls only. The picker then runs its own
+// selection and planning for this side, as for the enemy in a story battle.
+// Own side: the side whose phase it is when the phase is this game's own
+// (flag 7 XOR flag 20, see the fork), which is the side the picker asks about.
+constexpr char kSideHookId[] = "kol.ai-army-side";
+constexpr std::uint32_t kStoryVar = 0x08142FACu;
+
+int on_story_var(std::uint32_t, int, ArmCpuState* cpu) {
+    const std::uint32_t ret = cpu->R[14] & ~1u;
+    // The unit-turn machine's sub-state 2 (0x0806AE5C) runs the AI controller
+    // (task +0x1A4, 0x0809F511, installed at every battle's start) in VS Mode
+    // only when variable 1 is set, after variable 0 or flag 7: VS against the
+    // computer on side 1 seems built in. Both its questions (0x0806AE68 for
+    // variable 0, 0x0806AE80 for variable 1) are answered yes on this game's
+    // own phase, whichever side it is. Without this the picker chose the unit
+    // but no plan was made: the move went to cell 0,0.
+    const bool sub2 = ret == 0x0806AE6Cu || ret == 0x0806AE84u;
+    if (!sub2 && ret != 0x08097122u && ret != 0x08097234u && ret != 0x08097246u) return 0;
+    if (!g_ai_army_active.load(std::memory_order_relaxed)) return 0;
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    const std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
+    if (!ew || ew[0x12E0] != 4u) return 0;
+    const bool f7 = (ew[0x11CC] & 0x80u) != 0u, f20 = (ew[0x11CE] & 0x10u) != 0u;
+    if (f7 == f20) return 0;                             // not this game's own phase
+    const std::uint32_t side = f7 ? 1u : 0u;             // the phase's side
+    if (!sub2 && (cpu->R[0] & 0xFFFFu) != side) return 0;
+    if (!sub2 || !g_turn_logged)   // sub-state 2 asks every frame of the AI's turn
+        std::fprintf(stderr, "ai-army: frame %lu %s asks variable %u (from %08X): computer\n", g_frame,
+                     sub2 ? "turn" : "picker", static_cast<unsigned>(cpu->R[0] & 0xFFFFu), ret - 4u);
+    if (sub2 && (cpu->R[0] & 0xFFFFu) == 1u) g_turn_logged = true;
+    cpu->R[0] = 1u;
+    cpu->R[15] = ret;
+    return 1;
+}
+
+// KOL_AI_TRACE=<pc>[,<pc>...] (dev, with KOL_AI_ARMY=1): every entry of those
+// guest functions, with the frame, the caller and r0..r2. Chained onto
+// gbarecomp's function-entry hook (as kol_fast_actions does).
+std::vector<std::uint32_t> g_trace_pcs;
+void (*g_trace_prev)(std::uint32_t) = nullptr;
+void on_trace_entry(std::uint32_t pc) {
+    if (g_trace_prev) g_trace_prev(pc);
+    for (const std::uint32_t t : g_trace_pcs)
+        if (t == (pc & ~1u)) {
+            std::fprintf(stderr, "ai-trace: frame %lu %08X from %08X r0=%08X r1=%08X r2=%08X\n", g_frame, t,
+                         (g_cpu.R[14] & ~1u) - 4u, g_cpu.R[0], g_cpu.R[1], g_cpu.R[2]);
+            break;
+        }
+}
 }  // namespace
+
+void ai_army_install() {
+    if (!ai_army_enabled()) return;
+    if (const char* t = std::getenv("KOL_AI_TRACE"); t && *t) {
+        for (const char* p = t; *p;) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(p, &end, 16);
+            if (end == p) break;
+            g_trace_pcs.push_back(static_cast<std::uint32_t>(v) & ~1u);
+            p = *end == ',' ? end + 1 : end;
+        }
+        g_trace_prev = g_runtime_fn_entry_hook;
+        g_runtime_fn_entry_hook = &on_trace_entry;
+    }
+    if (!gba_mod_register_function_entry_plugin(kForkHookId, kTurnFork, 1, &on_turn_fork) ||
+        !gba_mod_set_function_hook_enabled(kForkHookId, 1))
+        std::fprintf(stderr, "ai-army: turn fork hook NOT installed\n");
+    if (!gba_mod_register_function_entry_plugin(kSideHookId, kStoryVar, 1, &on_story_var) ||
+        !gba_mod_set_function_hook_enabled(kSideHookId, 1))
+        std::fprintf(stderr, "ai-army: picker side hook NOT installed\n");
+}
 
 bool ai_army_enabled() {
     if constexpr (!kol::kDevTools) return false;
@@ -391,8 +532,19 @@ void ai_army_toggle() {
     std::fprintf(stderr, "ai-army: the AI %s this army\n", now ? "plays" : "no longer plays");
 }
 
-void ai_army_tick() {
+void ai_army_tick(unsigned long frame) {
     if (!ai_army_enabled()) return;
+    g_frame = frame;
+    // KOL_AI_ARMY_AT=<frame> (headless pairs): F7 at that absolute frame.
+    static const unsigned long on_at = [] {
+        const char* e = std::getenv("KOL_AI_ARMY_AT");
+        return e ? std::strtoul(e, nullptr, 10) : 0ul;
+    }();
+    static bool fired = false;
+    if (on_at && !fired && frame >= on_at) {
+        fired = true;
+        if (!g_ai_army_active.load()) ai_army_toggle();
+    }
     gba::GbaBus* bus = gbarecomp::active_bus();
     std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
     if (!ew) return;
@@ -403,7 +555,10 @@ void ai_army_tick() {
     // game's own AI armies are: no roster link (0xFF) and bit 1 (map 2's
     // allied army: 0xFF / 0x42). The other game's units there are 0xFF with
     // +0x20 (theirs, over the link): never touched.
-    static std::uint8_t taken[16] = {};   // the roster byte, 0 = not taken
+    std::uint8_t* taken = g_taken;
+    // VS Mode needs no poke: the turn fork's hook decides (and the slots
+    // are part of the battle start's checksummed exchange).
+    if (ew[0x12E0] == 4u) return;
     const bool on = g_ai_army_active.load();
     for (int i = 0; i < 16; ++i) {
         std::uint8_t* e = ew + 0x1AA0 + i * 0x1C;
