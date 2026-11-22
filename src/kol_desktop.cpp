@@ -31,6 +31,7 @@
 #include "kol_settings.h"
 #include "kol_setup.h"
 #include "kol_sheet.h"
+#include "kol_states.h"
 
 namespace kol {
 #if defined(__APPLE__)
@@ -344,6 +345,16 @@ int key_hook(int scancode, int down) {
             case SDL_SCANCODE_END: if (down) licenses_scroll(+1 << 20, false); return 1;
             default: break;
         }
+    }
+    // F5 saves a new numbered state and F6 loads the latest (asked
+    // 2026-11-21), as Shift+F1 and F1 do (the host's slot 1, which
+    // kol_states numbers); with Shift too, controller or not.
+    if (scancode == SDL_SCANCODE_F5 || scancode == SDL_SCANCODE_F6) {
+        if (down) {
+            if (scancode == SDL_SCANCODE_F5) states_save_new();
+            else states_load_latest();
+        }
+        return 1;
     }
     if (keyboard_live) {
         if (scancode == SDL_SCANCODE_ESCAPE) {

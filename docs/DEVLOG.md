@@ -23754,3 +23754,11 @@ change of ratio, or a size saved under another shape. 480x270 stays in View
 Size, to be chosen by hand; a saved 480x270 of the same shape is kept as the
 player's own choice. Checked: 16:10 384x240 -> 16:9 gives 384x216 at
 1440x900, 1280x800 and 1680x1050 (menu, KOL_MENU_PPM).
+
+### F5 saves a state, F6 loads one (desktop, 2026-11-21)
+
+Asked: F5 also saves a state and F6 also loads one. KoL's desktop key hook
+takes them (Shift with them too, controller or not) to `states_save_new` /
+`states_load_latest` (the host's slot 1, which kol_states numbers), as
+Shift+F1 and F1; the host's own F5/F6 slots are no longer reached. README's
+keyboard table updated. Not pressed on a real keyboard here.

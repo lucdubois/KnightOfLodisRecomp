@@ -91,7 +91,7 @@ and the `states` folder. Delete `totkol.gba` there to choose another ROM.
 | S | Next unit (the pad's north button) | A | Previous unit (west button) |
 | Esc or F10 | Options menu | `` ` `` (left of 1) | Rewind (when the Rewind cheat is on) |
 | 2, or Tab held | Fast-forward | Alt+Return | Full screen |
-| Shift+F1 | Save a state | F1 | Load the latest state |
+| Shift+F1 or F5 | Save a state | F1 or F6 | Load the latest state |
 
 To change them, put a `keybinds.ini` in the game's folder:
 

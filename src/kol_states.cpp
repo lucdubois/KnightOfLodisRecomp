@@ -285,6 +285,10 @@ void states_save_new() {
     gbarecomp::runtime_request_state_save(kComboSlot);
 }
 
+void states_load_latest() {
+    gbarecomp::runtime_request_state_load(kComboSlot);
+}
+
 void states_install() {
     static bool done = false;
     if (done) return;

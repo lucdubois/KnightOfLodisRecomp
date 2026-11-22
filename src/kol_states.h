@@ -50,4 +50,7 @@ void states_test_tick();
 // button): asks the runtime for slot 1, which the path hook numbers.
 void states_save_new();
 
+// The latest numbered state, as L3+L loads it (slot 1; desktop F1 and F6).
+void states_load_latest();
+
 }  // namespace kol
