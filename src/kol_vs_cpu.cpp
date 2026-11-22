@@ -1,10 +1,14 @@
 // kol_vs_cpu.cpp — VS Mode against the computer (kol_vs_cpu.h).
 //
 // The parent (the player's game):
-//   1. VS Mode's "Connecting..." (world state 0x08246D18 outside a battle,
-//      no link, the serial port in Multi-Player mode: the game is looking for
-//      the other GBA) asks the runtime for a state save into its own slot, at
-//      the next dispatch boundary.
+//   1. VS Mode's "Connecting..." asks the runtime for a state save into its
+//      own slot, at the next dispatch boundary. The screen: world state
+//      0x08246D18 outside a battle, the world map's scene (0x02002830 0x24),
+//      no box taking input (0x03000EF0 0), the serial port in Multi-Player
+//      mode, no link. Not the world state and the port alone: both are set
+//      from the first of VS's eight NAVI pages of rules, and a copy started
+//      there waited on the first page for an A no one pressed, while the
+//      player's Connecting timed out (~4.5 s) and went back (2026-11-22).
 //   2. The save written (vs_cpu_state_saved): the link starts as the parent
 //      on a free local port at the snapshot's time (GbaPpu::guest_cycle), the
 //      copy is started from that state, and the guest is held
@@ -70,6 +74,8 @@ constexpr int kSlot = 0x5653;                       // "VS": the snapshot's slot
 constexpr std::uint32_t kWorld = 0x29BD0;           // EWRAM: the world state's pointer
 constexpr std::uint32_t kConnecting = 0x08246D18u;  // ... VS Mode's connecting / attack order / roulette
 constexpr std::uint32_t kMode = 0x12E0;             // EWRAM: 4 from the battle's preparation on
+constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 the world map's screens (0x46 VS's NAVI pages, 0x02 the menu)
+constexpr std::uint32_t kAsks = 0xEF0;              // IWRAM: 2 while a box or menu takes input (the NAVI pages), 0 on Connecting
 constexpr int kOffTicks = 180;                      // the port out of Multi-Player mode this long: link closed
 constexpr auto kLinkWait = std::chrono::seconds(20);
 
@@ -356,14 +362,30 @@ void vs_cpu_tick() {
         std::fprintf(stderr, "vs-cpu: the game's port %s Multi-Player mode (world %08X, mode %u)\n",
                      multi ? "enters" : "leaves", rd32(ew + kWorld), ew[kMode]);
     }
+    const std::uint8_t* iw = bus->iwram_ptr();
     const bool connecting = rd32(ew + kWorld) == kConnecting && ew[kMode] != 4u;
+    const bool connecting_screen = connecting && ew[kScene] == 0x24u && iw[kAsks] == 0u;
+    // KOL_VS_LOG=1: the bytes the Connecting screen is told by, when they change.
+    if (static const bool log = std::getenv("KOL_VS_LOG") != nullptr; log) {
+        char now[96];
+        std::snprintf(now, sizeof now, "world=%08X ef0=%02X 2830=%02X 2836=%02X multi=%d", rd32(ew + kWorld), iw[0xEF0],
+                      ew[0x2830], ew[0x2836], multi ? 1 : 0);
+        static std::string last;
+        if (last != now) {
+            gba::GbaPpu* ppu = gbarecomp::active_ppu();
+            std::fprintf(stderr, "vs-log: frame %llu %s\n", ppu ? static_cast<unsigned long long>(ppu->frame_count()) : 0ull, now);
+            last = now;
+        }
+    }
     switch (g_phase.load()) {
     case kIdle: {
         if (!connecting) {
             g_failed_here = false;
             break;
         }
-        if (g_failed_here || !multi || !setting_on(Setting::VsComputer) || gba::SioLink::instance()) break;
+        if (g_failed_here || !connecting_screen || !multi || !setting_on(Setting::VsComputer) ||
+            gba::SioLink::instance())
+            break;
         std::lock_guard<std::mutex> lock(g_mu);
         std::error_code ec;
         static int session = 0;

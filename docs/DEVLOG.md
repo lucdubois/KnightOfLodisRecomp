@@ -23990,3 +23990,17 @@ through attack order, Winning Condition and deployment into the battle
 the copy ended with the player's game, nothing left running. Its files:
 `KOL_VS_KEEP=1` keeps the session folder (opponent.log),
 `KOL_VS_CHILD_ENV="A=1 B=2"` passes test switches to it.
+
+Then, from the user (the dev app, from the title): "it goes to Connecting,
+please wait, and then it goes back". From the Quest / VS / Exchange menu the
+port is already in Multi-Player mode, and the world state is 0x08246D18
+from the first of VS's eight NAVI pages of rules (frame 1648 from
+`quest_menu_vs.state` + A); the snapshot was taken there, the copy waited on
+the first page for an A no one pressed, and the player's Connecting (about
+4.5 s, frames 2063-2336) found no one and went back. The Connecting screen
+itself: also 0x02002830 = 0x24 (the world map's scene; 0x46 on the NAVI
+pages, 0x02 on the menu) and IWRAM 0x03000EF0 = 0 (2 while the pages take
+input). `KOL_VS_LOG=1` logs those bytes as they change. Checked from the
+menu (A on VS, A through the pages; the player's side by KOL_KEY_SCRIPT and
+the AI): snapshot at 2063, linked in 134 ms, both games into the battle
+(first turns at 5712 / 5715); `connecting.state` still starts it at once.
