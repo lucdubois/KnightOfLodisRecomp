@@ -40,7 +40,8 @@ constexpr int kCount = static_cast<int>(Setting::Count);
 bool g_on[kCount] = {true, true, true, false, false, false, true, false, false, false,
                      false, false, false, false, false, false, false, false, true,
                      false, false, false, false, false, false, true, true, true, true,
-                     false, false, false, false, false, true, true, true, false, false, true, true, true};
+                     false, false, false, false, false, true, true, true, false, false, true, true, true,
+                     false, false, false, true};
 // The layer switches are for the moment: never saved, never loaded.
 bool persisted(int i) {
     return i < static_cast<int>(Setting::DebugHideBG0) || i > static_cast<int>(Setting::DebugHideOBJ);
@@ -241,7 +242,7 @@ const char* const kKeys[kCount] = {"highlight", "second_screen",
                                    "bump_map", "special_effects", "fast_actions",
                                    "fast_walk", "quick_enemy", "fast_attack", "own_rain", "wet_rain",
                                    "smooth_boxes", "debug_numbered_states", "fast_spells", "smooth_sky", "own_snow", "smooth_pacing",
-                                   "debug_no_second_screen", "swap_face", "rewind"};
+                                   "debug_no_second_screen", "swap_face", "rewind", "vs_computer"};
 const char* const kLabels[kCount] = {"See-through move range",
                                      "Second screen panel",
                                      "Rain across the whole screen",
@@ -286,7 +287,8 @@ const char* const kLabels[kCount] = {"See-through move range",
                                      "Smooth pacing (frames at the display's 60 Hz; the game 0.46% faster)",
                                      "Debug: no second screen (BACK pauses and shows the menu)",
                                      "Swap face buttons (A/B, X/Y)",
-                                     "Rewind (L2)"};
+                                     "Rewind (L2)",
+                                     "VS Mode against the computer"};
 
 // enhancements.cfg's settings_version=: 2 since lifting went back into
 // Enhanced (2026-11-20); a file without it is older, and is moved to the new

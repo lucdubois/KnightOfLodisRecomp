@@ -624,6 +624,10 @@ const Row kGameplay[] = {
      "A strike plays twice as\nfast, every side."},
     {Kind::Setting, static_cast<int>(Setting::FastSpells), "Fast Spells",
      "A spell or an item's use\nplays twice as fast."},
+#if !defined(__ANDROID__) && !defined(_WIN32)
+    {Kind::Setting, static_cast<int>(Setting::VsComputer), "VS Computer",
+     "VS Mode is played against the\ncomputer, with no link cable."},
+#endif
 };
 const Row kCheats[] = {
     {Kind::Back, 0, "Back", "Return to the options."},

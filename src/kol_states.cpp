@@ -18,6 +18,7 @@
 #include "kol_dev.h"
 #include "kol_menu.h"
 #include "kol_settings.h"
+#include "kol_vs_cpu.h"
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
@@ -87,6 +88,7 @@ int next_number(const std::vector<int>& have) {
 
 const char* on_path(int slot, int save) {
     static std::string out;
+    if (const char* vs = vs_cpu_state_path(slot, save)) return vs;   // VS Computer's snapshot
     if (dir().empty()) return nullptr;
     if (slot == kPickSlot && !save) {
         std::lock_guard<std::mutex> lock(g_mu);
@@ -239,6 +241,7 @@ std::string ascii_name(const std::uint8_t* ew) {
 }
 
 void on_saved(const char* path) {
+    if (vs_cpu_state_saved(path)) return;   // VS Computer's snapshot: the copy starts from it
     const std::string p = path ? path : "";
     if (dir().empty() || p.rfind(dir() + "/", 0) != 0) return;   // a slot's, not ours
     const std::string stem = p.substr(0, p.size() - 6);   // less ".state"
@@ -498,6 +501,7 @@ void on_trace_entry(std::uint32_t pc) {
 
 void ai_army_install() {
     if (!ai_army_enabled()) return;
+    if (vs_cpu_child()) g_ai_army_active.store(true);   // the computer's game: its army from the start
     if (const char* t = std::getenv("KOL_AI_TRACE"); t && *t) {
         for (const char* p = t; *p;) {
             char* end = nullptr;
@@ -518,6 +522,7 @@ void ai_army_install() {
 }
 
 bool ai_army_enabled() {
+    if (vs_cpu_child()) return true;   // VS Computer's unseen copy: in every build
     if constexpr (!kol::kDevTools) return false;
     static const bool on = [] {
         const char* e = std::getenv("KOL_AI_ARMY");
@@ -607,7 +612,7 @@ void ai_army_tick(unsigned long frame) {
     std::uint8_t* taken = g_taken;
     // VS Mode needs no poke: the turn fork's hook decides (and the slots
     // are part of the battle start's checksummed exchange).
-    if (ew[0x12E0] == 4u) return;
+    if (ew[0x12E0] == 4u || vs_cpu_child()) return;
     const bool on = g_ai_army_active.load();
     for (int i = 0; i < 16; ++i) {
         std::uint8_t* e = ew + 0x1AA0 + i * 0x1C;

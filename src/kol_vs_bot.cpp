@@ -64,6 +64,7 @@
 #include "gba_bus.h"
 #include "kol_dev.h"
 #include "kol_states.h"
+#include "kol_vs_cpu.h"
 #include "runtime.h"
 #include "runtime_bus_bridge.h"
 #include "sio_link.h"
@@ -309,7 +310,7 @@ bool linked() {
 }  // namespace
 
 void vs_bot_install() {
-    if constexpr (!kol::kDevTools) return;
+    if (!kol::kDevTools && !vs_cpu_child()) return;   // VS Computer's copy: every build
     static bool done = false;
     if (done) return;
     done = true;
@@ -335,7 +336,7 @@ void vs_bot_install() {
 }
 
 void vs_bot_tick(unsigned long frame) {
-    if constexpr (!kol::kDevTools) return;
+    if (!kol::kDevTools && !vs_cpu_child()) return;   // VS Computer's copy: every build
     if (!ai_army_enabled()) return;
     g_frame = frame;
     gba::GbaBus* bus = gbarecomp::active_bus();

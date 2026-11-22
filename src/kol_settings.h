@@ -67,6 +67,7 @@ enum class Setting {
     DebugNoSecondScreen,  // as a device with one screen: BACK pauses and shows the options menu over the game (SecondScreen.java)
     SwapFace,         // A <-> B and X <-> Y on the controller (kol_actions pad_swap_set)
     Rewind,           // Cheats: L2 and the on-screen button go back in time (gbarecomp rewind); off by default
+    VsComputer,       // VS Mode's other GBA is the computer: an unseen copy of the game (kol_vs_cpu; desktop)
     Count
 };
 

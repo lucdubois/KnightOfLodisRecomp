@@ -90,6 +90,7 @@ add_library(main SHARED
     "${KOL_ROOT}/src/kol_rumble.cpp"
     "${KOL_ROOT}/src/kol_states.cpp"
     "${KOL_ROOT}/src/kol_vs_bot.cpp"
+    "${KOL_ROOT}/src/kol_vs_cpu.cpp"
     "${KOL_ROOT}/src/kol_stick_cursor.cpp"
     "${KOL_ROOT}/src/kol_auto_win.cpp"
     "${KOL_ROOT}/src/kol_map_source.cpp"

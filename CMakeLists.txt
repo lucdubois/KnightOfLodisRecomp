@@ -141,6 +141,7 @@ add_executable(KnightOfLodisRecomp
     src/kol_menu.cpp
     src/kol_states.cpp
     src/kol_vs_bot.cpp
+    src/kol_vs_cpu.cpp
     src/kol_tile_edit.cpp
     src/kol_edit_panel.cpp
     src/kol_map_settings.cpp

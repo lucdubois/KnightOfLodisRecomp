@@ -25,6 +25,7 @@
 #include "kol_gulls.h"
 #include "kol_states.h"
 #include "kol_vs_bot.h"
+#include "kol_vs_cpu.h"
 #include "kol_rumble.h"
 #include "kol_stick_cursor.h"
 #include "kol_auto_win.h"
@@ -2241,6 +2242,7 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
         kol::states_install();
         kol::ai_army_install();
         kol::vs_bot_install();   // after every other key filter: it overrides them
+        kol::vs_cpu_install();
     }
     kol::terrain_probe_tick(f->frame_count);
     kol::debug_scene_camera_tick();
@@ -2248,6 +2250,7 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
     kol::states_test_tick();
     kol::ai_army_tick(f->frame_count);
     kol::vs_bot_tick(f->frame_count);
+    kol::vs_cpu_tick();
     kol::edit_panel_test_tick(f->frame_count);
     // KOL_SAVE_STATE_AT=<frame>[,<slot>] (headless runs): one save state at
     // that absolute frame, to the ROM's .state<slot> (default 9), the way

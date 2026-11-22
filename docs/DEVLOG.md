@@ -23944,3 +23944,49 @@ script, both reached the battle (Solea, Defeat Leader) in about 1,700 frames
 and the AIs fought; fully static. A pair where the parent replayed the old
 scripted presses fell out of step (the presses were timed for the slower
 flow): a test-harness limit, not the bot's.
+
+### VS Computer: one window, the opponent a hidden copy (2026-11-22)
+
+Asked: how the second game starts in normal play; agreed: a snapshot at
+"Connecting...", desktop first. Options > Gameplay > VS Computer
+(`vs_computer`, on; not on Android or Windows), `src/kol_vs_cpu.cpp`:
+- The player's game, on VS Mode's Connecting screen (world state 0x08246D18,
+  battle mode byte not 4, its serial port in Multi-Player mode, no link),
+  asks the runtime for a state save into its own slot (0x5653), with its path
+  in a session folder under the system's temporary folder (kol_states' path
+  and saved hooks ask kol_vs_cpu first).
+- The save written: gbarecomp's link starts as the parent on a free local
+  port at the snapshot's time (`SioLink::start_parent(guest_cycle)`), a
+  second copy of the program starts from the snapshot (fork + exec of the
+  program's own path, same ROM / BIOS / mod, a copy of the save, SDL dummy
+  video, render and audio drivers, `KOL_VS_OPPONENT=1`,
+  `GBARECOMP_LINK=child:<port>`, every other KOL_/GBARECOMP_/SDL_ variable
+  dropped), and the game is held (`g_runtime_pause_request`: the window
+  stays alive) until the copy's hello. Both then go on from the same point,
+  as the tested pairs did loading one state.
+- The copy (`vs_cpu_child()`, any build): no player mode, the AI army on
+  from the start, the deployment bot, no slot pokes. It takes the player's
+  settings that change how the game runs (Fast Loading / Actions / Walking /
+  Attacks / Spells, Quick Enemy Turns, Smooth Pacing) through
+  KOL_SETTINGS_ON / _OFF. It ends when the link closes, its parent goes, or
+  no link comes in 20 s.
+- The session ends when the game's port leaves Multi-Player mode for 3 s or
+  the link drops; the player's game ending ends the copy (atexit, and the
+  socket closing). A failed try (no snapshot in 5 s, no link in 20 s, the
+  copy gone) is not retried until the Connecting screen is left.
+
+gbarecomp (`sio_link`): `start_parent` / `stop` (the link made and ended
+while the game runs; `instance()` an atomic pointer, a stopped link kept,
+not deleted). The hello waits for each side's clock: the parent sends it
+once its clock is known, the child aligns to it once its own is (its first
+tick, now noted before the first tick's wait). Before, both sides' clocks
+were 0 at the hello in the tested pairs, which is why their offset came out
+0; a parent started mid-game would have been a whole game's time off.
+
+Checked headless from `connecting.state` with the player's side also run by
+the AI (KOL_AI_ARMY=1, dev): linked after 134 ms, clock offset 0, both games
+through attack order, Winning Condition and deployment into the battle
+(first turn decisions at frames 5531 / 5528, five units each), fully static;
+the copy ended with the player's game, nothing left running. Its files:
+`KOL_VS_KEEP=1` keeps the session folder (opponent.log),
+`KOL_VS_CHILD_ENV="A=1 B=2"` passes test switches to it.

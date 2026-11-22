@@ -22,15 +22,20 @@
 #include <vector>
 
 #include "kol_desktop.h"
+#include "kol_vs_cpu.h"
 #include "kol_widescreen.h"
 
 int main(int argc, char** argv) {
     // The desktop's player front end (kol_desktop.h): the options menu over
     // the game, and in player mode (--data-dir, or a public build) the game's
     // files and settings in one directory, as the Android app keeps them.
+    // VS Computer's unseen copy (kol_vs_cpu.h) runs on the command line its
+    // parent gave it: no player mode, no setup, no window of its own.
     bool ok = true;
-    std::vector<std::string> args = kol::desktop_prepare(argc, argv, &ok);
+    std::vector<std::string> args = kol::vs_cpu_child() ? std::vector<std::string>(argv, argv + argc)
+                                                        : kol::desktop_prepare(argc, argv, &ok);
     if (!ok) return 1;
+    if (!kol::vs_cpu_child()) kol::vs_cpu_args(args);
     std::vector<char*> args_v;
     for (auto& a : args) args_v.push_back(a.data());
     args_v.push_back(nullptr);
