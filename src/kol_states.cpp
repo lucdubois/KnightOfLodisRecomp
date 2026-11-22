@@ -10,6 +10,7 @@
 #include <ctime>
 #include <filesystem>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "gba_bus.h"
@@ -525,6 +526,8 @@ bool ai_army_enabled() {
     return on;
 }
 
+bool ai_army_active() { return ai_army_enabled() && g_ai_army_active.load(std::memory_order_relaxed); }
+
 void ai_army_toggle() {
     if (!ai_army_enabled()) return;
     const bool now = !g_ai_army_active.load();
@@ -535,6 +538,52 @@ void ai_army_toggle() {
 void ai_army_tick(unsigned long frame) {
     if (!ai_army_enabled()) return;
     g_frame = frame;
+    // KOL_AI_STATE_LOG=1: the battle task's state bytes and the map cursor's
+    // mode, logged when they change (the preparation's screens).
+    static const bool state_log = [] {
+        const char* e = std::getenv("KOL_AI_STATE_LOG");
+        return e && *e == '1';
+    }();
+    // KOL_AI_DUMP=<frame>[,<frame>...]: EWRAM and IWRAM at those frames, to
+    // ew_<frame>.bin / iw_<frame>.bin in the working directory (linked pairs
+    // cannot save states).
+    static const std::vector<unsigned long> dumps = [] {
+        std::vector<unsigned long> v;
+        if (const char* e = std::getenv("KOL_AI_DUMP"))
+            for (const char* p = e; *p;) {
+                char* end = nullptr;
+                const unsigned long f = std::strtoul(p, &end, 10);
+                if (end == p) break;
+                v.push_back(f);
+                p = *end == ',' ? end + 1 : end;
+            }
+        return v;
+    }();
+    for (const unsigned long f : dumps)
+        if (f == frame)
+            if (gba::GbaBus* b = gbarecomp::active_bus()) {
+                char name[64];
+                std::snprintf(name, sizeof name, "ew_%lu.bin", frame);
+                if (FILE* o = std::fopen(name, "wb")) { std::fwrite(b->ewram_ptr(), 1, 0x40000, o); std::fclose(o); }
+                std::snprintf(name, sizeof name, "iw_%lu.bin", frame);
+                if (FILE* o = std::fopen(name, "wb")) { std::fwrite(b->iwram_ptr(), 1, 0x8000, o); std::fclose(o); }
+            }
+    if (state_log) {
+        gba::GbaBus* b = gbarecomp::active_bus();
+        const std::uint8_t* e = b ? b->ewram_ptr() : nullptr;
+        const std::uint8_t* i = b ? b->iwram_ptr() : nullptr;
+        if (e && i) {
+            char now[96];
+            std::snprintf(now, sizeof now, "prep=%02X phase=%02X stack=%02X.%02X.%02X.%02X sub=%02X.%02X cur=%02X list=%02X/%02X",
+                          e[0x2A81A], e[0x2A81C], e[0x2A81D], e[0x2A81E], e[0x2A81F], e[0x2A820], e[0x2A82E],
+                          e[0x2A82F], i[0xFD5], e[0x37B6C], e[0x37B6E]);
+            static std::string last;
+            if (last != now) {
+                std::fprintf(stderr, "ai-state: frame %lu %s\n", frame, now);
+                last = now;
+            }
+        }
+    }
     // KOL_AI_ARMY_AT=<frame> (headless pairs): F7 at that absolute frame.
     static const unsigned long on_at = [] {
         const char* e = std::getenv("KOL_AI_ARMY_AT");

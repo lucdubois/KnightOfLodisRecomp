@@ -50,6 +50,8 @@ void states_test_tick();
 // takes it back (see the .cpp).
 bool ai_army_enabled();
 void ai_army_toggle();
+// The switch is on (the AI plays this army).
+bool ai_army_active();
 void ai_army_tick(unsigned long frame);
 // The turn-fork hook (VS Mode: this game's own turns go to the AI while F7 is on).
 void ai_army_install();

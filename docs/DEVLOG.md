@@ -23887,3 +23887,44 @@ Not done: the opponent is a second copy of the game driven by a script up to
 the battle; the user plays one window, the AI the other. A single-player
 "VS against the computer" still needs the second game hidden and its menus
 (army, leader, Start) played for it.
+
+### The computer deploys its army and picks a leader (2026-11-22)
+
+Asked: the computer chooses and places random units and selects a random
+leader. `src/kol_vs_bot.cpp` (dev, with the AI army switch): in VS Mode's
+preparation it dispatches up to five random units (VS's MEMBER limit) on
+random free deployment cells, opens R > Start Game > Yes, then appoints a
+random one of them leader > Yes. It presses keys through the host's key
+filter, chosen from the game's own state, so the game's menus and checks do
+the work and no guest memory is written. Checked on a linked pair with both
+games run by it (seeds 7 and 11): each dispatched a different five, both
+appointed a leader (Cybil on the right), and the battle ran with the AIs
+fighting, in step, fully static.
+
+The preparation, found on GG (a story preparation, the same screens) with a
+TCP session, and on the pair with `KOL_AI_STATE_LOG=1` (the battle task's
+bytes when they change) and `KOL_AI_DUMP=<frame>,...` (EWRAM / IWRAM at
+those frames; pairs cannot save states):
+- Battle task phase 0x0202A81C / sub-state 0x0202A82E. Phase 2: 05 the
+  unit list, 09 placing, 08 the box "Choose the direction that the
+  character will face.", 0C the facing. Phase 3: 01 the R menu (VS: Start
+  Game first; GG's has Create Team B / Organize / System), 10 "Start
+  battle?", 1B the leader, 1C-20 the exchange ("Now loading").
+- The unit list 0x02037B40: from +0x00 the roster index of each entry, then
+  zeros (this save: roster 0-15, then 20; the 0x14 at +0x10 is an entry,
+  not a count), +0x2C the cursor's place on the page (two a row), +0x2E rows
+  scrolled. On the last entry, alone in its row, Right goes back one.
+- A deployed unit's battle entry: +0x00 = 0x80 | roster index, +0x14/+0x15
+  its cell, +0x16 facing (the parent's in slots 0-4, the child's in 8-12).
+- Deployment cells: flag 0x40 of the cell table [0x02029CCC] (+2).
+- The Yes/No box 0x020376A0: +0x1F 3 while it takes input, +0x1E the hand
+  (1 No, where it opens; 0 Yes). The block keeps the last box's state (1)
+  after it closes.
+- The leader: "Please select a leader." (A), the map cursor, A on a unit
+  (its cell blinks), A again, then "Appoint X as leader?".
+
+Test: `KOL_KEY_SCRIPT=<file>` (gbarecomp replay lines) presses the setup
+before the preparation (NAVI pages, attack order, winning condition), since
+GBARECOMP_INPUT_REPLAY would override the filter; `KOL_AI_SEED`,
+`KOL_AI_BOT_LOG=1`. The screens before the preparation are not played by the
+computer yet.
