@@ -501,7 +501,8 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Ratio,         // the picture's shape (kol_settings ratio_choice_*)
                                  VsMode,        // VS Mode's other player (kol_settings vs_mode_choice_*)
                                  Bios,          // the GBA BIOS or the built-in one, from the next start
-                                 Scaling };     // a desktop: how the picture fills the window (kol_desktop.h)
+                                 Scaling,       // how the picture fills the window or screen (kol_settings)
+                                 BottomScaling };   // Android: the same for a second screen
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -574,6 +575,9 @@ const Row kDisplay[] = {
     {Kind::WindowSize, 0, "Window Size", "The window's size, in Window\nmode. 2x, 3x: the view's multiples."},
 #endif
     {Kind::Scaling, 0, "Scaling", nullptr},   // help by value (scaling_choice_help)
+#if defined(__ANDROID__)
+    {Kind::BottomScaling, 0, "Bottom Screen", nullptr},   // the same, for a second screen
+#endif
 };
 const Row kGraphics[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
@@ -895,6 +899,7 @@ bool row_off(const Row& r) {
     if (r.kind == Kind::WindowSize) return display_full_screen();
 #if defined(__ANDROID__)
     if (r.kind == Kind::Scaling) return scaling_exact() > 0;
+    if (r.kind == Kind::BottomScaling) return bottom_scaling_exact() != 0;
 #endif
     return false;
 }
@@ -998,6 +1003,12 @@ Text value_text(const Art& a, const Row& r) {
             if (scaling_exact() > 0) return encode("Exact");
 #endif
             return encode(scaling_choice_label(scaling_choice_current()));
+        case Kind::BottomScaling: {
+            const int e = bottom_scaling_exact();
+            if (e < 0) return encode("None");
+            if (e > 0) return encode("Exact");
+            return encode(scaling_choice_label(bottom_scaling_choice_current()));
+        }
         case Kind::Ratio: return encode(ratio_choice_label(ratio_choice_current()));
         case Kind::WindowSize: {   // the chosen size, else the window's own
             int w = 0, h = 0;
@@ -1332,6 +1343,10 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::WindowSize: window_size_step(dir); break;
         case Kind::Scaling:
             if (!row_off(r)) scaling_choice_set(wrap(scaling_choice_current(), dir, scaling_choice_count()));
+            break;
+        case Kind::BottomScaling:
+            if (!row_off(r))
+                bottom_scaling_choice_set(wrap(bottom_scaling_choice_current(), dir, scaling_choice_count()));
             break;
         case Kind::Ratio:   // the view's sizes, and a desktop's window, follow it
             ratio_choice_set(wrap(ratio_choice_current(), dir, ratio_choice_count()));
@@ -2402,6 +2417,11 @@ bool menu_render(std::uint32_t* argb) {
         else
 #endif
         help = encode(scaling_choice_help(scaling_choice_current()));
+    } else if (sel.kind == Kind::BottomScaling) {
+        const int e = bottom_scaling_exact();
+        help = encode(e < 0   ? "The same, for a second screen:\nthere is none here."
+                      : e > 0 ? "The bottom screen is a whole\nmultiple: already even."
+                              : scaling_choice_help(bottom_scaling_choice_current()));
     } else if (sel.help) {
         help = encode(sel.help);
     }

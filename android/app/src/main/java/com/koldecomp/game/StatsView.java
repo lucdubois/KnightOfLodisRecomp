@@ -26,7 +26,41 @@ public final class StatsView extends View {
     public StatsView(Context c) {
         super(c);
         setBackgroundColor(Color.BLACK);
+        // From Android 9 a new Paint filters bitmaps: the whole second screen
+        // was drawn smoothed (2026-11-23, the Thor: "a bit blurry overall").
+        blit.setFilterBitmap(false);
+        transPaint.setFilterBitmap(false);
+        smooth.setFilterBitmap(true);
     }
+
+    // ── Options > Display > Bottom Screen (kol_settings bottom_scaling_*) ──
+    // Everything is laid out at a whole-number scale. Where the bottom screen
+    // is not a whole multiple of the canvas, Smooth or Stretch draw it at the
+    // largest whole scale into a picture of the screen's shape, then stretch
+    // that to the screen: filtered (Smooth: even pixels, soft edges) or not
+    // (Stretch). Touches come back through the same scale. vw()/vh() are the
+    // size the layout sees.
+    private boolean bottomScreen = false;        // the presentation's view (not the one-screen overlay)
+    private float vW = 0f, vH = 0f, vScale = 1f; // the layout's size, and the screen's px per layout px
+    private Bitmap vBitmap = null;
+    private Canvas vCanvas = null;
+    private final Paint smooth = new Paint();
+    private final android.graphics.Matrix vToLayout = new android.graphics.Matrix();
+
+    /** The second screen's view (SecondScreen): its size goes to native. */
+    void setBottomScreen(boolean on) {
+        bottomScreen = on;
+        if (on && getWidth() > 0) SecondScreen.reportBottomSize(getWidth(), getHeight());
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        if (bottomScreen) SecondScreen.reportBottomSize(w, h);
+    }
+
+    private float vw() { return vScale == 1f ? getWidth() : vW; }
+    private float vh() { return vScale == 1f ? getHeight() : vH; }
 
     /** The debug instant win has started the outcome check and waits for its answer. */
     public void setAutoWin(boolean on) {
@@ -345,7 +379,7 @@ public final class StatsView extends View {
     }
 
     private float cardTravel() {
-        return Math.max(1f, (getHeight() - sheetTop) / sheetK);   // canvas px
+        return Math.max(1f, (vh() - sheetTop) / sheetK);   // canvas px
     }
 
     private void cardAnimate(float from, float to) {
@@ -380,7 +414,7 @@ public final class StatsView extends View {
         c.drawColor(Color.BLACK);
         final Bitmap img = listImage;
         if (img == null) return;
-        final float w = getWidth(), h = getHeight();
+        final float w = vw(), h = vh();
         int k = (int) Math.floor(Math.min(w / MENU_W, h / MENU_H));
         if (k < 1) k = 1;
         listK = k;
@@ -459,7 +493,7 @@ public final class StatsView extends View {
         if (listImage != null && pos > 0f) drawList(c);
         else c.drawColor(Color.BLACK);
         if (pos >= 1f) return;
-        final float off = pos * (getHeight() - sheetTop);
+        final float off = pos * (vh() - sheetTop);
         c.save();
         c.translate(0f, off);
         drawSheetImage(c, img);
@@ -467,7 +501,7 @@ public final class StatsView extends View {
     }
 
     private int listWindowH(int k) {
-        return listShop ? Math.max(MENU_H, getHeight() / k) : MENU_H;
+        return listShop ? Math.max(MENU_H, (int) vh() / k) : MENU_H;
     }
 
     private static float smooth(float t) {
@@ -630,7 +664,7 @@ public final class StatsView extends View {
      *  unfiltered, so every game pixel stays a crisp square. (Next and
      *  previous unit are the top and left face buttons; there are no on-screen ones.) */
     private void drawSheetImage(Canvas c, Bitmap img) {
-        final float w = getWidth(), h = getHeight();
+        final float w = vw(), h = vh();
         int k = (int) Math.floor(Math.min(w / img.getWidth(), h / img.getHeight()));
         if (k < 1) k = 1;
         final float dw = img.getWidth() * k, dh = img.getHeight() * k;
@@ -992,7 +1026,7 @@ public final class StatsView extends View {
     }
 
     private void drawMenu(Canvas c) {
-        final float w = getWidth(), h = getHeight();
+        final float w = vw(), h = vh();
         int k = (int) Math.floor(Math.min(w / MENU_W, h / MENU_H));
         if (k < 1) k = 1;
         menuScale = k;
@@ -1086,7 +1120,15 @@ public final class StatsView extends View {
     }
 
     @Override
-    public boolean onTouchEvent(android.view.MotionEvent e) {
+    public boolean onTouchEvent(android.view.MotionEvent raw) {
+        if (vScale == 1f) return touch(raw);
+        final android.view.MotionEvent e = android.view.MotionEvent.obtain(raw);
+        vToLayout.setScale(1f / vScale, 1f / vScale);
+        e.transform(vToLayout);   // the layout's pixels (history too: the velocity trackers)
+        try { return touch(e); } finally { e.recycle(); }
+    }
+
+    private boolean touch(android.view.MotionEvent e) {
         final float x = e.getX(), y = e.getY();
         final int act = e.getActionMasked();
         if (act == android.view.MotionEvent.ACTION_UP || act == android.view.MotionEvent.ACTION_CANCEL) {
@@ -1180,9 +1222,29 @@ public final class StatsView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        drawContent(c);
-        drawMenu(c);
-        drawBarHelp(c);
+        final int mode = bottomScreen ? SecondScreen.bottomScaling() : 0;   // 0 Integer, 1 Smooth, 2 Stretch
+        final float W = getWidth(), H = getHeight();
+        // The fill keeps the bar's least height under the sheet (BUTTON rows).
+        final float kf = Math.min(W / MENU_W, H / (MENU_H + BUTTON));
+        final int ki = Math.max(1, (int) Math.floor(kf));
+        if (mode == 0 || kf < 1f || kf - ki < 0.001f) {
+            vScale = 1f;
+            drawContent(c);
+            drawMenu(c);
+            drawBarHelp(c);
+            return;
+        }
+        final int lw = Math.round(W * ki / kf), lh = Math.round(H * ki / kf);
+        if (vBitmap == null || vBitmap.getWidth() != lw || vBitmap.getHeight() != lh) {
+            vBitmap = Bitmap.createBitmap(lw, lh, Bitmap.Config.ARGB_8888);
+            vCanvas = new Canvas(vBitmap);
+        }
+        vW = lw; vH = lh; vScale = W / lw;
+        vBitmap.eraseColor(Color.BLACK);
+        drawContent(vCanvas);
+        drawMenu(vCanvas);
+        drawBarHelp(vCanvas);
+        c.drawBitmap(vBitmap, null, new RectF(0f, 0f, W, H), mode == 1 ? smooth : blit);
     }
 
     // ── The editor page (native kol_edit_panel) ─────────────────────────
@@ -1206,7 +1268,7 @@ public final class StatsView extends View {
 
     private void drawEdit(Canvas c, Bitmap img) {
         c.drawColor(Color.BLACK);
-        final float w = getWidth(), h = getHeight();
+        final float w = vw(), h = vh();
         int k = (int) Math.floor(Math.min(w / MENU_W, h / MENU_H));
         if (k < 1) k = 1;
         editK = k;
@@ -1254,7 +1316,7 @@ public final class StatsView extends View {
 
     private void drawSceneStrip(Canvas c, Bitmap img) {
         c.drawColor(Color.BLACK);
-        final float w = getWidth(), h = getHeight();
+        final float w = vw(), h = vh();
         int k = (int) Math.floor(Math.min(w / MENU_W, h / MENU_H));
         if (k < 1) k = 1;
         final int rows = Math.min(img.getHeight(), (int) Math.ceil(h / k));

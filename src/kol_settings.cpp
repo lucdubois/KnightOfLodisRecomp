@@ -184,6 +184,10 @@ constexpr const char* kScalingHelp[kScalingCount] = {
     "Stretches the pixels, with a\nfilter to make them look even.",
     "Fills the window, with\nstretched pixels."};
 unsigned g_scaling = 0;
+// The same three for a second screen (Android's presentation display, drawn
+// by StatsView at a whole scale of its 248x184 canvas): bottom_scaling=.
+unsigned g_bottom_scaling = 0;
+std::atomic<int> g_bottom_size{0};   // the bottom screen's w << 16 | h, 0 none
 
 void apply_scaling() {
     static constexpr int kHostMode[kScalingCount] = {1, 2, 0};   // gbarecomp: 1 integer, 2 sharp, 0 stretch
@@ -417,6 +421,7 @@ void save() {
     // Only a picked shape: otherwise the screen's own decides at each start.
     if (g_ratio_chosen) std::fprintf(f, "ratio=%s\n", kRatios[g_ratio].label);
     std::fprintf(f, "scaling=%s\n", kScalingKeys[g_scaling < kScalingCount ? g_scaling : 0u]);
+    std::fprintf(f, "bottom_scaling=%s\n", kScalingKeys[g_bottom_scaling < kScalingCount ? g_bottom_scaling : 0u]);
     std::fprintf(f, "settings_version=%d\n", kSettingsVersion);
     std::fclose(f);
 }
@@ -475,6 +480,26 @@ void scaling_choice_set(unsigned i) {
     g_scaling = i < kScalingCount ? i : 0u;
     apply_scaling();
     save();
+}
+
+unsigned bottom_scaling_choice_current() { return g_bottom_scaling; }
+void bottom_scaling_choice_set(unsigned i) {
+    g_bottom_scaling = i < kScalingCount ? i : 0u;
+    save();
+}
+void bottom_screen_size_set(int w, int h) {
+    g_bottom_size.store(w > 0 && h > 0 ? (std::min(w, 0xFFFF) << 16) | std::min(h, 0xFFFF) : 0);
+}
+int bottom_scaling_exact() {
+    const int s = g_bottom_size.load();
+    if (s == 0) return -1;
+    const double w = (s >> 16) & 0xFFFF, h = s & 0xFFFF;
+    const double kf = std::min(w / 248.0, h / 208.0);   // StatsView's MENU_W x (MENU_H + the bar's BUTTON)
+    const int k = static_cast<int>(kf);
+    return k >= 1 && kf - k < 0.001 ? k : 0;
+}
+int bottom_scaling_mode() {
+    return bottom_scaling_exact() > 0 ? 0 : static_cast<int>(g_bottom_scaling);
 }
 
 int scaling_exact() {
@@ -969,11 +994,12 @@ void settings_init(const char* dir, unsigned widescreen_width,
                 // the view where the display cannot show it.
                 if (std::strcmp(line, "width") == 0) { saved_w = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
                 if (std::strcmp(line, "height") == 0) { saved_h = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
-                if (std::strcmp(line, "scaling") == 0) {
+                if (std::strcmp(line, "scaling") == 0 || std::strcmp(line, "bottom_scaling") == 0) {
+                    unsigned& to = line[0] == 'b' ? g_bottom_scaling : g_scaling;
                     char* v = eq + 1;
                     v[std::strcspn(v, " \r\n")] = '\0';
                     for (unsigned k = 0; k < kScalingCount; ++k)
-                        if (std::strcmp(v, kScalingKeys[k]) == 0) g_scaling = k;
+                        if (std::strcmp(v, kScalingKeys[k]) == 0) to = k;
                     continue;
                 }
                 if (std::strcmp(line, "ratio") == 0) {

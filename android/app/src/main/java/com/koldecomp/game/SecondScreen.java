@@ -181,6 +181,7 @@ public final class SecondScreen {
                     sPresentation.getWindow().addFlags(
                             android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
                 sView = new StatsView(sPresentation.getContext());
+                sView.setBottomScreen(true);   // its size to native: Options > Display > Bottom Screen
                 sPresentation.setContentView(sView, new ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT));
@@ -272,6 +273,18 @@ public final class SecondScreen {
     }
 
     static native int[] menuToggle();
+
+    // Options > Display > Bottom Screen (kol_settings bottom_scaling_*): the
+    // second screen's size, and how its picture fills it (0 Integer, 1
+    // Smooth, 2 Stretch; Integer where it is a whole multiple anyway).
+    private static native void nativeBottomSize(int w, int h);
+    private static native int nativeBottomScaling();
+    static void reportBottomSize(int w, int h) {
+        try { nativeBottomSize(w, h); } catch (Throwable t) { /* native not ready */ }
+    }
+    static int bottomScaling() {
+        try { return nativeBottomScaling(); } catch (Throwable t) { return 0; }
+    }
     static native int[] menuTouch(int action, float x, float y);
     // The Save States page's grid (kol::menu_states_*): StatsView scrolls its rows.
     /** Rows, version, ask count, asked place, top, bottom, row height; null off the page. */

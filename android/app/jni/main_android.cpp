@@ -1158,6 +1158,16 @@ Java_com_koldecomp_game_Cheevos_nativeLogin(JNIEnv* env, jclass, jstring user, j
     if (p) env->ReleaseStringUTFChars(password, p);
 }
 
+// Options > Display > Bottom Screen: StatsView's size, and how it draws.
+JNIEXPORT void JNICALL
+Java_com_koldecomp_game_SecondScreen_nativeBottomSize(JNIEnv*, jclass, jint w, jint h) {
+    kol::bottom_screen_size_set(w, h);
+}
+JNIEXPORT jint JNICALL
+Java_com_koldecomp_game_SecondScreen_nativeBottomScaling(JNIEnv*, jclass) {
+    return kol::bottom_scaling_mode();
+}
+
 JNIEXPORT jint JNICALL
 Java_com_koldecomp_game_MainActivity_nativeSettingCount(JNIEnv*, jclass) {
     return static_cast<jint>(kol::Setting::Count);

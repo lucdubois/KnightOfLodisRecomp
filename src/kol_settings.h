@@ -156,6 +156,17 @@ void scaling_choice_set(unsigned i);
 // 240x160 (the title and the menus), 0 when not: Scaling changes nothing then.
 int scaling_exact();
 
+// Options > Display > Bottom Screen (Android, a second screen): the same
+// three for StatsView's 248x184 canvas. Its size comes from StatsView; the
+// row is off with none (exact -1) or when the screen is a whole multiple
+// (exact > 0). bottom_scaling_mode(): what StatsView draws (0 Integer where it
+// changes nothing). bottom_scaling= in enhancements.cfg.
+unsigned bottom_scaling_choice_current();
+void bottom_scaling_choice_set(unsigned i);
+void bottom_screen_size_set(int w, int h);
+int bottom_scaling_exact();
+int bottom_scaling_mode();
+
 // ── The depth of field's STRENGTH ─────────────────────────────────────────
 // How far the farthest terrain is blurred: the radius of its blur disc, in
 // frame pixels. A short list like the view size; persisted as dof_radius=.
