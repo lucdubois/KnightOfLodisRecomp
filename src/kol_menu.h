@@ -152,6 +152,7 @@ void menu_dialog(const char* title, const char* text, const std::vector<std::str
 struct MenuPlatform {
     void (*pick_mod)() = nullptr;     // the system's file picker; then menu_mod_picked
     void (*pick_bios)() = nullptr;    // the same for a BIOS file; then menu_bios_picked
+    void (*pick_shader_folder)() = nullptr;   // Android: a folder of shaders copied in; then menu_shaders_imported
     void (*remove_mod)() = nullptr;   // files/mod/ emptied
     void (*restart)() = nullptr;      // the app ends and starts again
     void (*unlink_rom)() = nullptr;   // the ROM copy set aside, then restart
@@ -189,6 +190,9 @@ void menu_mod_picked(const char* name, const char* error);
 // Technical > BIOS's picker: null (the GBA BIOS kept, chosen from the next
 // start), or why not.
 void menu_bios_picked(const char* error);
+// Display > Shader > Import Folder's answer: the presets copied in (and the
+// folder's name), or an error.
+void menu_shaders_imported(int presets, const char* name, const char* error);
 
 // For the other second-screen pages (kol_edit_panel): the game's window
 // frame over tile cells c0..c1 x r0..r1 of a w x h canvas, and one line of

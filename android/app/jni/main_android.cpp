@@ -311,6 +311,7 @@ jclass    g_mods_class = nullptr;
 jclass    g_setup_class = nullptr;
 jmethodID g_mods_pick = nullptr, g_mods_remove = nullptr, g_mods_restart = nullptr, g_mods_licenses = nullptr;
 jmethodID g_mods_pick_bios = nullptr;
+jmethodID g_mods_pick_shaders = nullptr;
 jmethodID g_setup_unlink = nullptr;
 
 bool platform_bind(JNIEnv* env) {
@@ -331,6 +332,8 @@ bool platform_bind(JNIEnv* env) {
     g_mods_licenses = env->GetStaticMethodID(g_mods_class, "showLicenses", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     g_mods_pick_bios = env->GetStaticMethodID(g_mods_class, "pickBios", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    g_mods_pick_shaders = env->GetStaticMethodID(g_mods_class, "pickShaders", "()V");
     g_setup_unlink = env->GetStaticMethodID(g_setup_class, "unlinkRom", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     return g_mods_pick && g_mods_remove && g_mods_restart && g_setup_unlink;
@@ -348,6 +351,7 @@ void restart_android() { call_static(g_mods_class, g_mods_restart); }
 void unlink_rom_android() { call_static(g_setup_class, g_setup_unlink); }
 void licenses_android() { call_static(g_mods_class, g_mods_licenses); }
 void bios_pick_android() { call_static(g_mods_class, g_mods_pick_bios); }
+void shaders_pick_android() { call_static(g_mods_class, g_mods_pick_shaders); }
 
 // The mod to play: the one file in files/mod/ (Mods.java puts it there), or
 // "". It is checked here first, as the runtime will (rom_patch.h): one that
@@ -1027,6 +1031,7 @@ int main(int argc, char** argv) {
         p.restart = &restart_android;
         if (g_mods_licenses) p.show_licenses = &licenses_android;
         if (g_mods_pick_bios) p.pick_bios = &bios_pick_android;   // Technical > BIOS
+        if (g_mods_pick_shaders) p.pick_shader_folder = &shaders_pick_android;   // Display > Shader
         if constexpr (kol::kDevTools) p.unlink_rom = &unlink_rom_android;   // Debug > Unlink ROM
         kol::menu_set_platform(p);
     } else {
@@ -1134,6 +1139,16 @@ extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativePicked(JNIE
     const char* n = name ? env->GetStringUTFChars(name, nullptr) : nullptr;
     const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
     kol::menu_mod_picked(n, e);
+    if (n) env->ReleaseStringUTFChars(name, n);
+    if (e) env->ReleaseStringUTFChars(error, e);
+}
+
+// Display > Shader > Import Folder's answer (Mods.nativeShadersImported).
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeShadersImported(JNIEnv* env, jclass, jint presets,
+                                                                                  jstring name, jstring error) {
+    const char* n = name ? env->GetStringUTFChars(name, nullptr) : nullptr;
+    const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
+    kol::menu_shaders_imported(presets, n, e);
     if (n) env->ReleaseStringUTFChars(name, n);
     if (e) env->ReleaseStringUTFChars(error, e);
 }

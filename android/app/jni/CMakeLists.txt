@@ -70,6 +70,7 @@ include("${KOL_ROOT}/third_party/rcheevos.cmake")
 add_library(main SHARED
     main_android.cpp
     "${KOL_ROOT}/src/kol_cheevos.cpp"
+    "${KOL_ROOT}/src/kol_shaders.cpp"
     "${KOL_ROOT}/src/kol_widescreen.cpp"
     "${KOL_ROOT}/src/kol_terrain_probe.cpp"
     "${KOL_ROOT}/src/kol_highlight.cpp"

@@ -98,6 +98,7 @@ add_executable(KnightOfLodisRecomp
     src/kol_setup.cpp
     $<$<PLATFORM_ID:Darwin>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_setup_mac.mm>
     src/kol_cheevos.cpp
+    src/kol_shaders.cpp
     $<IF:$<PLATFORM_ID:Windows>,${CMAKE_CURRENT_SOURCE_DIR}/src/kol_cheevos_winhttp.cpp,${CMAKE_CURRENT_SOURCE_DIR}/src/kol_cheevos_curl.cpp>
     $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_windows.rc>
     $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_setup_win.cpp>

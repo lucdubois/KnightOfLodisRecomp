@@ -29,6 +29,9 @@ public final class Mods {
     /** A BIOS picked from Options > Technical > BIOS: null, or why not (kol::menu_bios_picked). */
     static native void nativeBiosPicked(String error);
 
+    /** Display > Shader > Import Folder's answer (kol::menu_shaders_imported). */
+    static native void nativeShadersImported(int presets, String name, String error);
+
     /** The mod file in files/mod/, or null. */
     static File current(Context ctx) {
         File[] fs = new File(ctx.getFilesDir(), DIR).listFiles();
@@ -54,6 +57,15 @@ public final class Mods {
         onUi(act -> {
             Intent i = new Intent(act, SetupActivity.class);
             i.putExtra(SetupActivity.EXTRA_PICK_MOD, true);
+            act.startActivity(i);
+        });
+    }
+
+    /** From native (Display > Shader > Import Folder): the folder picker. */
+    public static void pickShaders() {
+        onUi(act -> {
+            Intent i = new Intent(act, SetupActivity.class);
+            i.putExtra(SetupActivity.EXTRA_PICK_SHADERS, true);
             act.startActivity(i);
         });
     }

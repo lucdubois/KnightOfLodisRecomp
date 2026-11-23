@@ -2,7 +2,9 @@ package com.koldecomp.game;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Gravity;
@@ -51,6 +53,11 @@ public class SetupActivity extends Activity {
     private static final int REQ_ROM  = 1;
     private static final int REQ_BIOS = 2;
     private static final int REQ_MOD  = 3;
+    private static final int REQ_SHADERS = 4;
+    // Options > Display > Shader > Import Folder (Mods.pickShaders): a folder
+    // picked, copied into files/shaders/<its name>, the count to the game.
+    static final String EXTRA_PICK_SHADERS = "pick_shaders";
+    private boolean pickShadersOnly;
 
     // Started from the game (Options > Mod, Mods.java): pick a patch and go
     // back, no auto-launch.
@@ -229,6 +236,18 @@ public class SetupActivity extends Activity {
             if (savedInstanceState == null) pick(REQ_MOD);
             return;
         }
+        pickShadersOnly = getIntent().getBooleanExtra(EXTRA_PICK_SHADERS, false);
+        if (pickShadersOnly) {
+            if (savedInstanceState == null) {
+                try {
+                    startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_SHADERS);
+                } catch (Exception e) {
+                    Mods.nativeShadersImported(0, null, "This device has no folder picker.");
+                    finish();
+                }
+            }
+            return;
+        }
         pickBiosOnly = getIntent().getBooleanExtra(EXTRA_PICK_BIOS, false);
         if (pickBiosOnly) {
             if (savedInstanceState == null) pick(REQ_BIOS);
@@ -251,7 +270,7 @@ public class SetupActivity extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
-            if (pickModOnly || pickBiosOnly) finish();
+            if (pickModOnly || pickBiosOnly || pickShadersOnly) finish();
             return;
         }
         if (request == REQ_MOD) {
@@ -260,6 +279,10 @@ public class SetupActivity extends Activity {
         }
         if (pickBiosOnly) {
             pickedBios(data.getData());
+            return;
+        }
+        if (request == REQ_SHADERS) {
+            importShaders(data.getData());
             return;
         }
         String name = (request == REQ_ROM) ? ROM_NAME : BIOS_NAME;
@@ -279,6 +302,62 @@ public class SetupActivity extends Activity {
 
     /** A BIOS picked from the game's menu: kept only if it is the GBA BIOS, and
      *  then played with from the next start (the game asks to restart). */
+    /** A folder of shaders: copied whole (on a thread: the full collection is
+     *  ~3,000 files) into files/shaders/<its name>; the presets counted. */
+    private void importShaders(final Uri tree) {
+        status.setText("Copying shaders...");
+        new Thread(() -> {
+            String error = null, name = null;
+            final int[] presets = {0};
+            try {
+                final String rootId = DocumentsContract.getTreeDocumentId(tree);
+                name = displayName(DocumentsContract.buildDocumentUriUsingTree(tree, rootId));
+                if (name == null || name.isEmpty() || name.startsWith(".")) name = "imported";
+                final File dest = new File(new File(getFilesDir(), "shaders"), name.replace('/', '_'));
+                if (!dest.isDirectory() && !dest.mkdirs()) throw new java.io.IOException("cannot make " + dest);
+                copyTree(tree, rootId, dest, presets, 0);
+            } catch (Exception e) {
+                Log.e(TAG, "shader import failed", e);
+                error = "The folder could not be copied: " + e.getMessage();
+            }
+            final String err = error, folder = name;
+            runOnUiThread(() -> {
+                Mods.nativeShadersImported(presets[0], folder, err);
+                finish();
+            });
+        }, "shader-import").start();
+    }
+
+    private void copyTree(Uri tree, String docId, File dest, int[] presets, int depth) throws Exception {
+        if (depth > 12) return;
+        final Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
+        final String[] cols = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                               DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                               DocumentsContract.Document.COLUMN_MIME_TYPE};
+        try (Cursor c = getContentResolver().query(children, cols, null, null, null)) {
+            if (c == null) return;
+            while (c.moveToNext()) {
+                final String id = c.getString(0), name = c.getString(1), mime = c.getString(2);
+                if (name == null || name.startsWith(".") || name.contains("/")) continue;
+                final File out = new File(dest, name);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    if (!out.isDirectory() && !out.mkdirs()) continue;
+                    copyTree(tree, id, out, presets, depth + 1);
+                    continue;
+                }
+                try (InputStream in = getContentResolver().openInputStream(
+                             DocumentsContract.buildDocumentUriUsingTree(tree, id));
+                     OutputStream o = new FileOutputStream(out)) {
+                    if (in == null) continue;
+                    final byte[] buf = new byte[1 << 16];
+                    int n;
+                    while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+                }
+                if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".glslp")) presets[0]++;
+            }
+        }
+    }
+
     private void pickedBios(Uri uri) {
         String error = null;
         File tmp = new File(getFilesDir(), BIOS_NAME + ".new");

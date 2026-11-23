@@ -4,6 +4,9 @@
 #include "kol_dev.h"
 #include "kol_menu.h"
 
+#include <SDL.h>
+#include <filesystem>
+
 #include <cmath>
 #include <algorithm>
 #include <atomic>
@@ -25,6 +28,7 @@
 #include "kol_fast_actions.h"
 #include "kol_rumble.h"
 #include "kol_settings.h"
+#include "kol_shaders.h"
 #include "kol_sheet.h"
 #include "kol_states.h"
 #include "kol_unit_data.h"
@@ -502,7 +506,13 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  VsMode,        // VS Mode's other player (kol_settings vs_mode_choice_*)
                                  Bios,          // the GBA BIOS or the built-in one, from the next start
                                  Scaling,       // how the picture fills the window or screen (kol_settings)
-                                 BottomScaling };   // Android: the same for a second screen
+                                 BottomScaling,     // Android: the same for a second screen
+                                 ShaderItem,        // the Shader page's lines (page 13, kol_shaders.h)
+                                 ShaderImport,      // Android: a folder of shaders copied in
+                                 ShaderOpenFolder,    // a desktop: the shaders folder opened
+                                 ShaderDownload,      // libretro's GLSL pack downloaded (kol_shaders.h)
+                                 ShaderParam,         // the Parameters page's (14) values
+                                 ShaderParamReset };  // ... all back to the preset's own
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -578,6 +588,7 @@ const Row kDisplay[] = {
 #if defined(__ANDROID__)
     {Kind::BottomScaling, 0, "Bottom Screen", nullptr},   // the same, for a second screen
 #endif
+    {Kind::Page, 13, "Shader", "RetroArch GLSL presets (.glslp)\nover the picture."},
 };
 const Row kGraphics[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
@@ -756,6 +767,117 @@ void ra_rebuild() {
     }
 }
 
+// ── The Shader page (13): Reset, then the player's
+// shaders folder, a folder at a time (kol_shaders.h) ─────────────────────
+std::vector<Row> g_sh_rows;
+std::vector<std::unique_ptr<std::string>> g_sh_text;
+std::vector<ShaderEntry> g_sh_entries;   // ShaderItem's id indexes it
+std::string g_sh_folder;                 // under the shaders folder, "" the top
+bool g_sh_dirty = true;                  // rebuilt at the next render (nothing holds a row then)
+bool g_sh_has_import = false;            // (set with the platform: Android's Import Folder)
+int g_sh_built_status = 0;               // the shader's status when the rows were made
+
+// ── The Parameters page (14): the running shader's #pragma parameters ──
+std::vector<Row> g_sp_rows;
+std::vector<std::unique_ptr<std::string>> g_sp_text;
+std::vector<std::string> g_sp_names;     // ShaderParam's id indexes it
+bool g_sp_dirty = true;
+
+const char* sp_keep(std::string s) {
+    g_sp_text.push_back(std::make_unique<std::string>(std::move(s)));
+    return g_sp_text.back()->c_str();
+}
+
+std::string param_number(float v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.3f", static_cast<double>(v));
+    std::string s = buf;
+    while (!s.empty() && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s == "-0" ? "0" : s;
+}
+
+void sp_rebuild() {
+    g_sp_dirty = false;
+    g_sp_rows.clear();
+    g_sp_text.clear();
+    g_sp_names.clear();
+    g_sp_rows.push_back({Kind::Back, 0, "Back", "Return to the shaders."});
+    const std::vector<ShaderParam> ps = shaders_params();
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        const ShaderParam& p = ps[i];
+        std::string label = p.desc.empty() ? p.name : p.desc;
+        if (label.size() > 22) label = label.substr(0, 21) + ".";
+        g_sp_names.push_back(p.name);
+        g_sp_rows.push_back({Kind::ShaderParam, static_cast<int>(i), sp_keep(label),
+                             sp_keep((p.desc.empty() ? p.name : p.desc).substr(0, 31) + "\n" +
+                                     param_number(p.min) + " to " + param_number(p.max) + ", default " +
+                                     param_number(p.def) + ".")});
+    }
+    if (ps.empty()) g_sp_rows.push_back({Kind::Heading, 0, "- No parameters -", nullptr});
+    else g_sp_rows.push_back({Kind::ShaderParamReset, 0, "Reset All", "Every value back to the\npreset's own."});
+}
+
+const char* sh_keep(std::string s) {
+    g_sh_text.push_back(std::make_unique<std::string>(std::move(s)));
+    return g_sh_text.back()->c_str();
+}
+
+void sh_rebuild() {
+    g_sh_dirty = false;
+    g_sh_built_status = shaders_status();
+    g_sh_rows.clear();
+    g_sh_text.clear();
+    g_sh_entries = shaders_list(g_sh_folder);
+    const bool top = g_sh_folder.empty();
+    g_sh_rows.push_back({Kind::Back, 0, "Back", top ? "Return to the display options." : "Up a folder."});
+    auto item = [&](std::size_t i) {
+        const ShaderEntry& e = g_sh_entries[i];
+        g_sh_rows.push_back({Kind::ShaderItem, static_cast<int>(i),
+                             sh_keep(e.label.size() > 26 ? e.label.substr(0, 25) + "." : e.label), sh_keep(e.help)});
+    };
+    if (!top) {   // a folder: "..", its folders and presets
+        for (std::size_t i = 0; i < g_sh_entries.size(); ++i) item(i);
+        return;
+    }
+    // The top (2026-11-23, the user's order): the shader in use with its
+    // Parameters and Reset (none of the three without one); the shaders;
+    // then where more come from.
+    if (!shader_choice().empty()) {
+        std::string heading = shaders_label();
+        if (heading.size() > 22) heading = heading.substr(0, 21) + ".";
+        g_sh_rows.push_back({Kind::Heading, 0, sh_keep("- " + heading + " -"), nullptr});
+        if (!shaders_params().empty())
+            g_sh_rows.push_back({Kind::Page, 14, "Parameters", "The running shader's settings:\nits own sliders."});
+        for (std::size_t i = 0; i < g_sh_entries.size(); ++i)
+            if (g_sh_entries[i].none) item(i);   // Reset
+    }
+    g_sh_rows.push_back({Kind::Heading, 0, "- Shaders -", nullptr});
+    for (std::size_t i = 0; i < g_sh_entries.size(); ++i)
+        if (!g_sh_entries[i].none) item(i);
+    if (g_sh_has_import)
+        g_sh_rows.push_back({Kind::ShaderImport, 0, "Import Folder...",
+                             "Copy a folder of RetroArch GLSL\nshaders (.glslp) into the game."});
+#if !defined(__ANDROID__)
+    if (!shaders_dir().empty())
+        g_sh_rows.push_back({Kind::ShaderOpenFolder, 0, "Open Folder",
+                             "Your shaders folder: put\nRetroArch .glslp presets in it."});
+#endif
+    if (!shaders_dir().empty())
+        g_sh_rows.push_back({Kind::ShaderDownload, 0,
+                             shaders_pack_installed() ? "Update Shader Pack" : "Download Shader Pack",
+                             "libretro's GLSL shaders (27 MB)\nfrom buildbot.libretro.com."});
+}
+
+// The selection off a heading (a page opened on its row 1, or rebuilt under
+// it): the next row that can be chosen.
+void sel_selectable(const std::vector<Row>& rows, int& sel) {
+    const int n = static_cast<int>(rows.size());
+    if (n == 0) return;
+    sel = std::min(std::max(sel, 0), n - 1);
+    for (int k = 0; k < n && rows[static_cast<std::size_t>(sel)].kind == Kind::Heading; ++k) sel = (sel + 1) % n;
+}
+
 // ── State ────────────────────────────────────────────────────────────────
 MenuPlatform g_platform;
 bool g_mod_pending = false;   // a mod picked this session, played from the next start
@@ -847,6 +969,16 @@ const Row* rows(int* n) {
     if (g_page == 10) { *n = static_cast<int>(sizeof kGameOptionsPage / sizeof kGameOptionsPage[0]); return kGameOptionsPage; }
     if (g_page == 11) { *n = static_cast<int>(sizeof kEnhancements / sizeof kEnhancements[0]); return kEnhancements; }
     if (g_page == 12) { *n = static_cast<int>(sizeof kTechnical / sizeof kTechnical[0]); return kTechnical; }
+    if (g_page == 13) {
+        if (g_sh_rows.empty()) sh_rebuild();
+        *n = static_cast<int>(g_sh_rows.size());
+        return g_sh_rows.data();
+    }
+    if (g_page == 14) {
+        if (g_sp_rows.empty()) sp_rebuild();
+        *n = static_cast<int>(g_sp_rows.size());
+        return g_sp_rows.data();
+    }
     *n = static_cast<int>(sizeof kMain / sizeof kMain[0]);
     return kMain;
 }
@@ -916,6 +1048,8 @@ int parent_page(int page) {
         case 3: return 1;
         case 7: return kol::kDevTools ? g_states_parent : 0;
         case 2: case 4: case 5: case 6: case 9: case 12: return 11;
+        case 13: return 9;
+        case 14: return 13;
         default: return 0;
     }
 }
@@ -926,6 +1060,14 @@ void leave_page() {
     // closes it, to the game's menu, as the game's window did.
     if (g_page == 10 && g_game_option.load(std::memory_order_acquire)) {
         g_open = false;
+        return;
+    }
+    if (g_page == 13 && !g_sh_folder.empty()) {   // a shaders subfolder: up one first
+        const auto slash = g_sh_folder.find_last_of('/');
+        g_sh_folder = slash == std::string::npos ? std::string() : g_sh_folder.substr(0, slash);
+        g_sh_dirty = true;
+        g_sel = 1;
+        g_scroll = 0;
         return;
     }
     const int from = g_page;
@@ -993,7 +1135,36 @@ Text value_text(const Art& a, const Row& r) {
             const int p = preset_current();
             return encode(p < 0 ? "Custom" : preset_label(static_cast<unsigned>(p)));
         }
-        case Kind::Page: return encode(">");
+        case Kind::Page:
+            if (r.id == 13) {   // Display > Shader: the chosen preset
+                const int st = shaders_status();
+                if (st < 0) return encode("Failed");
+                std::string l = st == 2 ? std::string("...") : shaders_label();
+                if (l.size() > 12) l = l.substr(0, 11) + ".";
+                return encode(l.c_str());
+            }
+            return encode(">");
+        case Kind::ShaderImport:
+        case Kind::ShaderOpenFolder: return encode(">");
+        case Kind::ShaderDownload: {
+            const int st = shaders_download_state();
+            return encode(st == 1 ? "..." : st == 2 ? "Unpacking" : ">");
+        }
+        case Kind::ShaderParamReset: return encode(">");
+        case Kind::ShaderParam: {
+            if (r.id < 0 || r.id >= static_cast<int>(g_sp_names.size())) return encode("");
+            for (const ShaderParam& p : shaders_params())
+                if (p.name == g_sp_names[static_cast<std::size_t>(r.id)]) return encode(param_number(p.value).c_str());
+            return encode("");
+        }
+        case Kind::ShaderItem: {
+            if (r.id < 0 || r.id >= static_cast<int>(g_sh_entries.size())) return encode("");
+            const ShaderEntry& e = g_sh_entries[static_cast<std::size_t>(r.id)];
+            if (e.is_folder) return encode(">");
+            if (e.none || e.key != shader_choice()) return encode("");
+            const int st = shaders_status();
+            return encode(st < 0 ? "Failed" : st == 2 ? "..." : "On");
+        }
         case Kind::Licenses: return encode(">");
         case Kind::Bios: return encode(bios_next_real() ? "GBA BIOS" : "Built-in");
         case Kind::Quit: return encode(">");
@@ -1334,9 +1505,14 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             break;
         }
         case Kind::Page:
+            if (r.id == 13) { g_sh_folder.clear(); g_sh_dirty = true; }
+            if (r.id == 14) g_sp_dirty = true;
             if (r.id == 7) g_states_parent = g_page;
             g_page = r.id; g_sel = 1; g_scroll = 0;
             if (r.id == 7) { g_st_sel = 0; states_scroll_to(0); g_st_armed = -1; }
+            // (r is the Display page's row, not one of these: rebuilt at once,
+            // the hand off the heading under it)
+            if (r.id == 13) { sh_rebuild(); sel_selectable(g_sh_rows, g_sel); }
             break;
         case Kind::Back: leave_page(); break;
         case Kind::DisplayMode: display_full_screen_set(!display_full_screen()); break;
@@ -1375,6 +1551,47 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             break;
         case Kind::Mod: mod_dialog(); break;
         case Kind::Bios: bios_dialog(); break;
+        case Kind::ShaderItem: {
+            if (dir < 0 || r.id < 0 || r.id >= static_cast<int>(g_sh_entries.size())) break;
+            const ShaderEntry e = g_sh_entries[static_cast<std::size_t>(r.id)];
+            if (e.is_folder) {
+                g_sh_folder = e.folder;
+                g_sel = 1;
+                g_scroll = 0;
+            } else {
+                shaders_choose(e.none ? std::string() : e.key);
+            }
+            g_sh_dirty = true;
+            break;
+        }
+        case Kind::ShaderImport:
+            if (dir > 0 && g_platform.pick_shader_folder) g_platform.pick_shader_folder();
+            break;
+        case Kind::ShaderParam:
+            if (r.id >= 0 && r.id < static_cast<int>(g_sp_names.size()))
+                shaders_param_step(g_sp_names[static_cast<std::size_t>(r.id)], dir > 0 ? 1 : -1);
+            break;
+        case Kind::ShaderParamReset:
+            if (dir > 0) shaders_params_reset();
+            break;
+        case Kind::ShaderDownload:
+            if (dir < 0 || shaders_download_state() != 0) break;
+            open_dialog("Shaders",
+                        "Download libretro's GLSL shader pack (27 MB, about 600 presets) from "
+                        "buildbot.libretro.com into your shaders folder?",
+                        {"Download", "Cancel"}, 1, [](int b) {
+                            if (b == 0) shaders_download_start();
+                        });
+            break;
+        case Kind::ShaderOpenFolder:
+            if (dir > 0) {
+                std::error_code ec;
+                const std::string d = shaders_dir();
+                std::filesystem::create_directories(d, ec);
+                if (SDL_OpenURL(("file://" + d).c_str()) != 0)
+                    open_dialog("Shaders", ("Put RetroArch .glslp presets in " + d).c_str(), {"OK"}, 0, nullptr);
+            }
+            break;
         case Kind::Cheevo:
             if (r.id == kCheevoAccount && cheevos_status().state != CheevosState::LoggedIn &&
                 cheevos_status().state != CheevosState::LoggingIn) {
@@ -2301,7 +2518,11 @@ bool menu_take_dirty() {
     static std::atomic<int> ra_seen{-1};
     const int ra = cheevos_version();
     const bool ra_changed = menu_is_open() && ra_seen.exchange(ra) != ra;
-    return g_dirty.exchange(false, std::memory_order_acq_rel) || bob || ra_changed;
+    // A shader preset loads (or fails) on the render thread: its row changes.
+    static std::atomic<int> sh_seen{0};
+    const int sh = shaders_status() * 8 + shaders_download_state();
+    const bool sh_changed = menu_is_open() && sh_seen.exchange(sh) != sh;
+    return g_dirty.exchange(false, std::memory_order_acq_rel) || bob || ra_changed || sh_changed;
 }
 
 bool menu_render(std::uint32_t* argb) {
@@ -2315,6 +2536,14 @@ bool menu_render(std::uint32_t* argb) {
         return true;
     }
     if (g_page == 8) ra_rebuild();   // before any row is held
+    if (g_page == 13 && (g_sh_dirty || g_sh_rows.empty() || g_sh_built_status != shaders_status())) {
+        sh_rebuild();
+        sel_selectable(g_sh_rows, g_sel);
+    }
+    if (g_page == 14 && (g_sp_dirty || g_sp_rows.empty() || g_sp_names.size() != shaders_params().size())) {
+        sp_rebuild();
+        g_sel = std::min(g_sel, static_cast<int>(g_sp_rows.size()) - 1);
+    }
     // The OPTION window, its tab over the top edge as the game has it.
     c.window(1, kWinTop, kSheetCols - 1, kWinBottomRow);
     c.option_tab(2, kWinTop);
@@ -2417,6 +2646,16 @@ bool menu_render(std::uint32_t* argb) {
         else
 #endif
         help = encode(scaling_choice_help(scaling_choice_current()));
+    } else if (sel.kind == Kind::ShaderItem && sel.id >= 0 && sel.id < static_cast<int>(g_sh_entries.size()) &&
+               g_sh_entries[static_cast<std::size_t>(sel.id)].key == shader_choice() &&
+               !g_sh_entries[static_cast<std::size_t>(sel.id)].is_folder && shaders_status() < 0) {
+        // Why it failed, cut to the box's two lines (the log has the rest).
+        std::string why = shaders_error();
+        for (char& ch : why) if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+        if (why.size() > 62) why = why.substr(0, 59) + "...";
+        const std::size_t cut = why.size() > 31 ? why.rfind(' ', 31) : std::string::npos;
+        if (cut != std::string::npos && cut > 0) why[cut] = '\n';
+        help = encode(why.c_str());
     } else if (sel.kind == Kind::BottomScaling) {
         const int e = bottom_scaling_exact();
         help = encode(e < 0   ? "The same, for a second screen:\nthere is none here."
@@ -2917,6 +3156,8 @@ void menu_debug_frame() {
 void menu_set_platform(const MenuPlatform& p) {
     std::lock_guard<std::mutex> lock(g_mu);
     g_platform = p;
+    g_sh_has_import = p.pick_shader_folder != nullptr;
+    g_sh_dirty = true;
 }
 
 bool menu_login_up() {
@@ -2985,6 +3226,24 @@ void menu_mod_picked(const char* name, const char* error) {
     std::string n = name;
     if (const auto dot = n.rfind('.'); dot != std::string::npos && dot > 0) n.resize(dot);
     ask_restart("Restart to play " + n + "?");
+}
+
+void menu_shaders_imported(int presets, const char* name, const char* error) {
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        g_sh_dirty = true;
+        g_dirty.store(true, std::memory_order_release);
+    }
+    if (error && *error) {
+        menu_dialog("Shaders", error, {"OK"}, 0, nullptr);
+        return;
+    }
+    const std::string n = name && *name ? name : "the folder";
+    const std::string text = presets > 0
+        ? std::to_string(presets) + (presets == 1 ? " preset" : " presets") + " imported from " + n +
+              ". They are listed under Your Shaders."
+        : "No .glslp preset in " + n + ": choose a folder of RetroArch GLSL shaders.";
+    menu_dialog("Shaders", text.c_str(), {"OK"}, 0, nullptr);
 }
 
 void menu_bios_picked(const char* error) {

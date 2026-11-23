@@ -161,6 +161,14 @@ int scaling_exact();
 // row is off with none (exact -1) or when the screen is a whole multiple
 // (exact > 0). bottom_scaling_mode(): what StatsView draws (0 Integer where it
 // changes nothing). bottom_scaling= in enhancements.cfg.
+// Options > Display > Shader's choice, kept for the next start (kol_shaders.h
+// reads and applies it): "" none, or "user:<path>".
+const std::string& shader_choice();
+void shader_choice_set(const std::string& key);
+// Its parameters as the player set them: "name=value;..." ("" the preset's own).
+const std::string& shader_params_choice();
+void shader_params_set(const std::string& values);
+
 unsigned bottom_scaling_choice_current();
 void bottom_scaling_choice_set(unsigned i);
 void bottom_screen_size_set(int w, int h);

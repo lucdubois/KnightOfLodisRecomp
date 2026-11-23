@@ -318,6 +318,15 @@ rc_client_t* client() {
 
 }  // namespace
 
+bool http_get(const char* url, int* status, std::string* body) {
+    CheevosHttp http;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        http = g_http;
+    }
+    return http && http(url, nullptr, nullptr, "KnightOfLodisRecomp", status, body);
+}
+
 void cheevos_set_http(CheevosHttp fn) {
     std::lock_guard<std::mutex> lock(g_mu);
     g_http = fn;

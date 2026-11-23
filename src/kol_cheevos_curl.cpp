@@ -57,7 +57,11 @@ bool curl_post(const char* url, const char* post, const char* content_type, cons
     if (content_type) headers = curl_slist_append(headers, (std::string("Content-Type: ") + content_type).c_str());
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_USERAGENT, user_agent);
-    curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
+    // No answer in 15 s, or no data for 30: given up. (A cap on the whole
+    // request cut a 27 MB download short on a slow line: the shader pack.)
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 15L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     if (const char* ca = ca_bundle()) curl_easy_setopt(c, CURLOPT_CAINFO, ca);

@@ -23,6 +23,10 @@ namespace kol {
 using CheevosHttp = bool (*)(const char* url, const char* post, const char* content_type,
                              const char* user_agent, int* status, std::string* body);
 void cheevos_set_http(CheevosHttp fn);
+// A plain GET through the same function (blocking: a worker thread's), for
+// other downloads (Display > Shader > Download Shader Pack). False: no HTTP
+// on this build, or no answer.
+bool http_get(const char* url, int* status, std::string* body);
 // A line for the player: an unlock, a login, a lost connection.
 using CheevosNotify = void (*)(const char* text);
 void cheevos_set_notify(CheevosNotify fn);

@@ -1,5 +1,6 @@
 #include "kol_dev.h"
 #include "kol_settings.h"
+#include "kol_shaders.h"
 
 #include <algorithm>
 #include <atomic>
@@ -187,6 +188,10 @@ unsigned g_scaling = 0;
 // The same three for a second screen (Android's presentation display, drawn
 // by StatsView at a whole scale of its 248x184 canvas): bottom_scaling=.
 unsigned g_bottom_scaling = 0;
+// Options > Display > Shader (kol_shaders.h): "" none, or "user:<path>"
+// (under the player's shaders folder).
+std::string g_shader;
+std::string g_shader_params;   // shader_params=: the chosen preset's values, "name=value;..."
 std::atomic<int> g_bottom_size{0};   // the bottom screen's w << 16 | h, 0 none
 
 void apply_scaling() {
@@ -422,6 +427,8 @@ void save() {
     if (g_ratio_chosen) std::fprintf(f, "ratio=%s\n", kRatios[g_ratio].label);
     std::fprintf(f, "scaling=%s\n", kScalingKeys[g_scaling < kScalingCount ? g_scaling : 0u]);
     std::fprintf(f, "bottom_scaling=%s\n", kScalingKeys[g_bottom_scaling < kScalingCount ? g_bottom_scaling : 0u]);
+    if (!g_shader.empty()) std::fprintf(f, "shader=%s\n", g_shader.c_str());
+    if (!g_shader_params.empty()) std::fprintf(f, "shader_params=%s\n", g_shader_params.c_str());
     std::fprintf(f, "settings_version=%d\n", kSettingsVersion);
     std::fclose(f);
 }
@@ -479,6 +486,17 @@ unsigned scaling_choice_current() { return g_scaling; }
 void scaling_choice_set(unsigned i) {
     g_scaling = i < kScalingCount ? i : 0u;
     apply_scaling();
+    save();
+}
+
+const std::string& shader_choice() { return g_shader; }
+const std::string& shader_params_choice() { return g_shader_params; }
+void shader_params_set(const std::string& values) {
+    g_shader_params = values;
+    save();
+}
+void shader_choice_set(const std::string& key) {
+    g_shader = key;
     save();
 }
 
@@ -994,6 +1012,12 @@ void settings_init(const char* dir, unsigned widescreen_width,
                 // the view where the display cannot show it.
                 if (std::strcmp(line, "width") == 0) { saved_w = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
                 if (std::strcmp(line, "height") == 0) { saved_h = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
+                if (std::strcmp(line, "shader") == 0 || std::strcmp(line, "shader_params") == 0) {
+                    char* v = eq + 1;
+                    v[std::strcspn(v, "\r\n")] = '\0';
+                    (line[6] == '_' ? g_shader_params : g_shader) = v;
+                    continue;
+                }
                 if (std::strcmp(line, "scaling") == 0 || std::strcmp(line, "bottom_scaling") == 0) {
                     unsigned& to = line[0] == 'b' ? g_bottom_scaling : g_scaling;
                     char* v = eq + 1;
@@ -1136,6 +1160,7 @@ void settings_init(const char* dir, unsigned widescreen_width,
     g_settings_ready = true;
     apply_view_size();
     apply_scaling();
+    shaders_install();
     std::fprintf(stderr, "settings: view=%ux%u music_quality=%u highlight=%d screen2=%d weather=%d pad=%d dof=%d persp=%d debug_mesh=%d auto_win=%d\n",
                  g_widescreen_width, g_widescreen_height, g_sound_choice,
                  g_on[0] ? 1 : 0, g_on[1] ? 1 : 0, g_on[2] ? 1 : 0, g_on[3] ? 1 : 0,
