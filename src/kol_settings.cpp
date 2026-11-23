@@ -41,7 +41,7 @@ bool g_on[kCount] = {true, true, true, false, false, false, true, false, false, 
                      false, false, false, false, false, false, false, false, true,
                      false, false, false, false, false, false, true, true, true, true,
                      false, false, false, false, false, true, true, true, false, false, true, true, true,
-                     false, false, false, true};
+                     false, false, false};
 // The layer switches are for the moment: never saved, never loaded.
 bool persisted(int i) {
     return i < static_cast<int>(Setting::DebugHideBG0) || i > static_cast<int>(Setting::DebugHideOBJ);
@@ -81,6 +81,12 @@ const char* const kRumbleChoices[] = {"Off", "Light", "Medium", "Strong"};
 constexpr float kRumbleStrength[] = {0.0f, 0.4f, 0.7f, 1.0f};
 constexpr unsigned kRumbleChoiceCount = sizeof(kRumbleChoices) / sizeof(kRumbleChoices[0]);
 unsigned g_rumble_choice = 2;
+// VS Mode's other GBA (kol_vs_cpu): the computer, or a player on the local
+// network; saved as vs_mode=.
+const char* const kVsModeChoices[] = {"Computer", "Network"};
+constexpr unsigned kVsModeChoiceCount = sizeof(kVsModeChoices) / sizeof(kVsModeChoices[0]);
+unsigned g_vs_mode_choice = 0;
+std::atomic<bool> g_net_match{false};
 // Shadows cast by the terrain: off or on. The sun is 36 degrees above the
 // ground (its direction is kol_focus shadow_dir_pick's) unless the map has
 // its own sun (kol_focus kMapSuns, the editor's `sun` lines): the sun the
@@ -242,7 +248,7 @@ const char* const kKeys[kCount] = {"highlight", "second_screen",
                                    "bump_map", "special_effects", "fast_actions",
                                    "fast_walk", "quick_enemy", "fast_attack", "own_rain", "wet_rain",
                                    "smooth_boxes", "debug_numbered_states", "fast_spells", "smooth_sky", "own_snow", "smooth_pacing",
-                                   "debug_no_second_screen", "swap_face", "rewind", "vs_computer"};
+                                   "debug_no_second_screen", "swap_face", "rewind"};
 const char* const kLabels[kCount] = {"See-through move range",
                                      "Second screen panel",
                                      "Rain across the whole screen",
@@ -287,8 +293,7 @@ const char* const kLabels[kCount] = {"See-through move range",
                                      "Smooth pacing (frames at the display's 60 Hz; the game 0.46% faster)",
                                      "Debug: no second screen (BACK pauses and shows the menu)",
                                      "Swap face buttons (A/B, X/Y)",
-                                     "Rewind (L2)",
-                                     "VS Mode against the computer"};
+                                     "Rewind (L2)"};
 
 // enhancements.cfg's settings_version=: 2 since lifting went back into
 // Enhanced (2026-11-20); a file without it is older, and is moved to the new
@@ -374,6 +379,7 @@ void save() {
     std::fprintf(f, "music_quality=%u\n", g_sound_choice);
     std::fprintf(f, "ambient_occlusion=%u\n", g_ao_choice);
     std::fprintf(f, "rumble=%u\n", g_rumble_choice);
+    std::fprintf(f, "vs_mode=%u\n", g_vs_mode_choice);
     std::fprintf(f, "shadows=%u\n", g_shadow_choice);
     std::fprintf(f, "music_volume=%u\n", g_music_volume * 10u);
     std::fprintf(f, "effects_volume=%u\n", g_effects_volume * 10u);
@@ -545,6 +551,30 @@ void rumble_choice_set(unsigned i) {
     save();
     std::fprintf(stderr, "settings: rumble = %s\n", kRumbleChoices[i]);
     std::fflush(stderr);
+}
+std::string settings_file_path() { return cfg_path(); }
+void settings_net_match(bool on) { g_net_match.store(on); }
+bool settings_net_match_on() { return g_net_match.load(std::memory_order_relaxed); }
+void settings_panel(unsigned* w, unsigned* h) {
+    if (w) *w = g_panel_w;
+    if (h) *h = g_panel_h;
+}
+unsigned vs_mode_choice_count() { return kVsModeChoiceCount; }
+const char* vs_mode_choice_label(unsigned i) { return i < kVsModeChoiceCount ? kVsModeChoices[i] : ""; }
+unsigned vs_mode_choice_current() {
+    // KOL_VS_MODE=0/1 for a desktop test run (no enhancements.cfg needed).
+    static const int env = [] {
+        const char* e = std::getenv("KOL_VS_MODE");
+        return e && *e ? std::atoi(e) : -1;
+    }();
+    if (env >= 0 && static_cast<unsigned>(env) < kVsModeChoiceCount) return static_cast<unsigned>(env);
+    return g_vs_mode_choice;
+}
+void vs_mode_choice_set(unsigned i) {
+    if (i >= kVsModeChoiceCount) return;
+    g_vs_mode_choice = i;
+    save();
+    std::fprintf(stderr, "settings: vs_mode = %s\n", kVsModeChoices[i]);
 }
 float rumble_strength() { return kRumbleStrength[g_rumble_choice < kRumbleChoiceCount ? g_rumble_choice : 0]; }
 
@@ -759,6 +789,7 @@ bool setting_on(Setting s) {
     // always on, in every build, no menu row (the user, 2026-11-16, wanted it
     // fixed on: it is the players' only way to make states).
     if (s == Setting::DebugNumberedStates) return true;
+    if (s == Setting::AnalogCursor && g_net_match.load(std::memory_order_relaxed)) return false;
     // A public build (kol_dev.h): every debug setting off, whatever an old
     // enhancements.cfg says. Not No Random Battles: a Cheats row since 10-21.
     if constexpr (!kol::kDevTools)
@@ -851,6 +882,11 @@ void settings_init(const char* dir, unsigned widescreen_width,
                     std::strcmp(line, "effects_volume") == 0) {
                     const unsigned v = static_cast<unsigned>(std::min(std::max(value, 0), 100) + 5) / 10u;
                     (line[0] == 'm' ? g_music_volume : g_effects_volume) = v;
+                    continue;
+                }
+                if (std::strcmp(line, "vs_mode") == 0) {
+                    if (value >= 0 && static_cast<unsigned>(value) < kVsModeChoiceCount)
+                        g_vs_mode_choice = static_cast<unsigned>(value);
                     continue;
                 }
                 if (std::strcmp(line, "rumble") == 0) {

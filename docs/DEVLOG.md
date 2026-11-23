@@ -24029,3 +24029,73 @@ snapshot at 2827, linked, attack order at 2918; the NAVI path as before
 app, from the title: linked at frame 4920 in 138 ms, attack order,
 roulette, Winning Condition, FIGHT IT OUT, deployment, and the computer's
 turns in the battle (its log) until the app was closed at ~15,600.
+
+### VS Network: a player on the local network (2026-11-22)
+
+Asked: VS Mode as an option, "VS CPU or VS Network", P2P network play; a
+local network first; the Mac and the Steam Deck first (Android would need
+the copy as a service, as VS Computer does). Options > Gameplay > VS Mode =
+Computer / Network (`vs_mode=`, Computer by default; replaces the VS
+Computer switch; `KOL_VS_MODE=0/1` for tests).
+
+Measured first: the game makes ~14 link transfers every frame, from
+Connecting through the battle, and the link waits a round trip for each;
+this network's round trip to the Deck is ~15 ms (32 at worst), so the cable
+itself over the network would run at ~5 fps. So each machine runs BOTH
+games and only buttons cross the network (`src/kol_vs_net.{h,cpp}`, the
+session in `kol_vs_cpu.cpp`):
+
+- Connecting's first frame (the VS Computer trigger): a snapshot, then the
+  game is held and looks for another game held on Connecting (UDP broadcast
+  beacons on port 19873 every 0.5 s with a TCP port; the smaller random
+  number connects; `KOL_VS_NET_PEER=a.b.c.d` beacons to an address too).
+  B stops looking; 2 minutes without a player gives up; the game's own
+  Connecting then times out as without a cable.
+- The two swap a hello (ROM, BIOS, mod fingerprints: refused if they
+  differ), their snapshot, their save and their enhancements.cfg. Each then
+  starts the OTHER player's game here, unseen (`KOL_VS_MIRROR=1`: its
+  owner's settings and screen size, `KOL_VS_MIRROR_CFG/PANEL`), linked
+  locally; the smaller number's game is the link's parent on both machines.
+  The seen game loads its own snapshot back as the match starts, so all four
+  games start loaded; its end of the local link is made at that load.
+- Buttons by the game's own pad reads, not frames: a
+  `[[mod_function_hook]]` on 0x08000A04, which the main loop calls right
+  before it reads KEYINPUT (0x0800061C) and hands the buttons to its key
+  state (0x08002504, IWRAM 0x03000820). Read n gets the player's buttons
+  from read n - 4 (~67 ms), here and, by the network, in the copy there,
+  which waits for them. Every 64th read both copies hash all of EWRAM and
+  IWRAM; the two machines compare; a difference ends the match ("went out
+  of step"; `KOL_VS_NET_DESYNC_GO_ON=1` goes on). During a match the
+  analog cursor is off (it moves the game's cursor outside the buttons),
+  rewind is blocked, and Fast Loading's memo is not used (each machine's
+  file is its own and a hit takes a load ~48 frames less).
+
+Making two machines' copies of a game run alike took, in order (each found
+by dumping both copies' memory at the same point, `KOL_VS_NET_DUMP=<dir>`
+`KOL_VS_NET_DUMP_FROM=<read>`, and diffing):
+1. The memo: the first desync, a load leaving on different frames.
+2. KoL's frame function runs twice in a frame when the view changes size
+   (battle preparation): a frame-numbered timeline sent nothing new on the
+   second call and the copy, having taken the frame's buttons, waited for
+   them again: both games stuck.
+3. Buttons set from the frame hook landed a few instructions apart in the
+   two copies (the hook fires at a chunk's end): the camera eased a frame
+   later in one (0x02026C90). Hence the pad-read hook.
+4. A stored stack pointer (0x02026C90 is written with SP-relative addresses
+   at 0x08021FEC) and the stack differed by 20 bytes, every run the same:
+   gbarecomp's snapshot did not bring the devices up to the CPU before a
+   save, and a load kept the loader's unflushed cycles (gbarecomp
+   ENHANCEMENTS "Two copies of one pair must agree"). Fixed there; also the
+   link's "ready" line now carries times (`peer_multi_at`).
+Excluding the stack from the hash (tried first) only hid 4.
+
+Checked headless on this Mac, two players with their own data folders,
+both armies played by the AI (`KOL_AI_ARMY=1`, the copies too through
+`KOL_VS_CHILD_ENV`): found each other, swapped, linked in ~160-210 ms,
+12,000 frames into the battle, 191 hashes equal (stack included). VS
+Computer still links and reaches the battle; both render invariants hold
+(66e13ab2 / 9054c456). Test script: two `--data-dir` copies of the dev
+data, quest_menu_vs.state, `KOL_KEY_SCRIPT` A presses.
+
+Not yet: a run between two machines (the Deck refused ssh on 2026-11-22),
+a human-played match, the notices' look, Android, Windows, internet play.

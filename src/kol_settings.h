@@ -67,7 +67,6 @@ enum class Setting {
     DebugNoSecondScreen,  // as a device with one screen: BACK pauses and shows the options menu over the game (SecondScreen.java)
     SwapFace,         // A <-> B and X <-> Y on the controller (kol_actions pad_swap_set)
     Rewind,           // Cheats: L2 and the on-screen button go back in time (gbarecomp rewind); off by default
-    VsComputer,       // VS Mode's other GBA is the computer: an unseen copy of the game (kol_vs_cpu; desktop)
     Count
 };
 
@@ -194,6 +193,23 @@ void debug_map_set(unsigned n);
 // lives, and show in a story scene only (New Game). The menu lists them
 // apart: Battle Map steps through the first, Scene Map the rest.
 bool debug_map_in_training(unsigned n);
+
+// VS Mode's other GBA (desktop, kol_vs_cpu.h): 0 "Computer" (an unseen copy
+// of this game, played by the game's AI), 1 "Network" (a player on the local
+// network, kol_vs_net.h). Saved as vs_mode=; Computer unless chosen.
+// A VS match over the network is on (kol_vs_net): what would change one
+// machine's copy of a game and not the other's is held off for it (the
+// analog cursor: it moves the game's cursor outside the buttons).
+void settings_net_match(bool on);
+bool settings_net_match_on();
+// enhancements.cfg's path ("" before settings_init or without a folder).
+std::string settings_file_path();
+// The display's size given to settings_init (landscape; 0 unknown).
+void settings_panel(unsigned* w, unsigned* h);
+unsigned vs_mode_choice_count();
+const char* vs_mode_choice_label(unsigned i);
+unsigned vs_mode_choice_current();
+void vs_mode_choice_set(unsigned i);
 
 unsigned sound_choice_count();
 const char* sound_choice_label(unsigned i);

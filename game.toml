@@ -1612,6 +1612,16 @@ mode = "thumb"
 addr = 0x080020B8
 mode = "thumb"
 
+# 0x08000A04 is called by the main loop (bl at 0x08000614) right before it
+# reads KEYINPUT (0x0800061C) and hands the pressed buttons to its key state
+# (0x08002504, IWRAM 0x03000820). VS Mode over the network
+# (src/kol_vs_net.cpp) sets KEYINPUT there for the match's pad read n, so
+# both machines' copies of a game take read n's buttons at the same
+# instruction; it always declines (the routine runs as it is).
+[[mod_function_hook]]
+addr = 0x08000A04
+mode = "thumb"
+
 [[mod_function_hook]]
 addr = 0x0801FBAC
 mode = "thumb"

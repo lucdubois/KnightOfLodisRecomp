@@ -498,7 +498,8 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Quit,          // a desktop: ends the game, after a question
                                  DisplayMode,   // a desktop: window or full screen (kol_desktop.h)
                                  WindowSize,    // a desktop: the window's size
-                                 Ratio };       // the picture's shape (kol_settings ratio_choice_*)
+                                 Ratio,         // the picture's shape (kol_settings ratio_choice_*)
+                                 VsMode };      // VS Mode's other player (kol_settings vs_mode_choice_*)
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -625,8 +626,7 @@ const Row kGameplay[] = {
     {Kind::Setting, static_cast<int>(Setting::FastSpells), "Fast Spells",
      "A spell or an item's use\nplays twice as fast."},
 #if !defined(__ANDROID__) && !defined(_WIN32)
-    {Kind::Setting, static_cast<int>(Setting::VsComputer), "VS Computer",
-     "VS Mode is played against the\ncomputer, with no link cable."},
+    {Kind::VsMode, 0, "VS Mode", "VS's other player: the computer,\nor a player on this network."},
 #endif
 };
 const Row kCheats[] = {
@@ -943,6 +943,8 @@ Text value_text(const Art& a, const Row& r) {
             if (ao_choice_current() == 0) return a.opts[3].values[1];
             return encode(ao_choice_current() == 1 ? "Half Tile" : "Full Tile");
         }
+        case Kind::VsMode:
+            return encode(vs_mode_choice_label(vs_mode_choice_current()));
         case Kind::Rumble:   // OFF, or its strength
             if (rumble_choice_current() == 0) return a.opts[3].values[1];
             return encode(rumble_choice_label(rumble_choice_current()));
@@ -1217,6 +1219,9 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             break;
         case Kind::Shadows:
             shadow_choice_set(shadow_choice_current() != 0 ? 0u : 1u);
+            break;
+        case Kind::VsMode:
+            vs_mode_choice_set(wrap(vs_mode_choice_current(), dir, vs_mode_choice_count()));
             break;
         case Kind::Rumble:
             rumble_choice_set(wrap(rumble_choice_current(), dir, rumble_choice_count()));
