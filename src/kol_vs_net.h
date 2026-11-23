@@ -57,7 +57,8 @@ Status status();
 const std::string& failure();   // why it failed (Failed)
 const Side& peer();             // the other side (Ready)
 // The peer's buttons are written to `fd` (the copy's key pipe) as they come,
-// those that came before it first. -1 drops it.
+// those that came before it first. The session owns it from here: closed
+// when replaced, stopped, or when the peer goes (the copy's wait ends).
 void set_key_sink(int fd);
 // During the match: this game's buttons for a frame, its hash at a frame.
 void send_keys(std::uint64_t frame, std::uint16_t keys);
@@ -68,6 +69,9 @@ bool take_peer_hash(std::uint64_t frame, std::uint64_t* hash);
 bool peer_gone(std::string* why);
 // Ends it (a goodbye to the peer), any time; then Idle.
 void stop(const char* why);
+// Called from the session's thread when the other side goes (closed, a
+// goodbye, or 15 s of silence): async-signal-safe work only.
+void set_on_gone(void (*fn)());
 
 // The button timeline, the seen game's side (numbered by the game's pad
 // reads: kol_vs_net.cpp). From the snapshot on, the game sees only what

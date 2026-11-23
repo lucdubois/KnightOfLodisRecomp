@@ -18,6 +18,7 @@ void send_hash(std::uint64_t, std::uint64_t) {}
 bool take_peer_hash(std::uint64_t, std::uint64_t*) { return false; }
 bool peer_gone(std::string*) { return false; }
 void stop(const char*) {}
+void set_on_gone(void (*)()) {}
 void play_begin(std::uint16_t) {}
 void play_reset_calls() {}
 void play_attach_hash_fd(int) {}
@@ -217,6 +218,7 @@ struct Net {
 
 std::mutex g_cur_mu;
 std::shared_ptr<Net> g_cur;   // the session (kept by its thread too)
+std::atomic<void (*)()> g_on_gone{nullptr};
 
 std::shared_ptr<Net> cur() {
     std::lock_guard<std::mutex> lock(g_cur_mu);
@@ -452,6 +454,13 @@ void run(std::shared_ptr<Net> np) {
     while (!n.stopping.load()) {
         pollfd p{fd, POLLIN, 0};
         const int pr = ::poll(&p, 1, 500);
+        {
+            std::lock_guard<std::mutex> lock(n.mu);
+            if (Clock::now() - n.last_rx > kSilence) {
+                why = "nothing from the other player for 15 s";
+                break;
+            }
+        }
         if (pr == 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) {
             bool ping = false;
             {
@@ -482,15 +491,26 @@ void run(std::shared_ptr<Net> np) {
             break;
         }
     }
+    bool tell = false;
     {
         std::lock_guard<std::mutex> lock(n.mu);
         if (!n.stopping.load() && !n.gone) {
             n.gone = true;
             n.gone_why = why;
+            tell = true;
             std::fprintf(stderr, "vs-net: %s\n", why.c_str());
         }
+        // No more buttons: the copy's pipe closed, its wait ends.
+        if (n.sink >= 0) ::close(n.sink);
+        n.sink = -1;
     }
     ::shutdown(fd, SHUT_RDWR);
+    // The seen game may be held in the link, waiting on the copy, which waits
+    // for buttons that will not come: the copy goes now, the link closes, and
+    // the game goes on to end the match (it waited the copy's 30 s before).
+    if (tell) {
+        if (void (*fn)() = g_on_gone.load()) fn();
+    }
 }
 
 // ── The button timeline ──────────────────────────────────────────────────
@@ -663,6 +683,8 @@ std::string file_fingerprint(const std::string& path) {
     return hex64(h);
 }
 
+void set_on_gone(void (*fn)()) { g_on_gone.store(fn); }
+
 bool start(Side mine) {
     stop("a new try");
     auto n = std::make_shared<Net>();
@@ -700,8 +722,12 @@ const Side& peer() {
 
 void set_key_sink(int fd) {
     const auto n = cur();
-    if (!n) return;
+    if (!n) {
+        if (fd >= 0) ::close(fd);
+        return;
+    }
     std::lock_guard<std::mutex> lock(n->mu);
+    if (n->sink >= 0 && n->sink != fd) ::close(n->sink);   // (the session's: it owns the pipe's end)
     n->sink = fd;
     if (fd >= 0) {
         for (const Rec& r : n->pending) pipe_write(fd, r);
@@ -761,6 +787,7 @@ void stop(const char* why) {
     const int fd = n->fd.load();
     if (fd >= 0) ::shutdown(fd, SHUT_RDWR);
     std::lock_guard<std::mutex> lock(n->mu);
+    if (n->sink >= 0) ::close(n->sink);
     n->sink = -1;
 }
 

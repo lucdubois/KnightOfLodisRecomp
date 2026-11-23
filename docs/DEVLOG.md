@@ -24097,5 +24097,19 @@ Computer still links and reaches the battle; both render invariants hold
 (66e13ab2 / 9054c456). Test script: two `--data-dir` copies of the dev
 data, quest_menu_vs.state, `KOL_KEY_SCRIPT` A presses.
 
-Not yet: a run between two machines (the Deck refused ssh on 2026-11-22),
-a human-played match, the notices' look, Android, Windows, internet play.
+Then between two machines, the Mac and the Deck (headless, both armies the
+AI's; the Deck's player in the SDK sandbox WITH `--share=network`, which
+`~/kol/run_test.sh` lacks): found each other, linked in 212 ms, 100 hashes
+equal into the battle, a Mac (arm64) and a Deck (x86-64) build agreeing to
+the byte. The Deck then went to sleep mid-match: the Mac's copy of its game
+waited its 30 s for buttons, so the game (held in the link meanwhile) only
+then ended the match. Now the session's thread, on 15 s of silence, a
+goodbye or a closed connection, closes the copy's button pipe and kills it
+(SIGKILL: SDL turns SIGTERM into a quit event a held copy never reads), and
+the game ends the match with "The other player left." 16 s after the other
+game froze (checked by SIGSTOPping one of two players on this Mac).
+(The Deck had moved to 192.168.0.62; `ssh -o HostName=192.168.0.62 -o
+HostKeyAlias=192.168.0.59 steamdeck` verified it against its stored key.)
+
+Not yet: a human-played match, the notices' look, Android, Windows,
+internet play.

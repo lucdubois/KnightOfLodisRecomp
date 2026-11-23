@@ -105,6 +105,7 @@ std::string g_dir;               // the session's folder: the snapshot(s), the c
 std::string g_state;             // g_dir/vs.state
 bool g_net = false;              // this session is over the network
 pid_t g_pid = -1;
+std::atomic<pid_t> g_copy_pid{-1};   // the copy, for the session thread (vsnet::set_on_gone)
 bool g_failed_here = false;      // a try failed on this Connecting screen: not again until it is left
 int g_wait = 0;
 int g_off = 0;
@@ -259,6 +260,7 @@ bool spawn(const Spawn& sp) {
     }
     if (log_fd >= 0) ::close(log_fd);
     g_pid = pid;
+    g_copy_pid.store(pid);
     std::fprintf(stderr, "vs-cpu: %s started (pid %d, link %s, log %s)\n", sp.who, static_cast<int>(pid),
                  sp.link.c_str(), log.c_str());
     return true;
@@ -281,6 +283,7 @@ void reap_child() {
             }
         }
         g_pid = -1;
+        g_copy_pid.store(-1);
     }
     if (!g_dir.empty() && !std::getenv("KOL_VS_KEEP")) {   // KOL_VS_KEEP=1: keep it (its log)
         std::error_code ec;
@@ -622,14 +625,14 @@ void vs_cpu_tick() {
         std::lock_guard<std::mutex> lock(g_mu);
         gba::SioLink* l = gba::SioLink::instance();
         std::string why;
-        if (!l || !l->connected()) {
-            end_session(g_net ? "the link to the other player's game was lost" : "the link to the computer's game was lost");
-            g_failed_here = connecting;
-            break;
-        }
         if (g_net && vsnet::peer_gone(&why)) {
             notice("The other player left.");
             end_session(why.c_str());
+            break;
+        }
+        if (!l || !l->connected()) {
+            end_session(g_net ? "the link to the other player's game was lost" : "the link to the computer's game was lost");
+            g_failed_here = connecting;
             break;
         }
         if (g_net && vsnet::play_desync(&why) && !std::getenv("KOL_VS_NET_DESYNC_GO_ON")) {
@@ -716,6 +719,11 @@ bool vs_cpu_state_saved(const char* path) {
     const std::uint16_t keyinput = bus ? static_cast<std::uint16_t>(bus->io().raw()[0x130] |
                                                                     (bus->io().raw()[0x131] << 8))
                                        : 0x03FFu;
+    vsnet::set_on_gone([] {
+        // SIGKILL: SDL makes SIGTERM a quit event, which a copy held in its
+        // wait for buttons never reads.
+        if (const pid_t p = g_copy_pid.load(); p > 0) ::kill(p, SIGKILL);
+    });
     if (mine.state.empty() || !vsnet::start(std::move(mine))) {
         end_session("the network could not be started");
         g_failed_here = true;
