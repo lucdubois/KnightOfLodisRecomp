@@ -85,6 +85,7 @@ bool vs_cpu_state_saved(const char*) { return false; }
 #include "gba_ppu.h"
 #include "kol_cheevos.h"
 #include "runtime.h"
+#include "runtime_arm.h"
 #include "runtime_bus_bridge.h"
 #include "sio_link.h"
 
@@ -101,6 +102,8 @@ constexpr std::uint32_t kCursor = 0xED1;            // IWRAM: the menu's cursor,
 constexpr std::uint32_t kMode = 0x12E0;             // EWRAM: 4 from the battle's preparation on
 constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 and +6 0x1A on Connecting, 0x46 VS's NAVI pages
                                                     // (the screen pointer is 0x08246C18 from the menu's A on)
+constexpr std::uint32_t kLinkInit = 0x0800601Cu;     // the game's link routines set up (struct 0x03002A10 cleared,
+constexpr std::uint32_t kLinkInitFromConnecting = 0x0814FB2Cu;   // the port to Multi-Player) by Connecting's code
 constexpr std::uint32_t kLinkState = 0x2A11;       // IWRAM: the game's link routines' state byte (0 until their
                                                     // first call, which decides parent or child once: 0x08006210)
 constexpr int kOffTicks = 180;                      // the port out of Multi-Player mode this long: link closed
@@ -536,6 +539,65 @@ void check_search(std::uint16_t keys) {
     }
 }
 
+// Under g_mu: a session's folder and phase; its snapshot is asked for by the
+// caller (VS: at the next pad read; Exchange: at once).
+bool begin_session(bool net, bool exchange) {
+    std::error_code ec;
+    static int session = 0;
+    const auto dir = std::filesystem::temp_directory_path(ec) /
+                     ("kol-vs-" + std::to_string(::getpid()) + "-" + std::to_string(++session));
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        std::fprintf(stderr, "vs-cpu: no folder for the session (%s)\n", ec.message().c_str());
+        return false;
+    }
+    g_net = net;
+    g_exchange = exchange;
+    g_keep_dir = false;
+    g_dir = dir.string();
+    g_state = g_dir + "/vs.state";
+    g_wait = 0;
+    g_save_asked.store(false);
+    g_phase.store(kSaving);
+    std::fprintf(stderr, "vs-cpu: %s's Connecting (%s): a snapshot (%s)\n", exchange ? "Exchange" : "VS",
+                 net ? "network" : "computer", g_dir.c_str());
+    return true;
+}
+
+// Exchange starts where the game sets up its link routines (0x0800601C,
+// called by Connecting's code 0x0814FB2C: it clears their struct at
+// 0x03002A10 and puts the port in Multi-Player mode), on the player's A,
+// first time and after a time-out alike. The routines decide parent or child
+// once, at their first call a frame or two later; the snapshot asked for here
+// is taken at this frame's end (the guest's next yield), before it. Keyed on
+// the set-up, not the screen: Connecting's screen pointer (0x02029B80) is also
+// set by the title's menu, with the cursor byte still on Exchange, which
+// started a search on the title (2026-11-23, the Thor), and it does not change
+// when Exchange is chosen again after a time-out.
+void (*g_prev_entry)(std::uint32_t) = nullptr;
+void on_fn_entry(std::uint32_t pc) {
+    if (g_prev_entry) g_prev_entry(pc);
+    if (pc != kLinkInit || (g_cpu.R[14] & ~1u) != kLinkInitFromConnecting) return;
+    if (vs_mode_choice_current() != 1u || g_phase.load() != kIdle || gba::SioLink::instance()) return;
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    const std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
+    const std::uint8_t* iw = bus ? bus->iwram_ptr() : nullptr;
+    if (!ew || !iw || rd32(ew + kScreen) != kConnecting || iw[kCursor] != 2u || ew[kMode] == 4u) return;
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (!begin_session(true, true)) return;
+    g_save_asked.store(true);
+    gbarecomp::runtime_request_state_save_now(kSlot);
+}
+
+// Installed once VS Mode is Network (a call at every function entry).
+void entry_hook_install() {
+    static bool done = false;
+    if (done || g_args.empty()) return;
+    done = true;
+    g_prev_entry = g_runtime_fn_entry_hook;
+    g_runtime_fn_entry_hook = &on_fn_entry;
+}
+
 // The game's pad read (kol_vs_net's hook, on the guest thread), before the
 // frame's logic: Connecting's snapshot is asked for here. The runtime takes it
 // at the guest's next yield, which compiled code reaches at the end of the
@@ -657,21 +719,12 @@ void vs_cpu_tick() {
     const unsigned cursor = iw[kCursor];
     const bool net_chosen = vs_mode_choice_current() == 1u;
     const std::uint32_t screen = rd32(ew + kScreen);
-    static std::uint32_t s_screen_was = 0;
-    const bool screen_new = screen != s_screen_was;   // the screen's first frame
-    s_screen_was = screen;
     const bool connecting = screen == kConnecting && (cursor == 1u || (cursor == 2u && net_chosen)) &&
                             ew[kMode] != 4u;
-    // Exchange's link routines (0x08006210, state at 0x03002A11) decide
-    // parent or child once, at their first call, in the logic of the
-    // Connecting screen's second frame; with no link up then (SIOCNT's SD
-    // clear) a game is never the parent and both time out after 240 frames.
-    // So its snapshot is asked for on the screen's first frame: taken at that
-    // frame's end (on_pad_read), after the struct is cleared and before the
-    // call, which then runs after the load with the link up (2026-11-23).
-    // VS's routines decide later: its snapshot comes at 0x2836 0x1A, as before.
-    const bool connecting_screen =
-        connecting && (cursor == 2u ? screen_new : ew[kScene] == 0x24u && ew[kScene + 6] == 0x1Au);
+    if (net_chosen) entry_hook_install();   // Exchange's start (on_fn_entry)
+    // VS's snapshot comes at 0x2836 0x1A, before its link routines are set
+    // up. Exchange's starts at their set-up instead (on_fn_entry).
+    const bool connecting_screen = connecting && cursor == 1u && ew[kScene] == 0x24u && ew[kScene + 6] == 0x1Au;
     // KOL_VS_LOG=1: the bytes the Connecting screen is told by, when they change.
     if (static const bool log = std::getenv("KOL_VS_LOG") != nullptr; log) {
         char now[128];
@@ -696,26 +749,7 @@ void vs_cpu_tick() {
         // link (no transfer ever started on either side, 2026-11-22).
         if (g_failed_here || !connecting_screen || gba::SioLink::instance()) break;
         std::lock_guard<std::mutex> lock(g_mu);
-        std::error_code ec;
-        static int session = 0;
-        const auto dir = std::filesystem::temp_directory_path(ec) /
-                         ("kol-vs-" + std::to_string(::getpid()) + "-" + std::to_string(++session));
-        std::filesystem::create_directories(dir, ec);
-        if (ec) {
-            std::fprintf(stderr, "vs-cpu: no folder for the session (%s)\n", ec.message().c_str());
-            g_failed_here = true;
-            break;
-        }
-        g_net = net_chosen;
-        g_exchange = cursor == 2u;
-        g_keep_dir = false;
-        g_dir = dir.string();
-        g_state = g_dir + "/vs.state";
-        g_wait = 0;
-        g_save_asked.store(false);
-        g_phase.store(kSaving);   // the save itself at the next pad read (on_pad_read)
-        std::fprintf(stderr, "vs-cpu: %s's Connecting (%s): a snapshot (%s)\n", g_exchange ? "Exchange" : "VS",
-                     g_net ? "network" : "computer", g_dir.c_str());
+        if (!begin_session(net_chosen, false)) g_failed_here = true;   // the save at the next pad read
         break;
     }
     case kSaving:
