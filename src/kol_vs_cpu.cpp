@@ -3,10 +3,16 @@
 //
 // The player's game:
 //   1. VS Mode's "Connecting..." asks the runtime for a state save into its
-//      own slot, at the next dispatch boundary. The screen: the menu's screen
-//      0x08246C18 (0x02029B80), its cursor on VS (0x03000ED1 1; Exchange's
-//      Connecting is the same screen with 2), 0x02002830 0x24, outside a
-//      battle, no link; its first frame, the port in any mode. Not VS's world
+//      own slot, taken at the game's next pad read (kol_vs_net's pad hook,
+//      before the frame's logic: the same instruction on every machine; from
+//      the present it landed wherever each host next yielded, after the link
+//      routines' decision on the Deck and the Thor, 2026-11-23). The screen: the menu's screen
+//      0x08246C18 (0x02029B80), its cursor on VS (0x03000ED1 1), 0x02002830
+//      0x24, outside a battle, no link; its first frame, the port in any mode.
+//      Exchange's Connecting is the same screen with the cursor on 2 (the
+//      same bytes, logged 2026-11-23): taken over the network only (asked:
+//      an exchange with the computer makes no sense), and paired only with a
+//      game that chose Exchange too (vsnet::Side::kind). Not VS's world
 //      state (0x02029BD0 0x08246D18): that is NAVI's, set only when VS's
 //      eight pages of rules are shown, which a save that has seen them skips
 //      (the first trigger never fired there, 2026-11-22); and set from the
@@ -95,6 +101,8 @@ constexpr std::uint32_t kCursor = 0xED1;            // IWRAM: the menu's cursor,
 constexpr std::uint32_t kMode = 0x12E0;             // EWRAM: 4 from the battle's preparation on
 constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 and +6 0x1A on Connecting, 0x46 VS's NAVI pages
                                                     // (the screen pointer is 0x08246C18 from the menu's A on)
+constexpr std::uint32_t kLinkState = 0x2A11;       // IWRAM: the game's link routines' state byte (0 until their
+                                                    // first call, which decides parent or child once: 0x08006210)
 constexpr int kOffTicks = 180;                      // the port out of Multi-Player mode this long: link closed
 constexpr auto kLinkWait = std::chrono::seconds(20);
 constexpr auto kSearchWait = std::chrono::minutes(2);
@@ -107,6 +115,8 @@ std::vector<std::string> g_args;
 std::string g_dir;               // the session's folder: the snapshot(s), the copy's save and log
 std::string g_state;             // g_dir/vs.state
 bool g_net = false;              // this session is over the network
+bool g_exchange = false;         // ... and is Exchange's, not VS's (always over the network)
+std::atomic<bool> g_save_asked{false};   // kSaving: the save asked for at a pad read (on_pad_read)
 bool g_keep_dir = false;         // the session's folder outlives it (a desync)
 pid_t g_pid = -1;
 std::atomic<pid_t> g_copy_pid{-1};   // the copy, for the session thread (vsnet::set_on_gone)
@@ -327,7 +337,7 @@ void reap_child() {
 
 void notice(const char* line) {
     std::fprintf(stderr, "vs-cpu: notice: %s\n", line);
-    cheevos_notice("VS Mode", line);
+    cheevos_notice(g_exchange ? "Exchange" : "VS Mode", line);
 }
 
 // The session over (under g_mu): the network and the link stopped, the copy
@@ -455,7 +465,8 @@ bool start_other_game() {
     vsnet::play_start_keys();
     g_link_start = std::chrono::steady_clock::now();
     g_phase.store(kLinking);
-    std::string line = "Playing " + (peer.name.empty() ? std::string("a player") : peer.name);
+    std::string line = (g_exchange ? "Exchanging with " : "Playing ") +
+                       (peer.name.empty() ? std::string("a player") : peer.name);
     notice(line.c_str());
     return true;
 }
@@ -523,6 +534,18 @@ void check_search(std::uint16_t keys) {
         notice("Looking for a player on this network... B: stop");
         g_notice_at = now + std::chrono::seconds(5);
     }
+}
+
+// The game's pad read (kol_vs_net's hook, on the guest thread), before the
+// frame's logic: Connecting's snapshot is asked for here. The runtime takes it
+// at the guest's next yield, which compiled code reaches at the end of the
+// frame's logic (the VBlank wait, 0x080007A4; measured 2026-11-23): a point of
+// the game's own, the same on every machine. (Asked from the present, it
+// landed wherever each host next yielded.)
+void on_pad_read() {
+    if (g_phase.load(std::memory_order_relaxed) != kSaving || g_save_asked.load()) return;
+    g_save_asked.store(true);
+    gbarecomp::runtime_request_state_save_now(kSlot);
 }
 
 std::uint16_t filter(std::uint16_t keys) {
@@ -606,6 +629,7 @@ void vs_cpu_install() {
     if (g_args.empty()) return;   // not the desktop's main (no command line to give the copy)
     g_prev_filter = gbarecomp::g_host_keyinput_filter;
     gbarecomp::g_host_keyinput_filter = &filter;
+    vsnet::set_pad_read_hook(&on_pad_read);
     std::atexit(at_exit);
 }
 
@@ -628,9 +652,26 @@ void vs_cpu_tick() {
                      multi ? "enters" : "leaves", rd32(ew + kWorld), ew[kMode]);
     }
     const std::uint8_t* iw = bus->iwram_ptr();
-    // VS's "Connecting..." (Exchange's is the same screen, cursor 2).
-    const bool connecting = rd32(ew + kScreen) == kConnecting && iw[kCursor] == 1u && ew[kMode] != 4u;
-    const bool connecting_screen = connecting && ew[kScene] == 0x24u && ew[kScene + 6] == 0x1Au;
+    // VS's "Connecting..." (Exchange's is the same screen, cursor 2: over the
+    // network only, VS Mode = Network).
+    const unsigned cursor = iw[kCursor];
+    const bool net_chosen = vs_mode_choice_current() == 1u;
+    const std::uint32_t screen = rd32(ew + kScreen);
+    static std::uint32_t s_screen_was = 0;
+    const bool screen_new = screen != s_screen_was;   // the screen's first frame
+    s_screen_was = screen;
+    const bool connecting = screen == kConnecting && (cursor == 1u || (cursor == 2u && net_chosen)) &&
+                            ew[kMode] != 4u;
+    // Exchange's link routines (0x08006210, state at 0x03002A11) decide
+    // parent or child once, at their first call, in the logic of the
+    // Connecting screen's second frame; with no link up then (SIOCNT's SD
+    // clear) a game is never the parent and both time out after 240 frames.
+    // So its snapshot is asked for on the screen's first frame: taken at that
+    // frame's end (on_pad_read), after the struct is cleared and before the
+    // call, which then runs after the load with the link up (2026-11-23).
+    // VS's routines decide later: its snapshot comes at 0x2836 0x1A, as before.
+    const bool connecting_screen =
+        connecting && (cursor == 2u ? screen_new : ew[kScene] == 0x24u && ew[kScene + 6] == 0x1Au);
     // KOL_VS_LOG=1: the bytes the Connecting screen is told by, when they change.
     if (static const bool log = std::getenv("KOL_VS_LOG") != nullptr; log) {
         char now[128];
@@ -665,15 +706,16 @@ void vs_cpu_tick() {
             g_failed_here = true;
             break;
         }
-        g_net = vs_mode_choice_current() == 1u;
+        g_net = net_chosen;
+        g_exchange = cursor == 2u;
         g_keep_dir = false;
         g_dir = dir.string();
         g_state = g_dir + "/vs.state";
         g_wait = 0;
-        g_phase.store(kSaving);
-        std::fprintf(stderr, "vs-cpu: Connecting (%s): a snapshot (%s)\n", g_net ? "network" : "computer",
-                     g_dir.c_str());
-        gbarecomp::runtime_request_state_save(kSlot);
+        g_save_asked.store(false);
+        g_phase.store(kSaving);   // the save itself at the next pad read (on_pad_read)
+        std::fprintf(stderr, "vs-cpu: %s's Connecting (%s): a snapshot (%s)\n", g_exchange ? "Exchange" : "VS",
+                     g_net ? "network" : "computer", g_dir.c_str());
         break;
     }
     case kSaving:
@@ -736,6 +778,17 @@ bool vs_cpu_state_saved(const char* path) {
     gba::GbaBus* bus = gbarecomp::active_bus();
     g_snap_clock = ppu ? ppu->guest_cycle() : 0;
     g_snap_frame = ppu ? ppu->frame_count() : 0;
+    // Exchange: its link routines must not have decided yet (see the trigger).
+    const std::uint8_t* iw = bus ? bus->iwram_ptr() : nullptr;
+    if (std::getenv("KOL_VS_LOG") && iw)
+        std::fprintf(stderr, "vs-log: snapshot at frame %llu: link state %u, 2830=%02X\n",
+                     static_cast<unsigned long long>(g_snap_frame), iw[kLinkState], bus->ewram_ptr()[kScene]);
+    if (g_exchange && iw && iw[kLinkState] != 0u) {
+        notice("The exchange could not start. Try again.");
+        end_session("Exchange's snapshot came after its link routines had decided");
+        g_failed_here = true;
+        return true;
+    }
     if (!g_net) {
         const int port = ppu ? gba::SioLink::start_parent(g_snap_clock) : -1;
         Spawn sp;
@@ -772,6 +825,7 @@ bool vs_cpu_state_saved(const char* path) {
     // (the smaller) is known (an emulator behind its own NAT can only connect out).
     if (const char* n = std::getenv("KOL_VS_NET_NONCE"); n && *n) mine.nonce = std::strtoull(n, nullptr, 0);
     g_my_nonce = mine.nonce;
+    mine.kind = g_exchange ? "exchange" : "vs";
     mine.name = host_name();
     mine.rom = vsnet::file_fingerprint(arg_value("--rom"));
     mine.bios = arg_flag("--no-bios") ? "no-bios" : vsnet::file_fingerprint(arg_value("--bios"));

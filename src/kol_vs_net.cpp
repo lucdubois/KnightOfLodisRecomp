@@ -19,6 +19,7 @@ bool take_peer_hash(std::uint64_t, std::uint64_t*) { return false; }
 bool peer_gone(std::string*) { return false; }
 void stop(const char*) {}
 void set_on_gone(void (*)()) {}
+void set_pad_read_hook(void (*)()) {}
 void play_begin(std::uint16_t, const std::string&) {}
 void play_reset_calls() {}
 void play_start_keys() {}
@@ -83,7 +84,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr int kBeaconPort = 19873;
-constexpr int kProto = 1;
+constexpr int kProto = 2;   // 2: the beacon and hello say VS or Exchange (2026-11-23)
 constexpr std::uint64_t kHashEvery = 64;
 constexpr auto kSilence = std::chrono::seconds(15);
 
@@ -243,8 +244,9 @@ std::shared_ptr<Net> cur() {
 std::string hello_text(const Side& s) {
     char b[1024];
     std::snprintf(b, sizeof b,
-                  "proto=%d\nnonce=%s\nname=%s\nrom=%s\nbios=%s\nmod=%s\nframe=%llu\nclock=%llu\npanel=%ux%u\n", kProto,
-                  hex64(s.nonce).c_str(), s.name.c_str(), s.rom.c_str(), s.bios.c_str(), s.mod.c_str(),
+                  "proto=%d\nnonce=%s\nkind=%s\nname=%s\nrom=%s\nbios=%s\nmod=%s\nframe=%llu\nclock=%llu\npanel=%ux%u\n",
+                  kProto, hex64(s.nonce).c_str(), s.kind.c_str(), s.name.c_str(), s.rom.c_str(), s.bios.c_str(),
+                  s.mod.c_str(),
                   static_cast<unsigned long long>(s.frame), static_cast<unsigned long long>(s.clock), s.panel_w,
                   s.panel_h);
     return b;
@@ -263,6 +265,7 @@ bool parse_hello(const std::string& t, Side* s, int* proto) {
         const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
         if (k == "proto") *proto = std::atoi(v.c_str());
         else if (k == "nonce") s->nonce = std::strtoull(v.c_str(), nullptr, 16);
+        else if (k == "kind") s->kind = v;
         else if (k == "name") s->name = v;
         else if (k == "rom") s->rom = v;
         else if (k == "bios") s->bios = v;
@@ -297,6 +300,7 @@ int connect_to(const sockaddr_in& to) {
 }
 
 // Finds the other game: beacons out, theirs in; the smaller number connects.
+// Only a game on the same ROM and the same choice (VS, or Exchange) answers.
 int find_peer(Net& n) {
     const int udp = ::socket(AF_INET, SOCK_DGRAM, 0);
     const int ls = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -329,8 +333,8 @@ int find_peer(Net& n) {
     ::getsockname(ls, reinterpret_cast<sockaddr*>(&mine), &mlen);
     const unsigned tcp_port = ntohs(mine.sin_port);
     char beacon[160];
-    std::snprintf(beacon, sizeof beacon, "KOLVS%d %s %u %s", kProto, hex64(n.mine.nonce).c_str(), tcp_port,
-                  n.mine.rom.c_str());
+    std::snprintf(beacon, sizeof beacon, "KOLVS%d %s %u %s %s", kProto, hex64(n.mine.nonce).c_str(), tcp_port,
+                  n.mine.rom.c_str(), n.mine.kind.c_str());
     std::fprintf(stderr, "vs-net: looking for a player (beacons on UDP %d, TCP %u, number %s)\n", kBeaconPort,
                  tcp_port, hex64(n.mine.nonce).c_str());
 
@@ -380,12 +384,14 @@ int find_peer(Net& n) {
             if (r <= 0) continue;
             buf[r] = '\0';
             int proto = 0;
-            char nonce_hex[40] = {0}, rom[80] = {0};
+            char nonce_hex[40] = {0}, rom[80] = {0}, kind[16] = {0};
             unsigned port = 0;
-            if (std::sscanf(buf, "KOLVS%d %39s %u %79s", &proto, nonce_hex, &port, rom) != 4 || proto != kProto)
+            if (std::sscanf(buf, "KOLVS%d %39s %u %79s %15s", &proto, nonce_hex, &port, rom, kind) != 5 ||
+                proto != kProto)
                 continue;
             const std::uint64_t nonce = std::strtoull(nonce_hex, nullptr, 16);
-            if (nonce == n.mine.nonce || n.mine.rom != rom || port == 0 || port > 65535) continue;
+            if (nonce == n.mine.nonce || n.mine.rom != rom || n.mine.kind != kind || port == 0 || port > 65535)
+                continue;
             if (n.mine.nonce > nonce) continue;   // the other one connects
             sockaddr_in to = from;
             to.sin_port = htons(static_cast<std::uint16_t>(port));
@@ -450,6 +456,7 @@ void run(std::shared_ptr<Net> np) {
     }
     std::string bad;
     if (proto != kProto) bad = "another version of this program";
+    else if (peer.kind != n.mine.kind) bad = peer.kind == "exchange" ? "Exchange chosen" : "VS chosen";
     else if (peer.rom != n.mine.rom) bad = "another ROM";
     else if (peer.mod != n.mine.mod) bad = "another mod";
     else if (peer.bios != n.mine.bios) bad = "another BIOS";
@@ -549,6 +556,7 @@ void run(std::shared_ptr<Net> np) {
 constexpr std::uint32_t kBeforePad = 0x08000A04u;        // called right before the pad is read
 constexpr std::uint32_t kBeforePadReturn = 0x08000618u;  // ... by the main loop's bl at 0x08000614
 constexpr char kPadHookId[] = "kol.vs-net-pad";
+std::atomic<void (*)()> g_pad_read_hook{nullptr};   // set_pad_read_hook
 
 std::atomic<bool> g_play{false};
 std::atomic<bool> g_counting{false};                     // reads counted (from the match's snapshot loaded)
@@ -682,8 +690,9 @@ int on_before_pad(std::uint32_t, int, ArmCpuState* cpu) {
     if (vs_mirror_child()) {
         gba::GbaPpu* ppu = gbarecomp::active_ppu();
         if (ppu && ppu->frame_count() >= g_m_frame0) mirror_input();
-    } else if (g_play.load() && g_counting.load()) {
-        play_input();
+    } else {
+        if (g_play.load() && g_counting.load()) play_input();
+        if (void (*fn)() = g_pad_read_hook.load(std::memory_order_relaxed)) fn();
     }
     return 0;   // declined: the game's own routine runs (KEYINPUT is set)
 }
@@ -698,6 +707,11 @@ void install_pad_hook() {
 }
 
 }  // namespace
+
+void set_pad_read_hook(void (*fn)()) {
+    g_pad_read_hook.store(fn, std::memory_order_relaxed);
+    install_pad_hook();
+}
 
 std::string file_fingerprint(const std::string& path) {
     if (path.empty()) return "none";

@@ -36,6 +36,7 @@ namespace vsnet {
 // What each side sends the other.
 struct Side {
     std::uint64_t nonce = 0;   // random, per try: the smaller one's game is the link's parent
+    std::string kind = "vs";   // the link menu's choice, "vs" or "exchange": both must have made the same
     std::string name;          // the computer's name, for the notices
     std::string rom, bios, mod;   // fingerprints: they must match
     std::uint64_t frame = 0;   // the snapshot's PPU frame count
@@ -74,6 +75,12 @@ void stop(const char* why);
 // Called from the session's thread when the other side goes (closed, a
 // goodbye, or 15 s of silence): async-signal-safe work only.
 void set_on_gone(void (*fn)());
+
+// The seen game's pad reads (the main loop's, right before it reads
+// KEYINPUT), on the guest thread: fn runs at each one, before the frame's
+// logic. kol_vs_cpu takes VS's and Exchange's snapshots there: the same
+// instruction of the game on every machine (2026-11-23).
+void set_pad_read_hook(void (*fn)());
 
 // The button timeline, the seen game's side (numbered by the game's pad
 // reads: kol_vs_net.cpp). From the snapshot on, the game sees only what
