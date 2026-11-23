@@ -1,3 +1,7 @@
+## HANDOFF — 2026-11-23, evening: 1.2.1 released (read this first)
+
+**Released:** v1.2.1 (versionCode 7; notes `docs/RELEASE_1.2.1.md`): crash logs a player can send (src/kol_crash.*, CrashLog.java; docs/DEVLOG.md "Crash logs a player can send"). Logs in <data folder>/logs (desktop, Options > Technical > Logs) and files/logs (Android, the Files app's `logs` folder: checked on the emulator). The release's unstripped binaries are kept in `build/release/symbols-1.2.1/` (xz): name a player's crash offsets with them. Keep doing that for every release. `~/.ssh/config` still has the Deck at .59 (it is at .62): package_appimage.sh's final scp fails until it is changed (fetch by hand with `-o HostName=192.168.0.62 -o HostKeyAlias=192.168.0.59`).
+
 ## HANDOFF — 2026-11-23: 1.2 released (read this first)
 
 **Released:** v1.2 (versionCode 6; notes `docs/RELEASE_1.2.md`; the same four packages as 1.1). gbarecomp stays local (never pushed): its commits up to `31f997e` are needed to build.
