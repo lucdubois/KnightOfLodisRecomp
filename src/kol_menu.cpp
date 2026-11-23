@@ -1545,6 +1545,12 @@ void mp2k_dump() {
 
 int on_after_tasks(std::uint32_t, int, ArmCpuState* cpu) {
     if (gbarecomp::runtime_excursion_active()) return 0;
+    // VS over a network: the game runs on the other machine too, where no
+    // menu sound is played into it (kol_vs_net): none here either.
+    if (settings_net_match_on()) {
+        g_sound_request.store(-1);
+        return 0;
+    }
 #if !defined(__ANDROID__)
     mp2k_dump();
     const int song = song_test_take();
@@ -1571,7 +1577,9 @@ int on_frame_hook(std::uint32_t, int, ArmCpuState* cpu) {
     // it does not write its older copy back on close). Declines the call,
     // unless Fast Attacks skips this tick of the sound driver.
     if (gbarecomp::runtime_excursion_active()) return 0;
-    write_pending_options();
+    // (VS over a network: kept until the match ends; the other machine's
+    // copy of this game would not get them.)
+    if (!settings_net_match_on()) write_pending_options();
     return kol::fast_attack_on_sound_main(cpu) ? 1 : 0;
 }
 

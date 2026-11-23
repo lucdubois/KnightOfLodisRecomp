@@ -1184,6 +1184,10 @@ void on_pad_button(int button, int down) {
     }
     if (menu_is_open()) return;   // the second screen's menu has the pad
     if (!which) return;
+    // VS over a network: they move the game's cursor outside the buttons,
+    // and the other machine's copy of this game would not see it (a match
+    // went out of step, 2026-11-22).
+    if (settings_net_match_on()) return;
     g_button_held.store(which, std::memory_order_relaxed);
     request(which == 1 ? 1 : -1);
 }

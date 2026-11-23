@@ -104,6 +104,7 @@ std::vector<std::string> g_args;
 std::string g_dir;               // the session's folder: the snapshot(s), the copy's save and log
 std::string g_state;             // g_dir/vs.state
 bool g_net = false;              // this session is over the network
+bool g_keep_dir = false;         // the session's folder outlives it (a desync)
 pid_t g_pid = -1;
 std::atomic<pid_t> g_copy_pid{-1};   // the copy, for the session thread (vsnet::set_on_gone)
 bool g_failed_here = false;      // a try failed on this Connecting screen: not again until it is left
@@ -211,8 +212,12 @@ bool spawn(const Spawn& sp) {
         if (v.rfind("KOL_", 0) == 0 || v.rfind("GBARECOMP_", 0) == 0 || v.rfind("SDL_", 0) == 0) continue;
         env.push_back(v);
     }
-    env.insert(env.end(), {"GBARECOMP_LINK=" + sp.link, "GBARECOMP_SELFHEAL_RECOMPILE=0", "SDL_VIDEODRIVER=dummy",
-                           "SDL_RENDER_DRIVER=software", "SDL_AUDIODRIVER=dummy"});
+    // Unseen (gbarecomp GBARECOMP_UNSEEN): no frame composed or presented,
+    // no pacing (its partner here paces it). It drew every picture before,
+    // in software, at its owner's effects: a network copy took more of the
+    // Deck than the game played on it, and both machines ran slow.
+    env.insert(env.end(), {"GBARECOMP_LINK=" + sp.link, "GBARECOMP_SELFHEAL_RECOMPILE=0", "GBARECOMP_UNSEEN=1",
+                           "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software", "SDL_AUDIODRIVER=dummy"});
     env.insert(env.end(), sp.env.begin(), sp.env.end());
     if (const char* extra = std::getenv("KOL_VS_CHILD_ENV"); extra && *extra) {
         std::string s = extra;
@@ -285,7 +290,9 @@ void reap_child() {
         g_pid = -1;
         g_copy_pid.store(-1);
     }
-    if (!g_dir.empty() && !std::getenv("KOL_VS_KEEP")) {   // KOL_VS_KEEP=1: keep it (its log)
+    if (!g_dir.empty() && g_keep_dir)
+        std::fprintf(stderr, "vs-cpu: the session's folder is kept (the games went out of step): %s\n", g_dir.c_str());
+    if (!g_dir.empty() && !std::getenv("KOL_VS_KEEP") && !g_keep_dir) {   // KOL_VS_KEEP=1: keep it (its log)
         std::error_code ec;
         std::filesystem::remove_all(g_dir, ec);
     }
@@ -302,6 +309,9 @@ void notice(const char* line) {
 // gone, the game let go if it was held.
 void end_session(const char* why) {
     std::fprintf(stderr, "vs-cpu: session ends: %s\n", why);
+    // Out of step, here or there: both sides keep their last memory
+    // snapshots (vsnet ring) and logs, to be compared.
+    if (why && std::strstr(why, "desync")) g_keep_dir = true;
     if (g_net) {
         vsnet::stop(why);
         vsnet::set_key_sink(-1);
@@ -599,6 +609,7 @@ void vs_cpu_tick() {
             break;
         }
         g_net = vs_mode_choice_current() == 1u;
+        g_keep_dir = false;
         g_dir = dir.string();
         g_state = g_dir + "/vs.state";
         g_wait = 0;
@@ -729,7 +740,7 @@ bool vs_cpu_state_saved(const char* path) {
         g_failed_here = true;
         return true;
     }
-    vsnet::play_begin(keyinput);
+    vsnet::play_begin(keyinput, g_dir);
     g_search_start = std::chrono::steady_clock::now();
     g_notice_at = g_search_start;
     g_b_was = true;

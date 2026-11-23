@@ -19,7 +19,7 @@ bool take_peer_hash(std::uint64_t, std::uint64_t*) { return false; }
 bool peer_gone(std::string*) { return false; }
 void stop(const char*) {}
 void set_on_gone(void (*)()) {}
-void play_begin(std::uint16_t) {}
+void play_begin(std::uint16_t, const std::string&) {}
 void play_reset_calls() {}
 void play_attach_hash_fd(int) {}
 void play_start_keys() {}
@@ -546,6 +546,12 @@ std::string g_desync_what;
 unsigned long long g_hash_checks = 0;
 
 void dump_memory(const char* kind, std::uint64_t n);
+// The last few hash points' memory, kept in the session's folder (the seen
+// game's) or the copy's own folder (its working directory): <kind>_<read>.bin,
+// the one four points older removed. A desync keeps the folders, so both
+// sides of the difference can be compared (ring_dump).
+std::string g_ring_dir;
+void ring_dump(const char* kind, const std::string& dir, std::uint64_t n);
 
 long long now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
@@ -598,6 +604,7 @@ void play_input() {
     g_last_call_ms.store(now_ms());
     if (n % kHashEvery == 0) {
         dump_memory("own", n);
+        ring_dump("own", g_ring_dir, n);
         send_hash(n, game_hash());
     }
     const std::uint16_t now = g_physical.load();
@@ -618,6 +625,7 @@ void mirror_input() {
     const std::uint64_t n = ++g_m_calls;
     if (n % kHashEvery == 0 && g_m_hash_fd >= 0) {
         dump_memory("copy", n);
+        ring_dump("copy", ".", n);
         pipe_write(g_m_hash_fd, Rec{n, game_hash()});
     }
     std::uint16_t v = 0x03FFu;
@@ -793,8 +801,9 @@ void stop(const char* why) {
 
 // ── The button timeline ──────────────────────────────────────────────────
 
-void play_begin(std::uint16_t keyinput) {
+void play_begin(std::uint16_t keyinput, const std::string& dir) {
     install_pad_hook();
+    g_ring_dir = dir;
     g_calls = 0;
     g_sent_to = 0;
     g_counting.store(false);
@@ -908,6 +917,7 @@ void mirror_settings() {
     unsigned w = 0, h = 0;
     if (const char* p = std::getenv("KOL_VS_MIRROR_PANEL")) std::sscanf(p, "%ux%u", &w, &h);
     settings_init(dir && *dir ? dir : ".", 240u, w, h);
+    sound_choice_set(0);   // no one hears it: the game's own sound (HQ/HD only add work, outside the game)
 }
 
 void mirror_install() {
@@ -951,6 +961,25 @@ void dump_memory(const char* kind, std::uint64_t n) {
         std::fwrite(bus->ewram_ptr(), 1, 0x40000, f);
         std::fwrite(bus->iwram_ptr(), 1, 0x8000, f);
         std::fclose(f);
+    }
+}
+}  // namespace
+
+namespace {
+void ring_dump(const char* kind, const std::string& dir, std::uint64_t n) {
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    if (dir.empty() || !bus) return;
+    char path[1024];
+    std::snprintf(path, sizeof path, "%s/%s_%llu.bin", dir.c_str(), kind, static_cast<unsigned long long>(n));
+    if (std::FILE* f = std::fopen(path, "wb")) {
+        std::fwrite(bus->ewram_ptr(), 1, 0x40000, f);
+        std::fwrite(bus->iwram_ptr(), 1, 0x8000, f);
+        std::fclose(f);
+    }
+    if (n > 4 * kHashEvery) {
+        std::snprintf(path, sizeof path, "%s/%s_%llu.bin", dir.c_str(), kind,
+                      static_cast<unsigned long long>(n - 4 * kHashEvery));
+        std::remove(path);
     }
 }
 }  // namespace

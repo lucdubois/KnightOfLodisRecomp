@@ -89,6 +89,12 @@ int next_number(const std::vector<int>& have) {
 const char* on_path(int slot, int save) {
     static std::string out;
     if (const char* vs = vs_cpu_state_path(slot, save)) return vs;   // VS Computer's snapshot
+    // VS over a network: a state loaded here is not loaded in this game's
+    // copy on the other machine; the load fails on a path that is not there.
+    if (!save && settings_net_match_on()) {
+        std::fprintf(stderr, "states: no loading in a VS match over the network\n");
+        return "/nonexistent/kol-vs-network-match";
+    }
     if (dir().empty()) return nullptr;
     if (slot == kPickSlot && !save) {
         std::lock_guard<std::mutex> lock(g_mu);

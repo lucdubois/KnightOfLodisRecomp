@@ -415,6 +415,10 @@ unsigned width_choice_current() {
 }
 
 void width_choice_set(unsigned i) {
+    if (g_net_match.load(std::memory_order_relaxed)) {   // the view: the game's sprite lists follow it
+        std::fprintf(stderr, "settings: the view stays as it is during a VS match over the network\n");
+        return;
+    }
     if (i >= g_choice_count) return;
     g_widescreen_width = g_choices[i].width;
     g_widescreen_height = g_choices[i].height;
@@ -707,6 +711,10 @@ int preset_current() {
     return -1;
 }
 void preset_apply(unsigned i) {
+    if (g_net_match.load(std::memory_order_relaxed)) {   // the view: the game's sprite lists follow it
+        std::fprintf(stderr, "settings: the view stays as it is during a VS match over the network\n");
+        return;
+    }
     if (i >= kPresetCount) return;
     const Preset& p = kPresets[i];
     preset_fields(p);
@@ -737,6 +745,10 @@ void size_for_new_shape(int preset, unsigned old_w, unsigned old_h) {
 }  // namespace
 
 void ratio_choice_set(unsigned i) {
+    if (g_net_match.load(std::memory_order_relaxed)) {   // the view: the game's sprite lists follow it
+        std::fprintf(stderr, "settings: the view stays as it is during a VS match over the network\n");
+        return;
+    }
     if (i >= kRatioCount) return;
     const int preset = preset_current();
     g_ratio = i;
@@ -806,9 +818,26 @@ bool setting_on(Setting s) {
     return (i >= 0 && i < kCount) ? g_on[i] : false;
 }
 
+// VS over a network (settings_net_match): what changes how the game itself
+// runs stays as the match began (the other machine's copy of this game has
+// it so), until the match ends.
+static bool held_in_match(Setting s) {
+    if (!g_net_match.load(std::memory_order_relaxed)) return false;
+    switch (s) {
+    case Setting::FastLoading: case Setting::FastActions: case Setting::FastWalk: case Setting::QuickEnemy:
+    case Setting::FastAttack: case Setting::FastSpells: case Setting::ShopAnywhere: case Setting::DebugNoEncounters:
+    case Setting::AnalogCursor: case Setting::Rewind:
+        std::fprintf(stderr, "settings: %s stays as it is during a VS match over the network\n", setting_key(s));
+        return true;
+    default:
+        return false;
+    }
+}
+
 void setting_set(Setting s, bool on) {
     const int i = static_cast<int>(s);
     if (i < 0 || i >= kCount) return;
+    if (held_in_match(s)) return;
     g_on[i] = on;
     apply(s);
     save();

@@ -24111,5 +24111,25 @@ game froze (checked by SIGSTOPping one of two players on this Mac).
 (The Deck had moved to 192.168.0.62; `ssh -o HostName=192.168.0.62 -o
 HostKeyAlias=192.168.0.59 steamdeck` verified it against its stored key.)
 
-Not yet: a human-played match, the notices' look, Android, Windows,
-internet play.
+Then the user, Mac against Deck: "it works, but it's slow, on both". The
+copies drew every picture, in software, at their owner's effects (the
+Deck's copy 128% of a core, more than the game played on it, 103%), and the
+two machines go at the slower one's pace. Copies now run unseen (gbarecomp
+`GBARECOMP_UNSEEN=1`: no frame composed or presented, no pacing; the
+network copy's sound Original): sampled during a match, the copy is waits
+but ~3%. Still in step (140 hashes).
+
+And that match went out of step at read 5760 (90 hashes equal before).
+Not reproducible afterwards (no memory kept then); the likely cause: host
+actions that act on the game on one machine only. Held off during a
+network match now: X/Y's next/previous unit (kol_actions on_pad_button;
+it moves the game's cursor and expires by the wall clock), the options
+menu's sounds played into the game and its Game Options writes (kept until
+the match ends), state loads, and changes to Fast Loading / Actions / Walk
+/ Attacks / Spells, Quick Enemy, Shop Anywhere, No Encounters, the analog
+cursor, rewind, the preset, the view size and the ratio. A desync now keeps
+both sides' session folders with their last four hash points' memory
+(`own_<read>.bin`, `copy_<read>.bin`), to diff the two sides of it.
+
+Not yet: a human-played match through to its end, the notices' look,
+Android, Windows, internet play.

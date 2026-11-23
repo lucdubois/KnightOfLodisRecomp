@@ -79,7 +79,7 @@ void set_on_gone(void (*fn)());
 // KEYINPUT then; reset_calls() as the snapshot is loaded back (the match
 // starts there, as its copy over there does); tick() each frame (the copy's
 // hashes compared); end() lets the player's buttons through again.
-void play_begin(std::uint16_t keyinput);
+void play_begin(std::uint16_t keyinput, const std::string& session_dir);
 void play_attach_hash_fd(int fd);   // the copy's hashes (its pipe, non-blocking)
 void play_start_keys();   // the first reads' buttons (none), once the peer is there
 void play_reset_calls();
