@@ -24131,5 +24131,32 @@ cursor, rewind, the preset, the view size and the ratio. A desync now keeps
 both sides' session folders with their last four hash points' memory
 (`own_<read>.bin`, `copy_<read>.bin`), to diff the two sides of it.
 
-Not yet: a human-played match through to its end, the notices' look,
-Android, Windows, internet play.
+Then "still super slow" (2026-11-22 night), measured overnight, and three
+causes found:
+- The unseen copies still composed every scanline: `render_skip_now()`
+  set the PPU's skip back to 0 at every present of a windowed run.
+- The link's time reports went at every device flush (tens of thousands of
+  messages a second each way): in the Deck's processes the link's socket
+  thread took 20-30% of a core, and `__sendto` 27% of a copy's main thread
+  on the Mac. Now every `SioLink::kSync` (16384) cycles, the child's own
+  time only once per time and before a wait; `kLookahead` 4 kSync.
+- Then the two sides took turns: the child stopped at the parent's last
+  told time while the parent emulated kSync more, and the parent stopped at
+  each transfer for the child: `GBARECOMP_LINK_STATS=1` showed each visible
+  game waiting 120-135 ms a second. The parent now tells its time at once
+  when the child has caught up (`child_caught_up`): 12 ms a second as the
+  link's parent, ~48 as its child; the copies ~25% of a Mac core (no audio
+  device either), a local match at 57-58 fps with the test players drawing
+  in software.
+And a desync cause that matches the human match: the game culls its own
+sprites by a window KoL widens from the APPLIED view margins plus the
+perspective's live overscan (the right stick's look, the combat camera's
+zoom): host state the other machine's copy never has, and the applied size
+changes at a host-timed boundary, at the battle's preparation. In a network
+match the window now follows the size the scene asks for and a fixed
+overscan (kol_widescreen, `g_vs_target_w/h`; `KOL_VS_NET_CULL_OLD=1` old).
+With `KOL_PERSP_LOOK=0.6,1` given to the seen games only: old, out of step at
+read 2048; new, 142 hashes to the end. Both invariants unchanged.
+
+Not yet: Mac against Deck since (the Deck asleep), a human-played match
+through to its end, the notices' look, Android, Windows, internet play.
