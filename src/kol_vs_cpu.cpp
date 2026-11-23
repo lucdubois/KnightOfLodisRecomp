@@ -2,13 +2,14 @@
 //
 // The parent (the player's game):
 //   1. VS Mode's "Connecting..." asks the runtime for a state save into its
-//      own slot, at the next dispatch boundary. The screen: world state
-//      0x08246D18 outside a battle, the world map's scene (0x02002830 0x24),
-//      no box taking input (0x03000EF0 0), the serial port in Multi-Player
-//      mode, no link. Not the world state and the port alone: both are set
-//      from the first of VS's eight NAVI pages of rules, and a copy started
-//      there waited on the first page for an A no one pressed, while the
-//      player's Connecting timed out (~4.5 s) and went back (2026-11-22).
+//      own slot, at the next dispatch boundary. The screen: the menu's screen
+//      0x08246C18 (0x02029B80), its cursor on VS (0x03000ED1 1; Exchange's
+//      Connecting is the same screen with 2), 0x02002830 0x24, outside a
+//      battle, no link; its first frame, the port in any mode. Not VS's world
+//      state (0x02029BD0 0x08246D18): that is NAVI's, set only when VS's
+//      eight pages of rules are shown, which a save that has seen them skips
+//      (the first trigger never fired there, 2026-11-22); and set from the
+//      first page, where a copy started waited for an A no one pressed.
 //   2. The save written (vs_cpu_state_saved): the link starts as the parent
 //      on a free local port at the snapshot's time (GbaPpu::guest_cycle), the
 //      copy is started from that state, and the guest is held
@@ -71,11 +72,13 @@ namespace kol {
 namespace {
 
 constexpr int kSlot = 0x5653;                       // "VS": the snapshot's slot (its path is ours)
-constexpr std::uint32_t kWorld = 0x29BD0;           // EWRAM: the world state's pointer
-constexpr std::uint32_t kConnecting = 0x08246D18u;  // ... VS Mode's connecting / attack order / roulette
+constexpr std::uint32_t kWorld = 0x29BD0;           // EWRAM: the world state's pointer (VS's NAVI pages on: logs only)
+constexpr std::uint32_t kScreen = 0x29B80;          // EWRAM: the Quest/VS/Exchange menu's screen
+constexpr std::uint32_t kConnecting = 0x08246C18u;  // ... "Connecting..." (0x08246CA8 the menu itself)
+constexpr std::uint32_t kCursor = 0xED1;            // IWRAM: the menu's cursor, kept on Connecting: 0 Quest, 1 VS, 2 Exchange
 constexpr std::uint32_t kMode = 0x12E0;             // EWRAM: 4 from the battle's preparation on
-constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 the world map's screens (0x46 VS's NAVI pages, 0x02 the menu)
-constexpr std::uint32_t kAsks = 0xEF0;              // IWRAM: 2 while a box or menu takes input (the NAVI pages), 0 on Connecting
+constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 and +6 0x1A on Connecting, 0x46 VS's NAVI pages
+                                                    // (the screen pointer is 0x08246C18 from the menu's A on)
 constexpr int kOffTicks = 180;                      // the port out of Multi-Player mode this long: link closed
 constexpr auto kLinkWait = std::chrono::seconds(20);
 
@@ -363,13 +366,15 @@ void vs_cpu_tick() {
                      multi ? "enters" : "leaves", rd32(ew + kWorld), ew[kMode]);
     }
     const std::uint8_t* iw = bus->iwram_ptr();
-    const bool connecting = rd32(ew + kWorld) == kConnecting && ew[kMode] != 4u;
-    const bool connecting_screen = connecting && ew[kScene] == 0x24u && iw[kAsks] == 0u;
+    // VS's "Connecting..." (Exchange's is the same screen, cursor 2).
+    const bool connecting = rd32(ew + kScreen) == kConnecting && iw[kCursor] == 1u && ew[kMode] != 4u;
+    const bool connecting_screen = connecting && ew[kScene] == 0x24u && ew[kScene + 6] == 0x1Au;
     // KOL_VS_LOG=1: the bytes the Connecting screen is told by, when they change.
     if (static const bool log = std::getenv("KOL_VS_LOG") != nullptr; log) {
-        char now[96];
-        std::snprintf(now, sizeof now, "world=%08X ef0=%02X 2830=%02X 2836=%02X multi=%d", rd32(ew + kWorld), iw[0xEF0],
-                      ew[0x2830], ew[0x2836], multi ? 1 : 0);
+        char now[128];
+        std::snprintf(now, sizeof now, "screen=%08X cursor=%u world=%08X ef0=%02X 2830=%02X 2836=%02X multi=%d",
+                      rd32(ew + kScreen), iw[kCursor], rd32(ew + kWorld), iw[0xEF0], ew[0x2830], ew[0x2836],
+                      multi ? 1 : 0);
         static std::string last;
         if (last != now) {
             gba::GbaPpu* ppu = gbarecomp::active_ppu();
@@ -383,8 +388,11 @@ void vs_cpu_tick() {
             g_failed_here = false;
             break;
         }
-        if (g_failed_here || !connecting_screen || !multi || !setting_on(Setting::VsComputer) ||
-            gba::SioLink::instance())
+        // On the screen's first frame, whatever the port: a Connecting after
+        // one that timed out puts the port in Multi-Player mode only ~32
+        // frames in, and a snapshot taken there had the game decide with no
+        // link (no transfer ever started on either side, 2026-11-22).
+        if (g_failed_here || !connecting_screen || !setting_on(Setting::VsComputer) || gba::SioLink::instance())
             break;
         std::lock_guard<std::mutex> lock(g_mu);
         std::error_code ec;

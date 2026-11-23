@@ -24004,3 +24004,28 @@ input). `KOL_VS_LOG=1` logs those bytes as they change. Checked from the
 menu (A on VS, A through the pages; the player's side by KOL_KEY_SCRIPT and
 the AI): snapshot at 2063, linked in 134 ms, both games into the battle
 (first turns at 5712 / 5715); `connecting.state` still starts it at once.
+
+Then, still "it goes back to the Quest / VS / Exchange menu", in the dev app
+with the user's save (`KOL_VS_LOG=1`): no NAVI pages at all. A save that has
+seen VS's rules skips them, so the world state stays 0 and the trigger never
+fired. Two causes, both fixed:
+- The screen. The menu's own screen pointer, EWRAM 0x02029B80, is
+  0x08246C18 from the menu's A on (the NAVI pages and Connecting; 0x08246CA8
+  on the menu), and its cursor, IWRAM 0x03000ED1, stays on the item chosen
+  (0 Quest, 1 VS, 2 Exchange) through Connecting (found by diffing states
+  with the cursor on each item and on both Connecting screens). Connecting
+  is 0x02002830 = 0x24 and 0x02002836 = 0x1A on both paths. Exchange's
+  Connecting is the same screen with cursor 2, so it starts no copy. The
+  world state and 0x03000EF0 are logged only now.
+- The port. A Connecting that timed out takes the port out of Multi-Player
+  mode; the next one puts it back only ~32 frames in. The old rule (port in
+  Multi-Player mode) took the snapshot on that frame. It linked in 138 ms,
+  and both ports were told to each other, but no transfer ever started on
+  either side: the game had looked at its cable with no link there. The
+  snapshot is now taken on Connecting's first frame, whatever the port.
+Checked headless: a retry after a timeout (rules shown again in that save)
+snapshot at 2827, linked, attack order at 2918; the NAVI path as before
+(2057, linked, 2148); Exchange never starts one. Then the user in the dev
+app, from the title: linked at frame 4920 in 138 ms, attack order,
+roulette, Winning Condition, FIGHT IT OUT, deployment, and the computer's
+turns in the battle (its log) until the app was closed at ~15,600.
