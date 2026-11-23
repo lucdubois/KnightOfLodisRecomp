@@ -743,22 +743,37 @@ void display_full_screen_set(bool full) {
 }
 
 namespace {
-// The chosen shape's sizes that fit the display's usable area (all of them,
-// until it is known), by height.
-std::vector<int> window_sizes_fitting() {
+// The game's view size (Graphics > View Size; 240x160 when it is off).
+void view_size(int* w, int* h) {
+    *w = static_cast<int>(view_choice_width());
+    *h = static_cast<int>(view_choice_height());
+    if (*w <= 0 || *h <= 0) { *w = 240; *h = 160; }
+}
+
+// The window sizes offered, by height: the chosen shape's common sizes and
+// the view's exact multiples (2x, 3x...: Integer scaling fills them), those
+// that fit the display's usable area (all, until it is known).
+std::vector<std::pair<int, int>> window_sizes_fitting() {
     const int usable = gbarecomp::g_host_display_usable;
     const int uw = (usable >> 16) & 0xFFFF, uh = usable & 0xFFFF;
+    const auto fits = [&](int w, int h) { return usable == 0 || (w <= uw && h <= uh); };
     unsigned num = 16, den = 9;
     ratio_choice_shape(ratio_choice_current(), &num, &den);
-    std::vector<int> fit;
-    for (int i = 0; i < static_cast<int>(std::size(kWindowSizes)); ++i)
-        if ((usable == 0 || (kWindowSizes[i][0] <= uw && kWindowSizes[i][1] <= uh)) &&
-            size_is_ratio(kWindowSizes[i][0], kWindowSizes[i][1], num, den))
-            fit.push_back(i);
+    std::vector<std::pair<int, int>> fit;
+    for (const auto& s : kWindowSizes)
+        if (fits(s[0], s[1]) && size_is_ratio(s[0], s[1], num, den)) fit.emplace_back(s[0], s[1]);
+    int vw = 0, vh = 0;
+    view_size(&vw, &vh);
+    for (int k = 2; vw * k <= 3840 && vh * k <= 2160; ++k)
+        if (fits(vw * k, vh * k)) fit.emplace_back(vw * k, vh * k);
     if (fit.empty())   // none fits: the shape's smallest
-        for (int i = 0; i < static_cast<int>(std::size(kWindowSizes)) && fit.empty(); ++i)
-            if (size_is_ratio(kWindowSizes[i][0], kWindowSizes[i][1], num, den)) fit.push_back(i);
-    if (fit.empty()) fit.push_back(0);
+        for (const auto& s : kWindowSizes)
+            if (fit.empty() && size_is_ratio(s[0], s[1], num, den)) fit.emplace_back(s[0], s[1]);
+    if (fit.empty()) fit.emplace_back(kWindowSizes[0][0], kWindowSizes[0][1]);
+    std::sort(fit.begin(), fit.end(), [](const auto& a, const auto& b) {
+        return a.second != b.second ? a.second < b.second : a.first < b.first;
+    });
+    fit.erase(std::unique(fit.begin(), fit.end()), fit.end());
     return fit;
 }
 }  // namespace
@@ -766,18 +781,25 @@ std::vector<int> window_sizes_fitting() {
 unsigned window_size_count() { return static_cast<unsigned>(window_sizes_fitting().size()); }
 
 void window_size_at(unsigned i, int* w, int* h) {
-    const std::vector<int> fit = window_sizes_fitting();
-    const int k = fit[std::min<std::size_t>(i, fit.size() - 1)];
-    *w = kWindowSizes[k][0];
-    *h = kWindowSizes[k][1];
+    const auto fit = window_sizes_fitting();
+    const auto& s = fit[std::min<std::size_t>(i, fit.size() - 1)];
+    *w = s.first;
+    *h = s.second;
 }
 
 int window_size_current() {
-    const std::vector<int> fit = window_sizes_fitting();
+    const auto fit = window_sizes_fitting();
     for (std::size_t i = 0; i < fit.size(); ++i)
-        if (kWindowSizes[fit[i]][0] == g_saved_w && kWindowSizes[fit[i]][1] == g_saved_h) return static_cast<int>(i);
+        if (fit[i].first == g_saved_w && fit[i].second == g_saved_h) return static_cast<int>(i);
     return -1;
 }
+
+int window_size_multiple(int w, int h) {
+    int vw = 0, vh = 0;
+    view_size(&vw, &vh);
+    return w % vw == 0 && h % vh == 0 && w / vw == h / vh ? w / vw : 0;
+}
+
 
 void window_size_now(int* w, int* h) {
     const int s = gbarecomp::g_host_window_size_now;
@@ -851,6 +873,7 @@ void window_size_step(int) {}
 void display_ratio_changed() {}
 bool desktop_player_mode() { return false; }
 bool desktop_restart_requested() { return false; }
+int window_size_multiple(int, int) { return 0; }
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;
     return std::vector<std::string>(argv, argv + argc);

@@ -500,7 +500,8 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  WindowSize,    // a desktop: the window's size
                                  Ratio,         // the picture's shape (kol_settings ratio_choice_*)
                                  VsMode,        // VS Mode's other player (kol_settings vs_mode_choice_*)
-                                 Bios };        // the GBA BIOS or the built-in one, from the next start
+                                 Bios,          // the GBA BIOS or the built-in one, from the next start
+                                 Scaling };     // a desktop: how the picture fills the window (kol_desktop.h)
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -570,8 +571,9 @@ const Row kDisplay[] = {
 #endif
     {Kind::Ratio, 0, "Ratio", "The picture's shape. View Size\noffers sizes of this shape."},
 #if !defined(__ANDROID__)
-    {Kind::WindowSize, 0, "Window Size", "The window's size, in Window\nmode. The game's view is fitted."},
+    {Kind::WindowSize, 0, "Window Size", "The window's size, in Window\nmode. 2x, 3x: the view's multiples."},
 #endif
+    {Kind::Scaling, 0, "Scaling", nullptr},   // help by value (scaling_choice_help)
 };
 const Row kGraphics[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
@@ -887,7 +889,15 @@ void set_game_value(int k, int v) {
 }
 
 // A row greyed: it does nothing now (the window's size in full screen).
-bool row_off(const Row& r) { return r.kind == Kind::WindowSize && display_full_screen(); }
+// On Android, Scaling when the screen is a whole multiple of the picture
+// (it changes nothing there).
+bool row_off(const Row& r) {
+    if (r.kind == Kind::WindowSize) return display_full_screen();
+#if defined(__ANDROID__)
+    if (r.kind == Kind::Scaling) return scaling_exact() > 0;
+#endif
+    return false;
+}
 bool selectable(const Row& r) { return r.kind != Kind::Heading && !row_off(r); }
 
 float max_scroll();
@@ -983,6 +993,11 @@ Text value_text(const Art& a, const Row& r) {
         case Kind::Bios: return encode(bios_next_real() ? "GBA BIOS" : "Built-in");
         case Kind::Quit: return encode(">");
         case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
+        case Kind::Scaling:
+#if defined(__ANDROID__)
+            if (scaling_exact() > 0) return encode("Exact");
+#endif
+            return encode(scaling_choice_label(scaling_choice_current()));
         case Kind::Ratio: return encode(ratio_choice_label(ratio_choice_current()));
         case Kind::WindowSize: {   // the chosen size, else the window's own
             int w = 0, h = 0;
@@ -990,7 +1005,8 @@ Text value_text(const Art& a, const Row& r) {
             if (i >= 0) window_size_at(static_cast<unsigned>(i), &w, &h);
             else window_size_now(&w, &h);
             if (w <= 0 || h <= 0) return encode("-");
-            std::snprintf(buf, sizeof buf, "%dx%d", w, h);
+            if (const int k = window_size_multiple(w, h); k > 0) std::snprintf(buf, sizeof buf, "%dx%d %dx", w, h, k);
+            else std::snprintf(buf, sizeof buf, "%dx%d", w, h);
             return encode(buf);
         }
         case Kind::Mod: {   // the patch's name without its extension, cut to fit
@@ -1314,6 +1330,9 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Back: leave_page(); break;
         case Kind::DisplayMode: display_full_screen_set(!display_full_screen()); break;
         case Kind::WindowSize: window_size_step(dir); break;
+        case Kind::Scaling:
+            if (!row_off(r)) scaling_choice_set(wrap(scaling_choice_current(), dir, scaling_choice_count()));
+            break;
         case Kind::Ratio:   // the view's sizes, and a desktop's window, follow it
             ratio_choice_set(wrap(ratio_choice_current(), dir, ratio_choice_count()));
             display_ratio_changed();
@@ -2377,6 +2396,12 @@ bool menu_render(std::uint32_t* argb) {
         flush_word(true);
         out += line;
         help = encode(out.c_str());
+    } else if (sel.kind == Kind::Scaling) {   // the chosen value's (2026-11-23, asked)
+#if defined(__ANDROID__)
+        if (scaling_exact() > 0) help = encode("This screen is a whole multiple\nof the picture: already even.");
+        else
+#endif
+        help = encode(scaling_choice_help(scaling_choice_current()));
     } else if (sel.help) {
         help = encode(sel.help);
     }

@@ -171,6 +171,25 @@ const Ratio kRatios[] = {
 };
 constexpr unsigned kRatioCount = sizeof(kRatios) / sizeof(kRatios[0]);
 constexpr unsigned kRatio169 = kRatioCount - 1u;   // with no panel known
+// Options > Display > Scaling (2026-11-23; the desktop's first, then Android
+// too, asked: a 1080p panel is 6.75x the native 240x160): how the picture
+// fills the window or screen. 0 Integer (the default), 1 Smooth (gbarecomp's
+// sharp scaling; "sharp" in the file), 2 Stretch (the fill as before).
+// gbarecomp g_host_scaling_mode; scaling= in enhancements.cfg.
+constexpr unsigned kScalingCount = 3;
+constexpr const char* kScalingKeys[kScalingCount] = {"integer", "sharp", "stretch"};
+constexpr const char* kScalingLabels[kScalingCount] = {"Integer", "Smooth", "Stretch"};
+constexpr const char* kScalingHelp[kScalingCount] = {
+    "Even pixels. Can show a black\nborder around the picture.",
+    "Stretches the pixels, with a\nfilter to make them look even.",
+    "Fills the window, with\nstretched pixels."};
+unsigned g_scaling = 0;
+
+void apply_scaling() {
+    static constexpr int kHostMode[kScalingCount] = {1, 2, 0};   // gbarecomp: 1 integer, 2 sharp, 0 stretch
+    gbarecomp::g_host_scaling_mode = kHostMode[g_scaling < kScalingCount ? g_scaling : 0u];
+}
+
 unsigned g_ratio = kRatio169;
 bool g_ratio_chosen = false;            // the player picked it (saved as ratio=)
 unsigned g_panel_w = 0, g_panel_h = 0;  // the display, landscape; 0 unknown
@@ -397,6 +416,7 @@ void save() {
     std::fprintf(f, "height=%u\n", g_widescreen_height);
     // Only a picked shape: otherwise the screen's own decides at each start.
     if (g_ratio_chosen) std::fprintf(f, "ratio=%s\n", kRatios[g_ratio].label);
+    std::fprintf(f, "scaling=%s\n", kScalingKeys[g_scaling < kScalingCount ? g_scaling : 0u]);
     std::fprintf(f, "settings_version=%d\n", kSettingsVersion);
     std::fclose(f);
 }
@@ -446,6 +466,26 @@ void ratio_choice_shape(unsigned i, unsigned* num, unsigned* den) {
     *den = q.den;
 }
 unsigned ratio_choice_current() { return g_ratio; }
+
+unsigned scaling_choice_count() { return kScalingCount; }
+const char* scaling_choice_label(unsigned i) { return i < kScalingCount ? kScalingLabels[i] : ""; }
+const char* scaling_choice_help(unsigned i) { return i < kScalingCount ? kScalingHelp[i] : ""; }
+unsigned scaling_choice_current() { return g_scaling; }
+void scaling_choice_set(unsigned i) {
+    g_scaling = i < kScalingCount ? i : 0u;
+    apply_scaling();
+    save();
+}
+
+int scaling_exact() {
+    const int s = gbarecomp::g_host_window_size_now;
+    const int w = (s >> 16) & 0xFFFF, h = s & 0xFFFF;
+    const auto multiple = [&](int vw, int vh) {
+        return vw > 0 && vh > 0 && w % vw == 0 && h % vh == 0 && w / vw == h / vh ? w / vw : 0;
+    };
+    const int view = multiple(static_cast<int>(g_widescreen_width), static_cast<int>(g_widescreen_height));
+    return view > 0 && multiple(240, 160) > 0 ? view : 0;
+}
 
 unsigned view_choice_width()  { return g_settings_ready ? g_widescreen_width : 0u; }
 unsigned view_choice_height() { return g_settings_ready ? g_widescreen_height : 0u; }
@@ -929,6 +969,13 @@ void settings_init(const char* dir, unsigned widescreen_width,
                 // the view where the display cannot show it.
                 if (std::strcmp(line, "width") == 0) { saved_w = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
                 if (std::strcmp(line, "height") == 0) { saved_h = value > 0 ? static_cast<unsigned>(value) : 0u; continue; }
+                if (std::strcmp(line, "scaling") == 0) {
+                    char* v = eq + 1;
+                    v[std::strcspn(v, " \r\n")] = '\0';
+                    for (unsigned k = 0; k < kScalingCount; ++k)
+                        if (std::strcmp(v, kScalingKeys[k]) == 0) g_scaling = k;
+                    continue;
+                }
                 if (std::strcmp(line, "ratio") == 0) {
                     char* v = eq + 1;
                     v[std::strcspn(v, " \r\n")] = '\0';
@@ -1062,6 +1109,7 @@ void settings_init(const char* dir, unsigned widescreen_width,
                                        static_cast<int>(g_effects_volume * 10u));
     g_settings_ready = true;
     apply_view_size();
+    apply_scaling();
     std::fprintf(stderr, "settings: view=%ux%u music_quality=%u highlight=%d screen2=%d weather=%d pad=%d dof=%d persp=%d debug_mesh=%d auto_win=%d\n",
                  g_widescreen_width, g_widescreen_height, g_sound_choice,
                  g_on[0] ? 1 : 0, g_on[1] ? 1 : 0, g_on[2] ? 1 : 0, g_on[3] ? 1 : 0,

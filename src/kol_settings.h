@@ -142,6 +142,20 @@ void ratio_choice_shape(unsigned i, unsigned* num, unsigned* den);   // 16, 9
 unsigned ratio_choice_current();
 void ratio_choice_set(unsigned i);
 
+// Options > Display > Scaling: how the picture fills the window (desktop) or
+// screen (Android). 0 Integer (the largest whole multiple: even pixels, a
+// border), 1 Smooth (filled: even pixels, soft edges), 2 Stretch (filled,
+// nearest pixels: uneven at a fractional scale). scaling= in
+// enhancements.cfg; gbarecomp g_host_scaling_mode. The help is the value's.
+unsigned scaling_choice_count();
+const char* scaling_choice_label(unsigned i);
+const char* scaling_choice_help(unsigned i);
+unsigned scaling_choice_current();
+void scaling_choice_set(unsigned i);
+// The whole multiple the screen is of both the chosen view and the native
+// 240x160 (the title and the menus), 0 when not: Scaling changes nothing then.
+int scaling_exact();
+
 // ── The depth of field's STRENGTH ─────────────────────────────────────────
 // How far the farthest terrain is blurred: the radius of its blur disc, in
 // frame pixels. A short list like the view size; persisted as dof_radius=.
