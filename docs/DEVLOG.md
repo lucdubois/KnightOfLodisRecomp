@@ -24158,5 +24158,14 @@ overscan (kol_widescreen, `g_vs_target_w/h`; `KOL_VS_NET_CULL_OLD=1` old).
 With `KOL_PERSP_LOOK=0.6,1` given to the seen games only: old, out of step at
 read 2048; new, 142 hashes to the end. Both invariants unchanged.
 
-Not yet: Mac against Deck since (the Deck asleep), a human-played match
-through to its end, the notices' look, Android, Windows, internet play.
+Then Mac against Deck again (2026-11-23), the Deck rebuilt. Headless, the
+Deck's test player drawing in software: 24 fps, a test artifact (the Deck's
+CPU drawing every frame; the app draws on its GPU). With that player unseen:
+59-60 fps, the Mac's game waiting ~7% on its copy, the Deck 76% idle. Then
+the user, Mac app against the Deck's app, a human match: 58-60 fps, 124
+hashes equal, no desync; "it works well enough". The Mac's game, the link's
+parent, waited 126-199 ms a second on its copy there (the Deck's own game at
+Enhanced is the slower side).
+
+Not yet: the notices' look, a match played to its end and a rematch,
+Android, Windows, internet play.
