@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -496,6 +497,34 @@ void volume_choice_set(bool effects, unsigned i) {
 }
 
 std::string settings_dir() { return g_dir; }
+
+namespace {
+bool g_bios_real = true;
+}
+void bios_in_use_set(bool real) { g_bios_real = real; }
+bool bios_in_use() { return g_bios_real; }
+bool bios_next_real() {
+    if (g_dir.empty()) return g_bios_real;
+    std::error_code ec;
+    return !std::filesystem::exists(g_dir + "/no_bios", ec);
+}
+void bios_next_set(bool real) {
+    if (g_dir.empty()) return;
+    const std::string marker = g_dir + "/no_bios";
+    if (real) {
+        std::remove(marker.c_str());
+    } else if (std::FILE* f = std::fopen(marker.c_str(), "w")) {
+        std::fputs("1\n", f);
+        std::fclose(f);
+    }
+    std::fprintf(stderr, "settings: BIOS at the next start: %s\n", real ? "the GBA's" : "built-in");
+}
+bool bios_file_present() {
+    if (g_dir.empty()) return false;
+    std::error_code ec;
+    const std::string bios = g_dir + "/gba_bios.bin";
+    return std::filesystem::exists(bios, ec) && std::filesystem::file_size(bios, ec) == 16384u;
+}
 
 const char* rom_patch_name() { return g_runtime_rom_patch_name; }
 std::string rom_file_tag() {

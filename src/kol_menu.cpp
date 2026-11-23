@@ -499,7 +499,8 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  DisplayMode,   // a desktop: window or full screen (kol_desktop.h)
                                  WindowSize,    // a desktop: the window's size
                                  Ratio,         // the picture's shape (kol_settings ratio_choice_*)
-                                 VsMode };      // VS Mode's other player (kol_settings vs_mode_choice_*)
+                                 VsMode,        // VS Mode's other player (kol_settings vs_mode_choice_*)
+                                 Bios };        // the GBA BIOS or the built-in one, from the next start
 struct Row {
     Kind kind;
     int id;               // game option index, or the Setting
@@ -535,7 +536,7 @@ const Row kGameOptionsPage[] = {
     {Kind::Game, 8, nullptr, nullptr}, {Kind::Game, 9, nullptr, nullptr},
     {Kind::Game, 10, nullptr, nullptr}, {Kind::Game, 11, nullptr, nullptr},
 };
-// Page 11, Enhancement Options: ours, the mod and the licenses.
+// Page 11, Enhancement Options: ours, the mod, and the Technical page.
 const Row kEnhancements[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
     {Kind::Preset, 0, "Preset", "Sets the other options at once:\nEnhanced, or the game as it was."},
@@ -549,6 +550,13 @@ const Row kEnhancements[] = {
     {Kind::Page, 5, "Gameplay", "Controls, rumble and\nquicker battles."},
     {Kind::Page, 6, "Cheats", "Shortcuts past the\ngame's rules."},
     {Kind::Mod, 0, "Mod", "Load a mod file made\nfor this game."},
+    {Kind::Page, 12, "Technical", "The BIOS the game runs on,\nand the licenses."},
+};
+// Page 12, Technical (2026-11-23, asked: the BIOS chosen from the menu, a
+// restart allowed, beside the licenses).
+const Row kTechnical[] = {
+    {Kind::Back, 0, "Back", "Return to the options."},
+    {Kind::Bios, 0, "BIOS", "The GBA BIOS, or the built-in\none. Takes effect on restart."},
     {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
 };
 // Page 9, Display: the picture's shape (2026-11-21, both platforms; it picks
@@ -772,7 +780,8 @@ LoginForm g_login;
 std::string g_login_last_user;   // the name of the last attempt, to start from
 int g_page = 0;            // 0 the options, 1 Debug, 2 Audio, 3 Layers (in Debug), 4 Graphics,
                            // 5 Gameplay, 6 Cheats, 7 Save States (also in Debug), 8 Achievements,
-                           // 9 Display, 10 Game Options, 11 Enhancement Options (parent_page)
+                           // 9 Display, 10 Game Options, 11 Enhancement Options, 12 Technical
+                           // (parent_page)
 int g_states_parent = 0;   // the page Save States was opened from (0 main, 1 Debug)
 std::atomic<bool> g_game_option{false};   // the game is waiting on its OPTION window: ours
 int g_sel = 0;             // the selected row
@@ -831,6 +840,7 @@ const Row* rows(int* n) {
     if (g_page == 9) { *n = static_cast<int>(sizeof kDisplay / sizeof kDisplay[0]); return kDisplay; }
     if (g_page == 10) { *n = static_cast<int>(sizeof kGameOptionsPage / sizeof kGameOptionsPage[0]); return kGameOptionsPage; }
     if (g_page == 11) { *n = static_cast<int>(sizeof kEnhancements / sizeof kEnhancements[0]); return kEnhancements; }
+    if (g_page == 12) { *n = static_cast<int>(sizeof kTechnical / sizeof kTechnical[0]); return kTechnical; }
     *n = static_cast<int>(sizeof kMain / sizeof kMain[0]);
     return kMain;
 }
@@ -890,7 +900,7 @@ int parent_page(int page) {
     switch (page) {
         case 3: return 1;
         case 7: return kol::kDevTools ? g_states_parent : 0;
-        case 2: case 4: case 5: case 6: case 9: return 11;
+        case 2: case 4: case 5: case 6: case 9: case 12: return 11;
         default: return 0;
     }
 }
@@ -970,6 +980,7 @@ Text value_text(const Art& a, const Row& r) {
         }
         case Kind::Page: return encode(">");
         case Kind::Licenses: return encode(">");
+        case Kind::Bios: return encode(bios_next_real() ? "GBA BIOS" : "Built-in");
         case Kind::Quit: return encode(">");
         case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
         case Kind::Ratio: return encode(ratio_choice_label(ratio_choice_current()));
@@ -1139,15 +1150,56 @@ void login_press(bool pad) {
     }
 }
 
-// "Restart now?" after a mod change (not under g_mu).
-void ask_restart(const std::string& text) {
-    menu_dialog("Mod", text.c_str(), {"Restart", "Later"}, 1, [](int b) {
+// "Restart now?" after a mod or BIOS change (not under g_mu).
+void ask_restart(const std::string& text, const char* title = "Mod") {
+    menu_dialog(title, text.c_str(), {"Restart", "Later"}, 1, [](int b) {
         MenuPlatform p;
         {
             std::lock_guard<std::mutex> lock(g_mu);
             p = g_platform;
         }
         if (b == 0 && p.restart) p.restart();
+    });
+}
+
+// Technical > BIOS (under g_mu): the other BIOS from the next start, then
+// "Restart now?". Read once at start (kol_desktop desktop_prepare,
+// main_android), so the choice is a marker file, files/no_bios, the one the
+// setup screen writes. The GBA BIOS needs gba_bios.bin beside the game.
+void bios_dialog() {
+    if (settings_dir().empty()) {   // a developer's run: its command line decides
+        open_dialog("BIOS", "This run's BIOS is set on its command line (--bios / --no-bios).",
+                    {"OK"}, 0, nullptr);
+        return;
+    }
+    const bool real = bios_next_real();
+    if (!real && !bios_file_present()) {
+        if (g_platform.pick_bios) {   // Android: the file picker, then menu_bios_picked
+            open_dialog("BIOS", "No GBA BIOS file yet. Choose one? (A dump of the console's BIOS, 16 KB.)",
+                        {"Choose", "Cancel"}, 1, [](int b) {
+                            MenuPlatform p;
+                            {
+                                std::lock_guard<std::mutex> lock(g_mu);
+                                p = g_platform;
+                            }
+                            if (b == 0 && p.pick_bios) p.pick_bios();
+                        });
+        } else {
+            open_dialog("BIOS", "No gba_bios.bin in the game's folder. Put a GBA BIOS dump there "
+                                "(16 KB), then choose it here.",
+                        {"OK"}, 0, nullptr);
+        }
+        return;
+    }
+    const char* text = real
+        ? "Play with the built-in BIOS from the next start? (VS Network pairs only games on the same BIOS.)"
+        : "Play with the GBA BIOS (gba_bios.bin) from the next start? (VS Network pairs only games on the same BIOS.)";
+    open_dialog("BIOS", text, {real ? "Built-in" : "GBA BIOS", "Cancel"}, 1, [real](int b) {
+        if (b != 0) return;
+        bios_next_set(!real);
+        // Back where it was in use: nothing to restart for.
+        if (bios_in_use() == !real) return;
+        ask_restart("Restart now to change the BIOS?", "BIOS");
     });
 }
 
@@ -1288,6 +1340,7 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
                         });
             break;
         case Kind::Mod: mod_dialog(); break;
+        case Kind::Bios: bios_dialog(); break;
         case Kind::Cheevo:
             if (r.id == kCheevoAccount && cheevos_status().state != CheevosState::LoggedIn &&
                 cheevos_status().state != CheevosState::LoggingIn) {
@@ -2887,6 +2940,14 @@ void menu_mod_picked(const char* name, const char* error) {
     std::string n = name;
     if (const auto dot = n.rfind('.'); dot != std::string::npos && dot > 0) n.resize(dot);
     ask_restart("Restart to play " + n + "?");
+}
+
+void menu_bios_picked(const char* error) {
+    if (error) {
+        menu_dialog("BIOS", error, {"OK"}, 0, nullptr);
+        return;
+    }
+    ask_restart("GBA BIOS loaded. Restart now to play with it?", "BIOS");
 }
 
 // The game's own OPTION window, replaced by this menu (asked 2026-11-18: a

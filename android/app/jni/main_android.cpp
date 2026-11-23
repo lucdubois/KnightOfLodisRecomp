@@ -310,6 +310,7 @@ void cheevos_login_form_android() {
 jclass    g_mods_class = nullptr;
 jclass    g_setup_class = nullptr;
 jmethodID g_mods_pick = nullptr, g_mods_remove = nullptr, g_mods_restart = nullptr, g_mods_licenses = nullptr;
+jmethodID g_mods_pick_bios = nullptr;
 jmethodID g_setup_unlink = nullptr;
 
 bool platform_bind(JNIEnv* env) {
@@ -328,6 +329,8 @@ bool platform_bind(JNIEnv* env) {
     g_mods_remove = env->GetStaticMethodID(g_mods_class, "remove", "()V");
     g_mods_restart = env->GetStaticMethodID(g_mods_class, "restart", "()V");
     g_mods_licenses = env->GetStaticMethodID(g_mods_class, "showLicenses", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    g_mods_pick_bios = env->GetStaticMethodID(g_mods_class, "pickBios", "()V");
     g_setup_unlink = env->GetStaticMethodID(g_setup_class, "unlinkRom", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     return g_mods_pick && g_mods_remove && g_mods_restart && g_setup_unlink;
@@ -344,6 +347,7 @@ void mods_remove_android() { call_static(g_mods_class, g_mods_remove); }
 void restart_android() { call_static(g_mods_class, g_mods_restart); }
 void unlink_rom_android() { call_static(g_setup_class, g_setup_unlink); }
 void licenses_android() { call_static(g_mods_class, g_mods_licenses); }
+void bios_pick_android() { call_static(g_mods_class, g_mods_pick_bios); }
 
 // The mod to play: the one file in files/mod/ (Mods.java puts it there), or
 // "". It is checked here first, as the runtime will (rom_patch.h): one that
@@ -898,8 +902,11 @@ int main(int argc, char** argv) {
     // "Play without a BIOS (experimental)" switch. The runtime then takes the
     // built-in replacements (--no-bios) and no BIOS file at all, so
     // gba_bios.bin may be absent. Without the marker the real BIOS is used,
-    // as before.
-    const bool no_bios = access((std::string(base) + "/no_bios").c_str(), F_OK) == 0;
+    // as before. Options > Enhancement Options > Technical > BIOS writes or
+    // removes the same marker, for the next start (2026-11-23); with no
+    // gba_bios.bin the built-in one is the only choice.
+    const bool no_bios = access((std::string(base) + "/no_bios").c_str(), F_OK) == 0 ||
+                         access(bios.c_str(), R_OK) != 0;
     if (no_bios) {
         std::printf("android: files/no_bios set; playing without a BIOS "
                     "(built-in replacements)\n");
@@ -972,6 +979,7 @@ int main(int argc, char** argv) {
     }
     kol::settings_init(base, static_cast<unsigned>(resolved_width),
                        panel_w, panel_h);
+    kol::bios_in_use_set(!no_bios);   // Technical > BIOS: what this start plays with
     kol::vs_cpu_args(args);   // VS Mode's copies start with the same ROM, BIOS and mod
     std::vector<char*> argv_storage;
     argv_storage.reserve(args.size() + 1);
@@ -1018,6 +1026,7 @@ int main(int argc, char** argv) {
         p.remove_mod = &mods_remove_android;
         p.restart = &restart_android;
         if (g_mods_licenses) p.show_licenses = &licenses_android;
+        if (g_mods_pick_bios) p.pick_bios = &bios_pick_android;   // Technical > BIOS
         if constexpr (kol::kDevTools) p.unlink_rom = &unlink_rom_android;   // Debug > Unlink ROM
         kol::menu_set_platform(p);
     } else {
@@ -1126,6 +1135,15 @@ extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativePicked(JNIE
     const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
     kol::menu_mod_picked(n, e);
     if (n) env->ReleaseStringUTFChars(name, n);
+    if (e) env->ReleaseStringUTFChars(error, e);
+}
+
+// Options > Technical > BIOS's picker (Mods.nativeBiosPicked): kept and
+// chosen for the next start, or why not; the game says so in its dialog.
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeBiosPicked(JNIEnv* env, jclass,
+                                                                             jstring error) {
+    const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
+    kol::menu_bios_picked(e);
     if (e) env->ReleaseStringUTFChars(error, e);
 }
 

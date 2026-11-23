@@ -82,6 +82,16 @@ bool setting_on(Setting s);
 
 // Where enhancements.cfg lives (empty: no persistence).
 std::string settings_dir();
+// The BIOS (Options > Technical > BIOS). In use now: the GBA's own (true) or
+// gbarecomp's built-in replacements (false, --no-bios), told by the platform
+// at start. For the next start: the marker no_bios in settings_dir() (as
+// Android's setup screen writes it) asks for the built-in one; the GBA BIOS
+// needs gba_bios.bin there.
+void bios_in_use_set(bool real);
+bool bios_in_use();
+bool bios_next_real();
+void bios_next_set(bool real);
+bool bios_file_present();
 
 // A mod (a ROM patch, gbarecomp --rom-patch): its file name, else null, and
 // "-<first 8 of the patched ROM's SHA-1>" for files kept apart from the stock

@@ -18,15 +18,61 @@
 
 #include "runtime.h"
 
+#include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
+#if defined(_WIN32)
+#include <process.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+#endif
 
 #include "kol_desktop.h"
 #include "kol_vs_cpu.h"
 #include "kol_vs_net.h"
 #include "kol_widescreen.h"
 
+namespace {
+
+// The program again, with its first arguments (the menu's restart: Options >
+// Technical > BIOS, a mod), once the game has quit and written its save.
+void start_again(std::vector<std::string> first) {
+    std::string self;
+#if defined(_WIN32)
+    char buf[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, buf, MAX_PATH)) self = buf;
+#elif defined(__APPLE__)
+    char buf[4096] = {};
+    std::uint32_t n = sizeof buf;
+    if (_NSGetExecutablePath(buf, &n) == 0) self = buf;
+#else
+    char buf[4096] = {};
+    const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    if (n > 0) self = std::string(buf, static_cast<std::size_t>(n));
+#endif
+    if (self.empty() && !first.empty()) self = first[0];
+    std::vector<char*> av;
+    for (auto& a : first) av.push_back(a.data());
+    av.push_back(nullptr);
+    std::fprintf(stderr, "desktop: starting again (%s)\n", self.c_str());
+    std::fflush(stderr);
+#if defined(_WIN32)
+    _execv(self.c_str(), av.data());
+#else
+    execv(self.c_str(), av.data());
+#endif
+    std::fprintf(stderr, "desktop: could not start again\n");
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+    const std::vector<std::string> first(argv, argv + argc);   // for a restart (start_again)
     // The desktop's player front end (kol_desktop.h): the options menu over
     // the game, and in player mode (--data-dir, or a public build) the game's
     // files and settings in one directory, as the Android app keeps them.
@@ -56,5 +102,7 @@ int main(int argc, char** argv) {
     // Debug > Tile Info or L2 Moves Sun has L2 (kol_widescreen).
     opts.rewind_history_seconds = 20;
     kol::configure_extended_view(opts);
-    return gbarecomp::run_game(argc, argv, opts);
+    const int result = gbarecomp::run_game(argc, argv, opts);
+    if (!copy && kol::desktop_restart_requested()) start_again(first);
+    return result;
 }

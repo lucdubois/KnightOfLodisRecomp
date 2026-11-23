@@ -39,6 +39,9 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok);
 
 // True in player mode.
 bool desktop_player_mode();
+// The menu asked for a restart (restart_game): main starts the program again
+// with its first arguments once the game has quit.
+bool desktop_restart_requested();
 
 // The right stick's click, from kol_actions' pad hook (down 1, up 0), with
 // whether the left stick is held. A short click alone opens or closes the
