@@ -1,3 +1,12 @@
+## HANDOFF — 2026-11-23: 1.2 released (read this first)
+
+**Released:** v1.2 (versionCode 6; notes `docs/RELEASE_1.2.md`; the same four packages as 1.1). gbarecomp stays local (never pushed): its commits up to `31f997e` are needed to build.
+
+- VS Mode against the computer (default) and over the local network, Exchange over the network; on Android, Linux, Mac and now Windows (docs/DEVLOG.md "VS Mode and Exchange on Windows": gbarecomp `src/gba/net_compat.h`, kol_vs_cpu's proc_* layer, CreateProcessW). Mac against Windows under Wine checked; the user played Windows (Wine) against the Thor over the network.
+- Options > Display > Shader (RetroArch GLSL presets, download pack, parameters), Scaling, Ratio, Bottom Screen; the options menu holds the game (a held state reloaded at each change) with the OPTION window's frame round the picture; Options > Technical > BIOS; Windows renders with OpenGL.
+- Windows dev build for Wine tests: build-windows-dev (KOL_DEV_TOOLS=ON); the Wine prefix must be on the null display driver unless a window is wanted (memory kol-windows-wine-test).
+- The Thor has both apps: the 1.2 release (`com.totkol.game`) and a debug one (`com.koldecomp.game`, installed by the user 11-23).
+
 ## HANDOFF — 2026-11-20, night: 1.1.1 released (read this first)
 
 **Released:** v1.1.1 (versionCode 5; notes `docs/RELEASE_1.1.1.md`; the same four packages as 1.1). docs/DEVLOG.md "1.1.1: two slow scenes, the Deck's music, Options > Display" has the details. gbarecomp `ddbfc9b` stays local (never pushed). The foldable work stays on the `foldable-split` branches of both repos, out of this release (the user's call).
