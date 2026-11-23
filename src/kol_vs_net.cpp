@@ -881,10 +881,18 @@ void play_tick(std::uint64_t frame) {
         it = g_mirror_hashes.erase(it);
     }
     while (g_mirror_hashes.size() > 256) g_mirror_hashes.erase(g_mirror_hashes.begin());
-    if (frame % 600 == 0)
-        std::fprintf(stderr, "vs-net: frame %llu, read %llu, %llu hashes matched%s\n",
+    if (frame % 600 == 0) {
+        // And the speed: guest frames a second since the last line.
+        static long long last_ms = 0;
+        static std::uint64_t last_frame = 0;
+        const long long t = now_ms();
+        const double fps = last_ms && frame > last_frame ? (frame - last_frame) * 1000.0 / static_cast<double>(t - last_ms) : 0.0;
+        last_ms = t;
+        last_frame = frame;
+        std::fprintf(stderr, "vs-net: frame %llu, read %llu, %llu hashes matched%s, %.1f fps\n",
                      static_cast<unsigned long long>(frame), static_cast<unsigned long long>(g_calls), g_hash_checks,
-                     g_desync ? " (DESYNC)" : "");
+                     g_desync ? " (DESYNC)" : "", fps);
+    }
 }
 
 std::uint16_t play_filter(std::uint16_t keys) {
