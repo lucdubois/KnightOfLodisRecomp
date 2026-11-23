@@ -43,31 +43,21 @@
 #include "kol_settings.h"
 #include "kol_vs_net.h"
 
+
+#include "net_compat.h"   // POSIX sockets, or Winsock (2026-11-23: Windows too)
 #if defined(_WIN32)
-
-namespace kol {
-void vs_set_platform(const VsPlatform&) {}
-bool vs_cpu_child() { return false; }
-void vs_cpu_args(const std::vector<std::string>&) {}
-void vs_cpu_install() {}
-void vs_cpu_tick() {}
-const char* vs_cpu_state_path(int, int) { return nullptr; }
-bool vs_cpu_state_saved(const char*) { return false; }
-}  // namespace kol
-
+#include <process.h>
+#include <windows.h>
 #else
-
 #include <fcntl.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <netinet/in.h>
 #include <signal.h>
-#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
+#include <algorithm>
 
 #include <atomic>
 #include <chrono>
@@ -89,9 +79,12 @@ bool vs_cpu_state_saved(const char*) { return false; }
 #include "runtime_bus_bridge.h"
 #include "sio_link.h"
 
+#if !defined(_WIN32)
 extern char** environ;
+#endif
 
 namespace kol {
+namespace net = gba::net;
 namespace {
 
 constexpr int kSlot = 0x5653;                       // "VS": the snapshot's slot (its path is ours)
@@ -121,8 +114,8 @@ bool g_net = false;              // this session is over the network
 bool g_exchange = false;         // ... and is Exchange's, not VS's (always over the network)
 std::atomic<bool> g_save_asked{false};   // kSaving: the save asked for at a pad read (on_pad_read)
 bool g_keep_dir = false;         // the session's folder outlives it (a desync)
-pid_t g_pid = -1;
-std::atomic<pid_t> g_copy_pid{-1};   // the copy, for the session thread (vsnet::set_on_gone)
+long g_pid = -1;                 // the copy's process id (-1: none, or the platform's)
+std::atomic<long> g_copy_pid{-1};   // the copy, for the session thread (vsnet::set_on_gone)
 bool g_failed_here = false;      // a try failed on this Connecting screen: not again until it is left
 int g_wait = 0;
 int g_off = 0;
@@ -150,7 +143,15 @@ bool port_multi(const std::uint8_t* io) {
 }
 
 std::string self_exe() {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    wchar_t buf[32768];
+    const DWORD n = ::GetModuleFileNameW(nullptr, buf, 32768);
+    if (n == 0 || n >= 32768) return {};
+    const int len = ::WideCharToMultiByte(CP_UTF8, 0, buf, static_cast<int>(n), nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<std::size_t>(len), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, buf, static_cast<int>(n), s.data(), len, nullptr, nullptr);
+    return s;
+#elif defined(__APPLE__)
     std::uint32_t n = 0;
     _NSGetExecutablePath(nullptr, &n);
     std::string s(n, '\0');
@@ -200,6 +201,208 @@ bool write_file(const std::string& path, const void* p, std::size_t n) {
 const Setting kShared[] = {Setting::FastLoading, Setting::FastActions, Setting::FastWalk,  Setting::QuickEnemy,
                            Setting::FastAttack,  Setting::FastSpells,  Setting::SmoothPacing};
 
+// ── The copy's process (desktop): fork + execve, or CreateProcess ────────
+// proc_start: the copy running with `argv`, the player's environment less
+// every game, runtime and SDL switch plus `own`, its output to `log`, in
+// `dir`; its process id, or -1. proc_exited: it has ended (reaped).
+// proc_stop: ended for sure (asked first where the system can ask).
+// proc_kill: ended at once, from any thread. self_pid: this process's.
+#if defined(_WIN32)
+HANDLE g_proc = nullptr;   // the copy's process (under g_mu)
+
+std::wstring wide(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<std::size_t>(n), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    return w;
+}
+// One argument as the C runtime reads it back (CommandLineToArgvW's rules).
+std::wstring quoted(const std::wstring& a) {
+    if (!a.empty() && a.find_first_of(L" \t\n\v\"") == std::wstring::npos) return a;
+    std::wstring out = L"\"";
+    for (std::size_t i = 0;; ++i) {
+        std::size_t slashes = 0;
+        while (i < a.size() && a[i] == L'\\') ++i, ++slashes;
+        if (i == a.size()) {
+            out.append(slashes * 2, L'\\');
+            break;
+        }
+        if (a[i] == L'"') out.append(slashes * 2 + 1, L'\\');
+        else out.append(slashes, L'\\');
+        out.push_back(a[i]);
+    }
+    out.push_back(L'"');
+    return out;
+}
+// An environment entry's name ("=C:" entries keep their leading '=').
+std::wstring var_name(const std::wstring& v) {
+    const std::size_t eq = v.find(L'=', 1);
+    return eq == std::wstring::npos ? v : v.substr(0, eq);
+}
+bool switch_var(const std::wstring& v) {
+    const std::wstring n = var_name(v);
+    for (const wchar_t* p : {L"KOL_", L"GBARECOMP_", L"SDL_"})
+        if (::_wcsnicmp(n.c_str(), p, std::wcslen(p)) == 0) return true;
+    return false;
+}
+
+long proc_start(const std::vector<std::string>& argv, const std::vector<std::string>& own, const std::string& log,
+                const std::string& dir) {
+    std::wstring cmd;
+    for (const auto& a : argv) {
+        if (!cmd.empty()) cmd += L' ';
+        cmd += quoted(wide(a));
+    }
+    std::vector<std::wstring> vars;
+    if (wchar_t* env = ::GetEnvironmentStringsW()) {
+        for (const wchar_t* e = env; *e; e += std::wcslen(e) + 1)
+            if (!switch_var(e)) vars.emplace_back(e);
+        ::FreeEnvironmentStringsW(env);
+    }
+    for (const auto& o : own) vars.push_back(wide(o));
+    // (A block sorted by name, as Windows keeps its own.)
+    std::stable_sort(vars.begin(), vars.end(), [](const std::wstring& a, const std::wstring& b) {
+        return ::_wcsicmp(var_name(a).c_str(), var_name(b).c_str()) < 0;
+    });
+    std::wstring block;
+    for (const auto& v : vars) block.append(v).push_back(L'\0');
+    block.push_back(L'\0');
+
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE out = ::CreateFileW(wide(log).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE in = ::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof si;
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = in;
+    si.StartupInfo.hStdOutput = out;
+    si.StartupInfo.hStdError = out;
+    // Those two handles only, not every inheritable one this process holds.
+    HANDLE list[2];
+    DWORD listed = 0;
+    if (in != INVALID_HANDLE_VALUE) list[listed++] = in;
+    if (out != INVALID_HANDLE_VALUE) list[listed++] = out;
+    SIZE_T size = 0;
+    ::InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<unsigned char> attr(size ? size : 1);
+    auto* al = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr.data());
+    bool have_list = listed > 0 && size > 0 && ::InitializeProcThreadAttributeList(al, 1, 0, &size);
+    if (have_list && !::UpdateProcThreadAttribute(al, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, list,
+                                                  listed * sizeof(HANDLE), nullptr, nullptr)) {
+        ::DeleteProcThreadAttributeList(al);
+        have_list = false;
+    }
+    if (have_list) si.lpAttributeList = al;
+    PROCESS_INFORMATION pi{};
+    const std::wstring exe = wide(argv[0]), wdir = wide(dir);
+    const BOOL ok = ::CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, listed > 0 ? TRUE : FALSE,
+                                     CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT |
+                                         (have_list ? EXTENDED_STARTUPINFO_PRESENT : 0),
+                                     block.data(), wdir.c_str(), &si.StartupInfo, &pi);
+    if (have_list) ::DeleteProcThreadAttributeList(al);
+    if (out != INVALID_HANDLE_VALUE) ::CloseHandle(out);
+    if (in != INVALID_HANDLE_VALUE) ::CloseHandle(in);
+    if (!ok) {
+        std::fprintf(stderr, "vs-cpu: CreateProcess failed (error %lu)\n", static_cast<unsigned long>(::GetLastError()));
+        return -1;
+    }
+    ::CloseHandle(pi.hThread);
+    if (g_proc) ::CloseHandle(g_proc);
+    g_proc = pi.hProcess;
+    return static_cast<long>(pi.dwProcessId);
+}
+bool proc_exited(long) {
+    if (!g_proc || ::WaitForSingleObject(g_proc, 0) != WAIT_OBJECT_0) return false;
+    ::CloseHandle(g_proc);
+    g_proc = nullptr;
+    return true;
+}
+void proc_stop(long) {
+    if (!g_proc) return;
+    // (Windows has no polite ask a windowless program reads: ended at once.)
+    if (::WaitForSingleObject(g_proc, 0) != WAIT_OBJECT_0) {
+        ::TerminateProcess(g_proc, 1);
+        ::WaitForSingleObject(g_proc, 2000);
+    }
+    ::CloseHandle(g_proc);
+    g_proc = nullptr;
+}
+void proc_kill(long pid) {
+    if (HANDLE h = ::OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid))) {
+        ::TerminateProcess(h, 1);
+        ::CloseHandle(h);
+    }
+}
+long self_pid() { return static_cast<long>(::GetCurrentProcessId()); }
+#elif !defined(__ANDROID__)
+long proc_start(const std::vector<std::string>& argv, const std::vector<std::string>& own, const std::string& log,
+                const std::string& dir) {
+    std::vector<std::string> env;
+    for (char** e = environ; e && *e; ++e) {
+        const std::string v = *e;
+        if (v.rfind("KOL_", 0) == 0 || v.rfind("GBARECOMP_", 0) == 0 || v.rfind("SDL_", 0) == 0) continue;
+        env.push_back(v);
+    }
+    env.insert(env.end(), own.begin(), own.end());
+    std::vector<std::string> args = argv;
+    std::vector<char*> av, ev;
+    for (auto& a : args) av.push_back(a.data());
+    av.push_back(nullptr);
+    for (auto& e : env) ev.push_back(e.data());
+    ev.push_back(nullptr);
+    const int log_fd = ::open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        if (log_fd >= 0) ::close(log_fd);
+        return -1;
+    }
+    if (pid == 0) {   // (only async-signal-safe calls from here)
+        if (log_fd >= 0) {
+            ::dup2(log_fd, 1);
+            ::dup2(log_fd, 2);
+        }
+        const int null_fd = ::open("/dev/null", O_RDONLY);
+        if (null_fd >= 0) ::dup2(null_fd, 0);
+        if (::chdir(dir.c_str()) != 0) ::_exit(126);
+        ::execve(av[0], av.data(), ev.data());
+        ::_exit(127);
+    }
+    if (log_fd >= 0) ::close(log_fd);
+    return static_cast<long>(pid);
+}
+bool proc_exited(long pid) {
+    int st = 0;
+    return pid > 0 && ::waitpid(static_cast<pid_t>(pid), &st, WNOHANG) == static_cast<pid_t>(pid);
+}
+void proc_stop(long pid) {
+    const pid_t p = static_cast<pid_t>(pid);
+    int st = 0;
+    pid_t r = ::waitpid(p, &st, WNOHANG);
+    if (r == 0) {
+        ::kill(p, SIGTERM);
+        for (int i = 0; i < 50 && r == 0; ++i) {   // up to 0.5 s, then for sure
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            r = ::waitpid(p, &st, WNOHANG);
+        }
+        if (r == 0) {
+            ::kill(p, SIGKILL);
+            ::waitpid(p, &st, 0);
+        }
+    }
+}
+void proc_kill(long pid) { ::kill(static_cast<pid_t>(pid), SIGKILL); }
+long self_pid() { return static_cast<long>(::getpid()); }
+#else
+// (Android: the platform's service runs the copy; there is no process of
+// ours to wait for or end.)
+bool proc_exited(long) { return false; }
+void proc_stop(long) {}
+void proc_kill(long) {}
+long self_pid() { return static_cast<long>(::getpid()); }
+#endif
+
 struct Spawn {
     std::string link;                 // GBARECOMP_LINK: "child:<port>" or "parent:<port>"
     std::string state, save;          // what it starts from
@@ -238,7 +441,8 @@ bool spawn(const Spawn& sp) {
     // took more of the Deck than the game played on it), and the copy's
     // own. KOL_VS_CHILD_ENV="A=1 B=2" adds more (tests).
     std::vector<std::string> own = {"GBARECOMP_LINK=" + sp.link, "GBARECOMP_SELFHEAL_RECOMPILE=0", "GBARECOMP_UNSEEN=1",
-                                    "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software", "SDL_AUDIODRIVER=dummy"};
+                                    "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software", "SDL_AUDIODRIVER=dummy",
+                                    "KOL_VS_PARENT_PID=" + std::to_string(self_pid())};
     own.insert(own.end(), sp.env.begin(), sp.env.end());
     if (const char* extra = std::getenv("KOL_VS_CHILD_ENV"); extra && *extra) {
         std::string s = extra;
@@ -265,46 +469,15 @@ bool spawn(const Spawn& sp) {
     std::fprintf(stderr, "vs-cpu: %s started (service, link %s, log %s)\n", sp.who, sp.link.c_str(), log.c_str());
     return true;
 #else
-    // Its environment: the player's, less every game, runtime and SDL switch,
-    // then its own.
-    std::vector<std::string> env;
-    for (char** e = environ; e && *e; ++e) {
-        const std::string v = *e;
-        if (v.rfind("KOL_", 0) == 0 || v.rfind("GBARECOMP_", 0) == 0 || v.rfind("SDL_", 0) == 0) continue;
-        env.push_back(v);
-    }
-    env.insert(env.end(), own.begin(), own.end());
-
-    std::vector<char*> av, ev;
-    for (auto& a : argv) av.push_back(a.data());
-    av.push_back(nullptr);
-    for (auto& e : env) ev.push_back(e.data());
-    ev.push_back(nullptr);
-    const int log_fd = ::open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    const std::string dir = g_dir;
-
-    const pid_t pid = ::fork();
+    const long pid = proc_start(argv, own, log, g_dir);
     if (pid < 0) {
-        if (log_fd >= 0) ::close(log_fd);
         std::fprintf(stderr, "vs-cpu: could not start %s\n", sp.who);
         return false;
     }
-    if (pid == 0) {   // (only async-signal-safe calls from here)
-        if (log_fd >= 0) {
-            ::dup2(log_fd, 1);
-            ::dup2(log_fd, 2);
-        }
-        const int null_fd = ::open("/dev/null", O_RDONLY);
-        if (null_fd >= 0) ::dup2(null_fd, 0);
-        if (::chdir(dir.c_str()) != 0) ::_exit(126);
-        ::execve(av[0], av.data(), ev.data());
-        ::_exit(127);
-    }
-    if (log_fd >= 0) ::close(log_fd);
     g_pid = pid;
     g_copy_pid.store(pid);
-    std::fprintf(stderr, "vs-cpu: %s started (pid %d, link %s, log %s)\n", sp.who, static_cast<int>(pid),
-                 sp.link.c_str(), log.c_str());
+    std::fprintf(stderr, "vs-cpu: %s started (pid %ld, link %s, log %s)\n", sp.who, pid, sp.link.c_str(),
+                 log.c_str());
     return true;
 #endif
 }
@@ -312,19 +485,7 @@ bool spawn(const Spawn& sp) {
 // The copy stopped and the session's folder gone (under g_mu).
 void reap_child() {
     if (g_pid > 0) {
-        int st = 0;
-        pid_t r = ::waitpid(g_pid, &st, WNOHANG);
-        if (r == 0) {
-            ::kill(g_pid, SIGTERM);
-            for (int i = 0; i < 50 && r == 0; ++i) {   // up to 0.5 s, then for sure
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                r = ::waitpid(g_pid, &st, WNOHANG);
-            }
-            if (r == 0) {
-                ::kill(g_pid, SIGKILL);
-                ::waitpid(g_pid, &st, 0);
-            }
-        }
+        proc_stop(g_pid);
         g_pid = -1;
         g_copy_pid.store(-1);
     }
@@ -372,17 +533,17 @@ void end_session(const char* why) {
 // A free local TCP port (the network copy listens on it as the link's
 // parent), or -1.
 int free_port() {
-    const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    const int s = net::socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return -1;
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     socklen_t len = sizeof a;
     int port = -1;
-    if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0 &&
-        ::getsockname(s, reinterpret_cast<sockaddr*>(&a), &len) == 0)
+    if (net::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0 &&
+        net::getsockname(s, reinterpret_cast<sockaddr*>(&a), &len) == 0)
         port = ntohs(a.sin_port);
-    ::close(s);
+    net::close(s);
     return port;
 }
 
@@ -400,39 +561,37 @@ bool start_other_game() {
     }
     // The channel to it (kol_vs_net): this game listens on a local port,
     // the copy connects once it runs; taken on a thread of its own.
-    const int ls = ::socket(AF_INET, SOCK_STREAM, 0);
+    const int ls = net::socket(AF_INET, SOCK_STREAM, 0);
     int channel_port = -1;
     if (ls >= 0) {
-        ::fcntl(ls, F_SETFD, FD_CLOEXEC);
         sockaddr_in a{};
         a.sin_family = AF_INET;
         a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         socklen_t len = sizeof a;
-        if (::bind(ls, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0 && ::listen(ls, 1) == 0 &&
-            ::getsockname(ls, reinterpret_cast<sockaddr*>(&a), &len) == 0)
+        if (net::bind(ls, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0 && net::listen(ls, 1) == 0 &&
+            net::getsockname(ls, reinterpret_cast<sockaddr*>(&a), &len) == 0)
             channel_port = ntohs(a.sin_port);
     }
     if (channel_port <= 0) {
-        if (ls >= 0) ::close(ls);
+        if (ls >= 0) net::close(ls);
         end_session("no channel to the other player's game");
         return false;
     }
+#if !defined(_WIN32)
     ::signal(SIGPIPE, SIG_IGN);   // a copy gone: a write to its channel fails, not the game
+#endif
     std::thread([ls] {
-        pollfd p{ls, POLLIN, 0};
+        pollfd p = net::poll_entry(ls, POLLIN);
         int fd = -1;
-        if (::poll(&p, 1, 20000) > 0) fd = ::accept(ls, nullptr, nullptr);
-        ::close(ls);
+        if (net::poll(&p, 1, 20000) > 0) fd = net::accept(ls);
+        net::close(ls);
         if (fd < 0) {
             std::fprintf(stderr, "vs-cpu: the other player's game never took its channel\n");
             return;
         }
-        ::fcntl(fd, F_SETFD, FD_CLOEXEC);
         int one = 1;
-        ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-#if defined(SO_NOSIGPIPE)
-        ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#endif
+        net::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+        net::no_sigpipe(fd);
         vsnet::set_key_sink(fd);
     }).detach();
 
@@ -489,8 +648,7 @@ void check_linking() {
         gbarecomp::g_runtime_pause_request = 0;
         return;
     }
-    int st = 0;
-    const bool gone = g_pid > 0 && ::waitpid(g_pid, &st, WNOHANG) == g_pid;
+    const bool gone = g_pid > 0 && proc_exited(g_pid);
     if (gone) g_pid = -1;
     std::string why;
     if (g_net && vsnet::peer_gone(&why)) {
@@ -545,7 +703,7 @@ bool begin_session(bool net, bool exchange) {
     std::error_code ec;
     static int session = 0;
     const auto dir = std::filesystem::temp_directory_path(ec) /
-                     ("kol-vs-" + std::to_string(::getpid()) + "-" + std::to_string(++session));
+                     ("kol-vs-" + std::to_string(self_pid()) + "-" + std::to_string(++session));
     std::filesystem::create_directories(dir, ec);
     if (ec) {
         std::fprintf(stderr, "vs-cpu: no folder for the session (%s)\n", ec.message().c_str());
@@ -630,7 +788,17 @@ void at_exit() {
 
 // A copy: ends with its link, its parent, or no link at all.
 void child_watchdog() {
+    // The player's game: gone when its process ends (Windows: the process
+    // it named, KOL_VS_PARENT_PID; elsewhere: this one's parent changes).
+#if defined(_WIN32)
+    const char* pp = std::getenv("KOL_VS_PARENT_PID");
+    const DWORD parent_pid = pp && *pp ? static_cast<DWORD>(std::strtoul(pp, nullptr, 10)) : 0;
+    HANDLE parent = parent_pid ? ::OpenProcess(SYNCHRONIZE, FALSE, parent_pid) : nullptr;
+    auto parent_gone = [&] { return parent && ::WaitForSingleObject(parent, 0) == WAIT_OBJECT_0; };
+#else
     const pid_t parent = ::getppid();
+    auto parent_gone = [&] { return ::getppid() != parent; };
+#endif
     const auto t0 = std::chrono::steady_clock::now();
     bool was = false;
     for (;;) {
@@ -639,7 +807,7 @@ void child_watchdog() {
         int code = 0;
         gba::SioLink* l = gba::SioLink::instance();
         const bool on = l && l->connected();
-        if (::getppid() != parent) why = "the player's game is gone";
+        if (parent_gone()) why = "the player's game is gone";
         else if (on) was = true;
         else if (was) why = "the link closed";
         else if (std::chrono::steady_clock::now() - t0 > kLinkWait) why = "no link in 20 s", code = 2;
@@ -654,6 +822,7 @@ void child_watchdog() {
 
 std::string host_name() {
     char b[256] = {0};
+    net::init();   // (Winsock's gethostname)
     if (::gethostname(b, sizeof b - 1) != 0) return {};
     std::string s = b;
     if (const auto dot = s.find(".local"); dot != std::string::npos) s.resize(dot);
@@ -881,7 +1050,7 @@ bool vs_cpu_state_saved(const char* path) {
     vsnet::set_on_gone([] {
         // SIGKILL: SDL makes SIGTERM a quit event, which a copy held in its
         // wait for buttons never reads.
-        if (const pid_t p = g_copy_pid.load(); p > 0) ::kill(p, SIGKILL);
+        if (const long p = g_copy_pid.load(); p > 0) proc_kill(p);
     });
     if (mine.state.empty() || !vsnet::start(std::move(mine))) {
         end_session("the network could not be started");
@@ -899,5 +1068,3 @@ bool vs_cpu_state_saved(const char* path) {
 }
 
 }  // namespace kol
-
-#endif

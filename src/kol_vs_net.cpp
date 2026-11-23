@@ -2,48 +2,12 @@
 
 #include "kol_vs_net.h"
 
+#include "net_compat.h"   // POSIX sockets, or Winsock (2026-11-23: Windows too)
 #if defined(_WIN32)
-
-namespace kol {
-bool vs_mirror_child() { return false; }
-namespace vsnet {
-std::string file_fingerprint(const std::string&) { return "none"; }
-bool start(Side) { return false; }
-Status status() { return Status::Idle; }
-const std::string& failure() { static const std::string s; return s; }
-const Side& peer() { static const Side s; return s; }
-void set_key_sink(int) {}
-void send_keys(std::uint64_t, std::uint16_t) {}
-void send_hash(std::uint64_t, std::uint64_t) {}
-bool take_peer_hash(std::uint64_t, std::uint64_t*) { return false; }
-bool peer_gone(std::string*) { return false; }
-void stop(const char*) {}
-void set_on_gone(void (*)()) {}
-void set_pad_read_hook(void (*)()) {}
-void play_begin(std::uint16_t, const std::string&) {}
-void play_reset_calls() {}
-void play_start_keys() {}
-void play_tick(std::uint64_t) {}
-std::uint16_t play_filter(std::uint16_t keys) { return keys; }
-bool play_active() { return false; }
-bool play_desync(std::string*) { return false; }
-void play_end() {}
-void mirror_settings() {}
-void mirror_install() {}
-void mirror_tick(std::uint64_t) {}
-std::uint64_t game_hash() { return 0; }
-}  // namespace vsnet
-}  // namespace kol
-
+#include <process.h>   // _getpid
 #else
-
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -69,6 +33,7 @@ std::uint64_t game_hash() { return 0; }
 #include "runtime_bus_bridge.h"
 
 namespace kol {
+namespace net = gba::net;
 
 bool vs_mirror_child() {
     static const bool on = [] {
@@ -117,16 +82,15 @@ struct Rec {
 };
 static_assert(sizeof(Rec) == 16, "record is 16 bytes");
 
-void cloexec(int fd) {
-    if (fd >= 0) ::fcntl(fd, F_SETFD, ::fcntl(fd, F_GETFD) | FD_CLOEXEC);
-}
+// (net::socket and net::accept keep a socket out of child processes.)
+void cloexec(int) {}
 
 bool write_all(int fd, const void* p, std::size_t n) {
     const auto* b = static_cast<const std::uint8_t*>(p);
     while (n > 0) {
-        const ssize_t w = ::send(fd, b, n, 0);
+        const long w = net::send(fd, b, n, 0);
         if (w <= 0) {
-            if (w < 0 && errno == EINTR) continue;
+            if (w < 0 && net::interrupted()) continue;
             return false;
         }
         b += w;
@@ -137,9 +101,9 @@ bool write_all(int fd, const void* p, std::size_t n) {
 bool read_all(int fd, void* p, std::size_t n) {
     auto* b = static_cast<std::uint8_t*>(p);
     while (n > 0) {
-        const ssize_t r = ::recv(fd, b, n, 0);
+        const long r = net::recv(fd, b, n, 0);
         if (r <= 0) {
-            if (r < 0 && errno == EINTR) continue;
+            if (r < 0 && net::interrupted()) continue;
             return false;
         }
         b += r;
@@ -150,27 +114,16 @@ bool read_all(int fd, void* p, std::size_t n) {
 // The channel between a seen game and its copy of the other player's game:
 // one local TCP socket, the buttons to the copy and its hashes back (a
 // socket, not inherited pipes: an Android service inherits no descriptors).
-#if defined(MSG_NOSIGNAL)
-constexpr int kNoSig = MSG_NOSIGNAL;
-#else
-constexpr int kNoSig = 0;   // (macOS: SO_NOSIGPIPE on the socket instead)
-#endif
-void no_sigpipe(int fd) {
-#if defined(SO_NOSIGPIPE)
-    int one = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#else
-    (void)fd;
-#endif
-}
+constexpr int kNoSig = net::kNoSignal;
+void no_sigpipe(int fd) { net::no_sigpipe(fd); }
 // A whole record on the channel.
 bool pipe_write(int fd, const Rec& r) {
     const auto* b = reinterpret_cast<const std::uint8_t*>(&r);
     std::size_t n = sizeof r;
     while (n > 0) {
-        const ssize_t w = ::send(fd, b, n, kNoSig);
+        const long w = net::send(fd, b, n, kNoSig);
         if (w <= 0) {
-            if (w < 0 && errno == EINTR) continue;
+            if (w < 0 && net::interrupted()) continue;
             return false;
         }
         b += w;
@@ -279,40 +232,38 @@ bool parse_hello(const std::string& t, Side* s, int* proto) {
 
 // A TCP connection to ip:port within 2 s, or -1.
 int connect_to(const sockaddr_in& to) {
-    const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    const int s = net::socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return -1;
-    cloexec(s);
-    const int fl = ::fcntl(s, F_GETFL);
-    ::fcntl(s, F_SETFL, fl | O_NONBLOCK);
-    if (::connect(s, reinterpret_cast<const sockaddr*>(&to), sizeof to) != 0 && errno != EINPROGRESS) {
-        ::close(s);
+    net::set_nonblocking(s, true);
+    if (net::connect(s, reinterpret_cast<const sockaddr*>(&to), sizeof to) != 0 && !net::connect_pending()) {
+        net::close(s);
         return -1;
     }
-    pollfd p{s, POLLOUT, 0};
     int err = 0;
     socklen_t len = sizeof err;
-    if (::poll(&p, 1, 2000) <= 0 || ::getsockopt(s, SOL_SOCKET, SO_ERROR, &err, &len) != 0 || err != 0) {
-        ::close(s);
+    if (!net::wait_writable(s, 2000) || net::getsockopt(s, SOL_SOCKET, SO_ERROR, &err, &len) != 0 || err != 0) {
+        net::close(s);
         return -1;
     }
-    ::fcntl(s, F_SETFL, fl);
+    net::set_nonblocking(s, false);
     return s;
 }
 
 // Finds the other game: beacons out, theirs in; the smaller number connects.
 // Only a game on the same ROM and the same choice (VS, or Exchange) answers.
 int find_peer(Net& n) {
-    const int udp = ::socket(AF_INET, SOCK_DGRAM, 0);
-    const int ls = ::socket(AF_INET, SOCK_STREAM, 0);
+    const int udp = net::socket(AF_INET, SOCK_DGRAM, 0);
+    const int ls = net::socket(AF_INET, SOCK_STREAM, 0);
     cloexec(udp);
     cloexec(ls);
     int one = 1;
     if (udp >= 0) {
-        ::setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        net::setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
 #if defined(SO_REUSEPORT)
-        ::setsockopt(udp, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one);   // two games on one machine (tests)
+        net::setsockopt(udp, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one);   // two games on one machine (tests)
 #endif
-        ::setsockopt(udp, SOL_SOCKET, SO_BROADCAST, &one, sizeof one);
+        net::setsockopt(udp, SOL_SOCKET, SO_BROADCAST, &one, sizeof one);
+        net::udp_ignore_resets(udp);
     }
     sockaddr_in any{};
     any.sin_family = AF_INET;
@@ -320,17 +271,17 @@ int find_peer(Net& n) {
     any.sin_port = htons(kBeaconPort);
     sockaddr_in tcp_any = any;
     tcp_any.sin_port = 0;
-    if (ls >= 0) ::setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-    if (udp < 0 || ls < 0 || ::bind(udp, reinterpret_cast<sockaddr*>(&any), sizeof any) != 0 ||
-        ::bind(ls, reinterpret_cast<sockaddr*>(&tcp_any), sizeof tcp_any) != 0 || ::listen(ls, 4) != 0) {
-        if (udp >= 0) ::close(udp);
-        if (ls >= 0) ::close(ls);
+    if (ls >= 0) net::setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    if (udp < 0 || ls < 0 || net::bind(udp, reinterpret_cast<sockaddr*>(&any), sizeof any) != 0 ||
+        net::bind(ls, reinterpret_cast<sockaddr*>(&tcp_any), sizeof tcp_any) != 0 || net::listen(ls, 4) != 0) {
+        if (udp >= 0) net::close(udp);
+        if (ls >= 0) net::close(ls);
         n.fail("no network: could not open the local network's ports");
         return -1;
     }
     sockaddr_in mine{};
     socklen_t mlen = sizeof mine;
-    ::getsockname(ls, reinterpret_cast<sockaddr*>(&mine), &mlen);
+    net::getsockname(ls, reinterpret_cast<sockaddr*>(&mine), &mlen);
     const unsigned tcp_port = ntohs(mine.sin_port);
     char beacon[160];
     std::snprintf(beacon, sizeof beacon, "KOLVS%d %s %u %s %s", kProto, hex64(n.mine.nonce).c_str(), tcp_port,
@@ -361,15 +312,15 @@ int find_peer(Net& n) {
     auto next_beacon = Clock::now();
     while (fd < 0 && !n.stopping.load()) {
         if (Clock::now() >= next_beacon) {
-            ::sendto(udp, beacon, std::strlen(beacon), 0, reinterpret_cast<sockaddr*>(&bcast), sizeof bcast);
+            net::sendto(udp, beacon, std::strlen(beacon), reinterpret_cast<sockaddr*>(&bcast), sizeof bcast);
             if (have_extra)
-                ::sendto(udp, beacon, std::strlen(beacon), 0, reinterpret_cast<sockaddr*>(&extra), sizeof extra);
+                net::sendto(udp, beacon, std::strlen(beacon), reinterpret_cast<sockaddr*>(&extra), sizeof extra);
             next_beacon = Clock::now() + std::chrono::milliseconds(500);
         }
-        pollfd p[2] = {{udp, POLLIN, 0}, {ls, POLLIN, 0}};
-        if (::poll(p, 2, 100) <= 0) continue;
+        pollfd p[2] = {net::poll_entry(udp, POLLIN), net::poll_entry(ls, POLLIN)};
+        if (net::poll(p, 2, 100) <= 0) continue;
         if (p[1].revents & POLLIN) {
-            fd = ::accept(ls, nullptr, nullptr);
+            fd = net::accept(ls);
             if (fd >= 0) {
                 cloexec(fd);
                 std::fprintf(stderr, "vs-net: a player connected\n");
@@ -380,7 +331,7 @@ int find_peer(Net& n) {
             char buf[200];
             sockaddr_in from{};
             socklen_t flen = sizeof from;
-            const ssize_t r = ::recvfrom(udp, buf, sizeof buf - 1, 0, reinterpret_cast<sockaddr*>(&from), &flen);
+            const long r = net::recvfrom(udp, buf, sizeof buf - 1, reinterpret_cast<sockaddr*>(&from), &flen);
             if (r <= 0) continue;
             buf[r] = '\0';
             int proto = 0;
@@ -401,8 +352,8 @@ int find_peer(Net& n) {
             std::fprintf(stderr, "vs-net: a player at %s:%u: %s\n", ip, port, fd >= 0 ? "connected" : "no connection");
         }
     }
-    ::close(udp);
-    ::close(ls);
+    net::close(udp);
+    net::close(ls);
     return fd;
 }
 
@@ -415,9 +366,9 @@ void run(std::shared_ptr<Net> np) {
         return;
     }
     n.fd.store(fd);
-    if (n.stopping.load()) ::shutdown(fd, SHUT_RDWR);
+    if (n.stopping.load()) net::shutdown(fd);
     int one = 1;
-    ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    net::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
     n.status.store(Status::Exchanging);
 
     // Ours out on a thread of its own (both send ~700 KB at once: neither
@@ -451,7 +402,7 @@ void run(std::shared_ptr<Net> np) {
     if (!(have[0] && have[1] && have[2] && have[3])) {
         if (!n.stopping.load())
             n.fail(bye.empty() ? "the other player's game left before the start" : "the other player: " + bye);
-        ::shutdown(fd, SHUT_RDWR);
+        net::shutdown(fd);
         return;
     }
     std::string bad;
@@ -464,7 +415,7 @@ void run(std::shared_ptr<Net> np) {
         const std::string why = "not the same game: " + bad;
         n.send_msg(mBye, why.data(), why.size());
         n.fail("the other player's game has " + bad);
-        ::shutdown(fd, SHUT_RDWR);
+        net::shutdown(fd);
         return;
     }
     {
@@ -480,8 +431,8 @@ void run(std::shared_ptr<Net> np) {
     // each second this side sends nothing (held, or paused).
     std::string why = "the connection closed";
     while (!n.stopping.load()) {
-        pollfd p{fd, POLLIN, 0};
-        const int pr = ::poll(&p, 1, 500);
+        pollfd p = net::poll_entry(fd, POLLIN);
+        const int pr = net::poll(&p, 1, 500);
         {
             std::lock_guard<std::mutex> lock(n.mu);
             if (Clock::now() - n.last_rx > kSilence) {
@@ -529,10 +480,10 @@ void run(std::shared_ptr<Net> np) {
             std::fprintf(stderr, "vs-net: %s\n", why.c_str());
         }
         // No more buttons: the copy's pipe closed, its wait ends.
-        if (n.sink >= 0) ::close(n.sink);
+        if (n.sink >= 0) net::close(n.sink);
         n.sink = -1;
     }
-    ::shutdown(fd, SHUT_RDWR);
+    net::shutdown(fd);
     // The seen game may be held in the link, waiting on the copy, which waits
     // for buttons that will not come: the copy goes now, the link closes, and
     // the game goes on to end the match (it waited the copy's 30 s before).
@@ -609,9 +560,9 @@ void mirror_reader(int fd) {
         auto* b = reinterpret_cast<std::uint8_t*>(&r);
         std::size_t got = 0;
         while (got < sizeof r) {
-            const ssize_t n = ::recv(fd, b + got, sizeof r - got, 0);
+            const long n = net::recv(fd, b + got, sizeof r - got, 0);
             if (n <= 0) {
-                if (n < 0 && errno == EINTR) continue;
+                if (n < 0 && net::interrupted()) continue;
                 std::lock_guard<std::mutex> lock(g_m_mu);
                 g_m_closed = true;
                 g_m_cv.notify_all();
@@ -766,11 +717,11 @@ const Side& peer() {
 void set_key_sink(int fd) {
     const auto n = cur();
     if (!n) {
-        if (fd >= 0) ::close(fd);
+        if (fd >= 0) net::close(fd);
         return;
     }
     std::lock_guard<std::mutex> lock(n->mu);
-    if (n->sink >= 0 && n->sink != fd) ::close(n->sink);   // (the session's: it owns the pipe's end)
+    if (n->sink >= 0 && n->sink != fd) net::close(n->sink);   // (the session's: it owns the pipe's end)
     n->sink = fd;
     if (fd >= 0) {
         for (const Rec& r : n->pending) pipe_write(fd, r);
@@ -828,9 +779,9 @@ void stop(const char* why) {
         n->send_msg(mBye, w.data(), w.size());
     }
     const int fd = n->fd.load();
-    if (fd >= 0) ::shutdown(fd, SHUT_RDWR);
+    if (fd >= 0) net::shutdown(fd);
     std::lock_guard<std::mutex> lock(n->mu);
-    if (n->sink >= 0) ::close(n->sink);
+    if (n->sink >= 0) net::close(n->sink);
     n->sink = -1;
 }
 
@@ -896,8 +847,10 @@ void play_tick(std::uint64_t frame) {
         std::lock_guard<std::mutex> lock(n->mu);
         if (n->sink >= 0) {
             std::uint8_t buf[512];
-            for (;;) {
-                const ssize_t got = ::recv(n->sink, buf, sizeof buf, MSG_DONTWAIT);
+            for (;;) {   // (polled first: Winsock has no MSG_DONTWAIT)
+                pollfd p = net::poll_entry(n->sink, POLLIN);
+                if (net::poll(&p, 1, 0) <= 0 || !(p.revents & POLLIN)) break;
+                const long got = net::recv(n->sink, buf, sizeof buf);
                 if (got <= 0) break;
                 g_hash_bytes.insert(g_hash_bytes.end(), buf, buf + got);
             }
@@ -982,19 +935,19 @@ void mirror_install() {
     // The channel to the seen game here (it listens; up to 10 s for it).
     int kfd = -1;
     for (int tries = 0; port > 0 && kfd < 0 && tries < 100; ++tries) {
-        const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+        const int s = net::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in to{};
         to.sin_family = AF_INET;
         to.sin_port = htons(static_cast<std::uint16_t>(port));
         to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (s >= 0 && ::connect(s, reinterpret_cast<sockaddr*>(&to), sizeof to) == 0) {
+        if (s >= 0 && net::connect(s, reinterpret_cast<sockaddr*>(&to), sizeof to) == 0) {
             int one = 1;
-            ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+            net::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
             no_sigpipe(s);
             kfd = s;
             break;
         }
-        if (s >= 0) ::close(s);
+        if (s >= 0) net::close(s);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     if (port > 0 && kfd < 0) {
@@ -1032,7 +985,11 @@ void dump_memory(const char* kind, std::uint64_t n) {
     --left;
     char path[512];
     std::snprintf(path, sizeof path, "%s/%s_%llu_%d.bin", dir, kind, static_cast<unsigned long long>(n),
+#if defined(_WIN32)
+                  static_cast<int>(::_getpid()));
+#else
                   static_cast<int>(::getpid()));
+#endif
     if (std::FILE* f = std::fopen(path, "wb")) {
         std::fwrite(bus->ewram_ptr(), 1, 0x40000, f);
         std::fwrite(bus->iwram_ptr(), 1, 0x8000, f);
@@ -1078,5 +1035,3 @@ std::uint64_t game_hash() {
 
 }  // namespace vsnet
 }  // namespace kol
-
-#endif

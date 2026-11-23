@@ -24211,3 +24211,38 @@ otherwise). The emulator's app is provisioned by run-as with files/env.cfg
 
 Not yet: the Thor itself (the user installs), the notices' look, a match
 played to its end and a rematch, Windows, internet play.
+
+## VS Mode and Exchange on Windows (2026-11-23, for 1.2)
+
+The three files behind VS were POSIX only and stubbed out on Windows (the
+VS Mode row hidden there). Now they run on Windows too:
+
+- gbarecomp `src/gba/net_compat.h`: the socket calls that differ (Winsock
+  on Windows: WSAStartup once, closesocket, WSAPoll, ioctlsocket FIONBIO,
+  char* buffers, SD_BOTH, select for a non-blocking connect since WSAPoll
+  missed a refused one before Windows 10 2004, SIO_UDP_CONNRESET off for the
+  beacon socket). Sockets stay ints; every one made here is kept out of
+  child processes (FD_CLOEXEC; on Windows HANDLE_FLAG_INHERIT off, a Winsock
+  socket being inheritable by default). sio_link.cpp (the link cable)
+  uses it, and links ws2_32.
+- kol_vs_net.cpp: the same calls through it; MSG_DONTWAIT (no Winsock
+  equivalent) replaced by a zero-timeout poll before the read.
+- kol_vs_cpu.cpp: the copy's process behind proc_start / proc_exited /
+  proc_stop / proc_kill / self_pid. POSIX keeps fork + execve + waitpid +
+  kill as before; Windows uses CreateProcessW (UTF-16 command line quoted as
+  CommandLineToArgvW reads it, the environment block filtered and sorted,
+  the log as stdout and stderr, only those handles inherited through
+  PROC_THREAD_ATTRIBUTE_HANDLE_LIST, CREATE_NO_WINDOW), TerminateProcess to
+  end it (no polite signal a windowless program would read). The copy
+  watches its parent through KOL_VS_PARENT_PID (OpenProcess + wait), as
+  getppid does elsewhere.
+
+Checked under Wine (the null display driver), with a Windows dev build
+(build-windows-dev, KOL_DEV_TOOLS=ON, the VS test rig's key scripts):
+VS Computer into the battle, the two games in step; VS over the network
+between the Mac dev build and the Windows build in Wine, 70 hashes equal;
+Exchange the same way, 20 hashes equal (as the Mac pair's reference run);
+the public package's VS Computer through gbarecomp's input replay, linked
+in 345 ms. The Mac's own pair, run again on the new socket layer: 87
+hashes equal. Not tried on a Windows PC; Windows Firewall asks the first
+time a game listens on the network.
