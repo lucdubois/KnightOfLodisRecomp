@@ -32,6 +32,7 @@
 #endif
 #endif
 
+#include "kol_crash.h"
 #include "kol_desktop.h"
 #include "kol_vs_cpu.h"
 #include "kol_vs_net.h"
@@ -72,6 +73,9 @@ void start_again(std::vector<std::string> first) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // A crash's report in the session's log (kol_crash.h; stderr until the
+    // log is opened, and for VS's copies, whose stderr is their own log).
+    kol::crash_handlers_install();
     const std::vector<std::string> first(argv, argv + argc);   // for a restart (start_again)
     // The desktop's player front end (kol_desktop.h): the options menu over
     // the game, and in player mode (--data-dir, or a public build) the game's

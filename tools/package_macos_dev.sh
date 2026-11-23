@@ -80,7 +80,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$APPNAME</string>
   <key>CFBundleDisplayName</key><string>$APPNAME</string>
   <key>CFBundleIdentifier</key><string>com.totkol.game.dev</string>
-  <key>LSEnvironment</key><dict><key>KOL_DATA_DIR</key><string>$DATADIR</string></dict>
+  <key>LSEnvironment</key><dict><key>KOL_DATA_DIR</key><string>$DATADIR</string><key>KOL_LOG_TO_FILE</key><string>1</string></dict>
   <key>CFBundleExecutable</key><string>KnightOfLodisRecomp</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>

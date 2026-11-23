@@ -70,6 +70,7 @@ include("${KOL_ROOT}/third_party/rcheevos.cmake")
 add_library(main SHARED
     main_android.cpp
     "${KOL_ROOT}/src/kol_cheevos.cpp"
+    "${KOL_ROOT}/src/kol_crash.cpp"
     "${KOL_ROOT}/src/kol_shaders.cpp"
     "${KOL_ROOT}/src/kol_widescreen.cpp"
     "${KOL_ROOT}/src/kol_terrain_probe.cpp"
@@ -130,6 +131,10 @@ target_include_directories(main PRIVATE
 # `log` provides __android_log_write, used by main_android.cpp to route the
 # runtime's stdout/stderr onto logcat.
 target_link_libraries(main PRIVATE SDL2::SDL2 log kol_rcheevos)
+# The version in the session log's first line (kol_crash.cpp).
+file(STRINGS "${KOL_ROOT}/android/app/build.gradle" KOL_VERSION_LINE REGEX "versionName \"")
+string(REGEX REPLACE ".*versionName \"([^\"]*)\".*" "\\1" KOL_VERSION "${KOL_VERSION_LINE}")
+set_source_files_properties("${KOL_ROOT}/src/kol_crash.cpp" PROPERTIES COMPILE_DEFINITIONS "KOL_VERSION=\"${KOL_VERSION}\"")
 target_link_gbarecomp_runtime_stack(main)
 # Bind libmain's own symbols inside libmain. Without it every call from the
 # recompiled code into the runtime (runtime_tick, the flag helpers, bus reads)

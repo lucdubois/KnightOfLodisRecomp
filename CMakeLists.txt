@@ -98,6 +98,7 @@ add_executable(KnightOfLodisRecomp
     src/kol_setup.cpp
     $<$<PLATFORM_ID:Darwin>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_setup_mac.mm>
     src/kol_cheevos.cpp
+    src/kol_crash.cpp
     src/kol_shaders.cpp
     $<IF:$<PLATFORM_ID:Windows>,${CMAKE_CURRENT_SOURCE_DIR}/src/kol_cheevos_winhttp.cpp,${CMAKE_CURRENT_SOURCE_DIR}/src/kol_cheevos_curl.cpp>
     $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/src/kol_windows.rc>
@@ -162,7 +163,23 @@ target_include_directories(KnightOfLodisRecomp PRIVATE
 # gbarecomp_runtime, gbarecomp_debug in the order/grouping each platform's
 # linker needs (the four archives are mutually recursive).
 target_link_gbarecomp_runtime_stack(KnightOfLodisRecomp)
-target_link_libraries(KnightOfLodisRecomp PRIVATE kol_rcheevos)
+target_link_libraries(KnightOfLodisRecomp PRIVATE kol_rcheevos ${CMAKE_DL_LIBS})
+# The version in the session log's first line (kol_crash.cpp): -DKOL_VERSION
+# (the AppImage's build on the Deck, whose copy of the tree has no android/),
+# else the Android build's versionName, else "dev". On that file alone, so a
+# new version rebuilds it only.
+set(KOL_GRADLE "${CMAKE_CURRENT_SOURCE_DIR}/android/app/build.gradle")
+if(NOT KOL_VERSION AND EXISTS "${KOL_GRADLE}")
+    file(STRINGS "${KOL_GRADLE}" KOL_VERSION_LINE REGEX "versionName \"")
+    string(REGEX REPLACE ".*versionName \"([^\"]*)\".*" "\\1" KOL_VERSION_READ "${KOL_VERSION_LINE}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KOL_GRADLE}")
+else()
+    set(KOL_VERSION_READ "${KOL_VERSION}")
+endif()
+if(NOT KOL_VERSION_READ)
+    set(KOL_VERSION_READ "dev")
+endif()
+set_source_files_properties(src/kol_crash.cpp PROPERTIES COMPILE_DEFINITIONS "KOL_VERSION=\"${KOL_VERSION_READ}\"")
 if(WIN32)
     # WinHTTP (achievements), the Open dialog (the setup screen); a window
     # program, no console (-mwindows: gbarecomp's static SDL2 flags add it).

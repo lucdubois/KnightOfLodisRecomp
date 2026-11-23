@@ -62,7 +62,7 @@ if [ "${1:-}" != "--no-build" ]; then
     rsync -a --delete --exclude '/build*/' --exclude '/.git/' --exclude 'hang_*' --exclude '.DS_Store' gbarecomp/ steamdeck:kol/gbarecomp/
     rsync -a --delete --exclude '/build/' --exclude '/build-deck/' --exclude '/build-release/' --exclude '/build-android/' --exclude '/android/' --exclude '/states/' --exclude '/shots/' --exclude '/recomp_cache/' --exclude '/.git/' --exclude '/diagnostics_*/' --exclude '*.bmp' --exclude '*.state*' --exclude 'hang_*' --exclude '*.gba' --exclude '*.sav' --exclude '.DS_Store' --exclude '__pycache__/' KnightOfLodisRecomp/ steamdeck:kol/KnightOfLodisRecomp/
     echo "==> public build on the Deck (Release, KOL_DEV_TOOLS=OFF)"
-    ssh steamdeck 'cd /home/deck/kol && ./sdk.sh "cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DKOL_DEV_TOOLS=OFF > build-release.configure.log 2>&1 && cmake --build build-release --target KnightOfLodisRecomp > build-release.log 2>&1; echo BUILD_EXIT \$?" | tail -1'
+    ssh steamdeck 'cd /home/deck/kol && ./sdk.sh "cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DKOL_DEV_TOOLS=OFF -DKOL_VERSION='"$VERSION"' > build-release.configure.log 2>&1 && cmake --build build-release --target KnightOfLodisRecomp > build-release.log 2>&1; echo BUILD_EXIT \$?" | tail -1'
 fi
 ssh steamdeck 'mkdir -p /home/deck/kol/appimage/stage'
 rsync -a --delete "$STAGE"/ steamdeck:kol/appimage/stage/

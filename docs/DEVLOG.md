@@ -24246,3 +24246,40 @@ the public package's VS Computer through gbarecomp's input replay, linked
 in 345 ms. The Mac's own pair, run again on the new socket layer: 87
 hashes equal. Not tried on a Windows PC; Windows Firewall asks the first
 time a game listens on the network.
+
+## Crash logs a player can send (2026-11-23)
+
+Asked: crash logs accessible to the user. `src/kol_crash.{h,cpp}`:
+
+- Each run writes `<logs>/last_run.log` (the run before kept as
+  `previous_run.log`), its first line the version (`KOL_VERSION`, from
+  build.gradle's versionName, or `-DKOL_VERSION` where the tree has no
+  android/: the AppImage's build on the Deck; "dev" otherwise), platform and
+  time. Desktop: `<data folder>/logs`, and a public build's stdout/stderr go
+  into it (nothing showed them: a Finder or Steam launch, Windows' windowed
+  program); a dev build with `KOL_LOG_TO_FILE=1` too (the Mac dev app's
+  bundle sets it). Android: `files/logs`, the output pump's lines copied in
+  as they go to logcat; the Files app shows `logs` (SavesProvider).
+- A crash appends a report: the signal or exception, the faulting address,
+  the PC with its library and offset (and symbol where exported), the guest's
+  PC and frame, a backtrace (execinfo on macOS / Linux, _Unwind_Backtrace
+  on Android, RtlCaptureStackBackTrace with module+offset on Windows). Written
+  with write/WriteFile only, then the previous handler runs (Android's
+  debuggerd still makes its tombstone; exit status 139 as before). Java
+  crashes: CrashLog.java (MainActivity and SetupActivity). std::terminate
+  logs the exception's message.
+- The next start shows "The game closed unexpectedly" with where the log is
+  (kol_crash `crash_notice_frame`, the "Mod Loaded" popup's way).
+- Options > Technical > Logs: opens the folder (desktop, SDL_OpenURL); on
+  Android a dialog says where it is in the Files app.
+- `KOL_CRASH_TEST=<frame>` (dev): a crash on purpose.
+
+Checked: Mac (SIGSEGV report with symbols, the log turned to previous_run
+on the next start), Windows under Wine (access violation, module+offsets),
+the Deck's Linux build, the Android emulator (through libsigchain; the
+tombstone still made; previous_run.log after the relaunch). Not checked: a
+Java crash, the Files app's logs folder by hand.
+
+For a release: the packages are stripped, so a player's offsets need that
+release's unstripped binaries (build-windows/, build-macos/, the Deck's
+build-release/) to be named: keep a copy of them with each release.

@@ -81,6 +81,12 @@ The game's files are in `~/.local/share/KnightOfLodisRecomp` (Linux),
 `%APPDATA%\KnightOfLodisRecomp` (Windows): the ROM copy, the save, the settings
 and the `states` folder. Delete `totkol.gba` there to choose another ROM.
 
+**Logs, for a bug report:** each run writes `logs/last_run.log` in that folder
+(the run before is kept as `previous_run.log`). If the game crashes, a report
+is added to it, and the next start says so. **Options > Technical > Logs**
+opens the folder. On Android the Files app shows a `logs` folder under
+*Knight of Lodis Recomp*. Send `previous_run.log` after a crash, or both.
+
 **Keyboard** (when no controller is connected):
 
 | Key | | Key | |

@@ -2,6 +2,7 @@
 
 #include "kol_widescreen.h"
 #include "kol_cheevos.h"
+#include "kol_crash.h"
 #include "kol_map_settings.h"
 #include "kol_oam.h"
 #include "kol_tile_edit.h"
@@ -2176,6 +2177,7 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
 #endif
         kol::cheevos_frame(f->frame_count);
         kol::cheevos_mod_notice_frame(f->frame_count);
+        kol::crash_notice_frame(f->frame_count);
     }
     // L2 is Rewind (main.cpp, main_android.cpp) once Cheats > Rewind is on
     // (off by default), except while a debug tool holds it: the tile editor

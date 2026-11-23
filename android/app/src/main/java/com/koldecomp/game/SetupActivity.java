@@ -150,6 +150,7 @@ public class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashLog.install(this);   // a Java crash in files/logs/last_run.log
         // No title bar: the screen has its own title.
         if (getActionBar() != null) getActionBar().hide();
 

@@ -54,6 +54,7 @@ public class MainActivity extends SDLActivity {
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashLog.install(this);   // a Java crash in files/logs/last_run.log
         // The Thor's second panel. No-op on a single-screen device.
         SecondScreen.start(this);
         // The game's 60 frames a second, said to the display. Unsaid, a phone

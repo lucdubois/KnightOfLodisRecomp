@@ -37,6 +37,7 @@
 #include "kol_settings.h"
 #include "kol_rumble.h"
 #include "kol_cheevos.h"
+#include "kol_crash.h"
 #include <sys/system_properties.h>
 #include "kol_menu.h"
 #include "kol_sheet.h"
@@ -64,6 +65,7 @@ void* log_pump_thread(void*) {
     std::string line;
     ssize_t n;
     while ((n = read(g_log_pipe[0], buf, sizeof(buf))) > 0) {
+        kol::crash_log_write(buf, static_cast<std::size_t>(n));   // files/logs/last_run.log too
         for (ssize_t i = 0; i < n; ++i) {
             if (buf[i] == '\n') {
                 __android_log_write(ANDROID_LOG_INFO, "KoL", line.c_str());
@@ -826,9 +828,14 @@ int main(int argc, char** argv) {
     // SDL_AndroidGetInternalStoragePath() is the app's private files dir
     // (/data/data/<pkg>/files). The Java setup flow copies the user-picked
     // ROM and BIOS there under fixed names before starting this activity.
+    // The session's log first (kol_crash.h: files/logs/last_run.log, which
+    // the Files app shows; a crash's report goes there), so the output's
+    // pump copies everything into it from its first line.
+    const char* base = SDL_AndroidGetInternalStoragePath();
+    if (base) kol::crash_log_begin(std::string(base) + "/logs", false);
+    kol::crash_handlers_install();
     route_stdio_to_logcat();
 
-    const char* base = SDL_AndroidGetInternalStoragePath();
     if (!base) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "no internal storage path; cannot locate ROM/BIOS");

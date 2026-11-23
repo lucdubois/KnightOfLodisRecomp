@@ -1,6 +1,7 @@
 // kol_desktop.cpp — see the header.
 
 #include "kol_desktop.h"
+#include "kol_crash.h"
 
 #if !defined(__ANDROID__)
 
@@ -645,6 +646,14 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
         const std::string logs = dir + "/logs";
         std::filesystem::create_directories(logs, ec);
         std::filesystem::current_path(logs, ec);
+    }
+    // The session's log there (kol_crash.h): the game's output in a public
+    // build (nothing shows it: a Finder or Steam launch, Windows' windowed
+    // program), a crash's report in any. KOL_LOG_TO_FILE=1: the output too
+    // in a dev build (the Mac dev app's bundle sets it).
+    {
+        const char* to_file = std::getenv("KOL_LOG_TO_FILE");
+        crash_log_begin(dir + "/logs", !kDevTools || (to_file && *to_file == '1'));
     }
     // No C toolchain on a player's machine: the static build and the
     // interpreter bridge only, as on Android.

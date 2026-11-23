@@ -24,8 +24,9 @@ import java.io.IOException;
  * a save or a state (totkol.sav, totkol.state1, anything.sav, and the ".bak" a
  * replaced one leaves), and the numbered states' folder with all it holds:
  * "states", and "states-<8 hex>" for each mod played (a mod keeps its own save,
- * totkol-<8 hex>.sav, and its own states). The ROM, the BIOS and the settings
- * are never shown.
+ * totkol-<8 hex>.sav, and its own states), and "logs" (the session's log and
+ * the one before, with a crash's report: kol_crash.h). The ROM, the BIOS and
+ * the settings are never shown.
  *
  * A file put in under a name that exists replaces it; the one that was there
  * is kept beside it as "<name>.bak". The game reads totkol.sav when it starts,
@@ -63,13 +64,18 @@ public class SavesProvider extends DocumentsProvider {
         return name.matches("states(-[0-9a-f]{8})?");
     }
 
+    /** A folder shown at the top: the states' folders, and the logs (kol_crash.h). */
+    private static boolean shownDir(String name) {
+        return statesDir(name) || name.equals("logs");
+    }
+
     /** May this path under files/ be shown? Never anything with a ".." in it. */
     private static boolean shown(String id) {
         if (id.equals(TOP)) return true;
         String[] parts = id.split("/", -1);
         for (String part : parts)
             if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
-        if (statesDir(parts[0])) return true;
+        if (shownDir(parts[0])) return true;
         return parts.length == 1 && saveName(id);
     }
 
@@ -157,7 +163,7 @@ public class SavesProvider extends DocumentsProvider {
                 String id = childId(parentId, f.getName());
                 if (!shown(id)) continue;
                 // At the top only files, and the states folders.
-                if (parentId.equals(TOP) && f.isDirectory() != statesDir(f.getName())) continue;
+                if (parentId.equals(TOP) && f.isDirectory() != shownDir(f.getName())) continue;
                 addRow(c, id, f);
             }
         }

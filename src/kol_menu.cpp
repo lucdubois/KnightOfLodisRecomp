@@ -26,6 +26,7 @@
 #include "gba_ppu.h"
 #include "kol_a7.h"
 #include "kol_cheevos.h"
+#include "kol_crash.h"
 #include "kol_fast_actions.h"
 #include "kol_rumble.h"
 #include "kol_settings.h"
@@ -501,6 +502,7 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Mod,        // a mod (a ROM patch): the platform's dialog
                                  UnlinkRom,     // Debug: back to the setup screen
                                  Licenses,      // the third-party notices (the platform shows them)
+                                 Logs,          // the session's log and the last crash's (kol_crash)
                                  Quit,          // a desktop: ends the game, after a question
                                  DisplayMode,   // a desktop: window or full screen (kol_desktop.h)
                                  WindowSize,    // a desktop: the window's size
@@ -572,6 +574,7 @@ const Row kTechnical[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
     {Kind::Bios, 0, "BIOS", "The GBA BIOS, or the built-in\none. Takes effect on restart."},
     {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
+    {Kind::Logs, 0, "Logs", "The game's logs: send them with\na bug report or after a crash."},
 };
 // Page 9, Display: the picture's shape (2026-11-21, both platforms; it picks
 // the sizes Graphics > View Size offers) and a desktop's window, which is not
@@ -1174,6 +1177,7 @@ Text value_text(const Art& a, const Row& r) {
             return encode(st < 0 ? "Failed" : st == 2 ? "..." : "On");
         }
         case Kind::Licenses: return encode(">");
+        case Kind::Logs: return encode(">");
         case Kind::Bios: return encode(bios_next_real() ? "GBA BIOS" : "Built-in");
         case Kind::Quit: return encode(">");
         case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
@@ -1540,6 +1544,21 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             if (g_platform.show_licenses) g_platform.show_licenses();
             else open_dialog("Licenses", "See licenses.txt beside the game.", {"OK"}, 0, nullptr);
             break;
+        case Kind::Logs: {
+            // last_run.log is this session's; previous_run.log the one before
+            // (after a crash, the one with its report).
+#if defined(__ANDROID__)
+            open_dialog("Logs", "In the Files app: Knight of Lodis\nRecomp, then logs. Send\nlast_run.log and previous_run.log.",
+                        {"OK"}, 0, nullptr);
+#else
+            const std::string d = crash_logs_dir();
+            if (d.empty())
+                open_dialog("Logs", "This run keeps no logs (a\ndeveloper's run).", {"OK"}, 0, nullptr);
+            else if (SDL_OpenURL(("file://" + d).c_str()) != 0)
+                open_dialog("Logs", ("The logs are in " + d).c_str(), {"OK"}, 0, nullptr);
+#endif
+            break;
+        }
         case Kind::Quit:
             open_dialog("Quit Game", "Close the game? Unsaved progress is lost.",
                         {"Quit", "Cancel"}, 1, [](int b) {
