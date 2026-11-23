@@ -14,6 +14,20 @@
 
 namespace kol {
 
+// What a platform gives the session where the desktop's way does not work:
+// Android (main_android.cpp) cannot fork and exec the app again, and its
+// Wi-Fi drops broadcasts unless a multicast lock is held.
+struct VsPlatform {
+    // Starts a copy of the game in a process of its own with these
+    // arguments and switches (NAME=value, set before it runs), its output to
+    // `log`, its working folder `dir`. False: it could not.
+    bool (*spawn)(const std::vector<std::string>& argv, const std::vector<std::string>& env,
+                  const std::string& log, const std::string& dir) = nullptr;
+    // The Wi-Fi's multicast lock, held while a game looks for another.
+    void (*wifi_lock)(bool on) = nullptr;
+};
+void vs_set_platform(const VsPlatform& p);
+
 // This process is that unseen copy (KOL_VS_OPPONENT=1, set by the parent).
 bool vs_cpu_child();
 // The run's own arguments (desktop_prepare's), for the copy's command line.

@@ -37,9 +37,10 @@
 #include "kol_settings.h"
 #include "kol_vs_net.h"
 
-#if defined(_WIN32) || defined(__ANDROID__)
+#if defined(_WIN32)
 
 namespace kol {
+void vs_set_platform(const VsPlatform&) {}
 bool vs_cpu_child() { return false; }
 void vs_cpu_args(const std::vector<std::string>&) {}
 void vs_cpu_install() {}
@@ -51,6 +52,8 @@ bool vs_cpu_state_saved(const char*) { return false; }
 #else
 
 #include <fcntl.h>
+#include <netinet/tcp.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -119,6 +122,7 @@ int g_link_port = -1;            // (network) the local link's port
 std::chrono::steady_clock::time_point g_link_start, g_search_start, g_notice_at;
 bool g_b_was = true;             // B held when the search began (a new press gives up)
 std::uint16_t (*g_prev_filter)(std::uint16_t) = nullptr;
+VsPlatform g_platform;           // Android: how a copy starts, the Wi-Fi's multicast lock
 
 std::uint32_t rd32(const std::uint8_t* p) {
     return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<std::uint32_t>(p[3]) << 24);
@@ -187,12 +191,15 @@ struct Spawn {
     std::string link;                 // GBARECOMP_LINK: "child:<port>" or "parent:<port>"
     std::string state, save;          // what it starts from
     std::vector<std::string> env;     // its own switches
-    int keys_fd = -1, hash_fd = -1;   // passed as fds 3 and 4 (a network copy)
     const char* who = "the computer's game";
 };
 
 bool spawn(const Spawn& sp) {
+#if defined(__ANDROID__)
+    const std::string exe = "KnightOfLodisRecomp";   // (argv[0] only: the platform starts the copy)
+#else
     const std::string exe = self_exe();
+#endif
     const std::string rom = arg_value("--rom");
     if (exe.empty() || rom.empty()) {
         std::fprintf(stderr, "vs-cpu: no %s to start %s with\n", exe.empty() ? "program path" : "ROM", sp.who);
@@ -202,43 +209,66 @@ bool spawn(const Spawn& sp) {
     if (const std::string b = arg_value("--bios"); !b.empty()) { argv.push_back("--bios"); argv.push_back(b); }
     else if (arg_flag("--no-bios")) argv.push_back("--no-bios");
     if (const std::string m = arg_value("--rom-patch"); !m.empty()) { argv.push_back("--rom-patch"); argv.push_back(m); }
-    argv.insert(argv.end(), {"--save-path", sp.save, "--load-state", sp.state, "--window", "--scale", "1"});
+    argv.insert(argv.end(), {"--save-path", sp.save, "--load-state", sp.state});
+    // No window at all (as an Android service must run it; in step with a
+    // seen game, 142 hashes, 2026-11-23), and a frame count, or a headless
+    // run stops after one: the copy's own rules end it.
+    // KOL_VS_COPY_WINDOW=1: a window SDL never shows (dummy video), as before.
+    if (const char* w = std::getenv("KOL_VS_COPY_WINDOW"); w && *w == '1')
+        argv.insert(argv.end(), {"--window", "--scale", "1"});
+    else
+        argv.insert(argv.end(), {"--no-window", "--frames", "2000000000"});
 
+    // Its own switches: unseen (gbarecomp GBARECOMP_UNSEEN: no frame
+    // composed or presented, no pacing, no audio device; it drew every
+    // picture before, in software, at its owner's effects: a network copy
+    // took more of the Deck than the game played on it), and the copy's
+    // own. KOL_VS_CHILD_ENV="A=1 B=2" adds more (tests).
+    std::vector<std::string> own = {"GBARECOMP_LINK=" + sp.link, "GBARECOMP_SELFHEAL_RECOMPILE=0", "GBARECOMP_UNSEEN=1",
+                                    "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software", "SDL_AUDIODRIVER=dummy"};
+    own.insert(own.end(), sp.env.begin(), sp.env.end());
+    if (const char* extra = std::getenv("KOL_VS_CHILD_ENV"); extra && *extra) {
+        std::string s = extra;
+        for (std::size_t at = 0; at < s.size();) {
+            const std::size_t sp_at = s.find(' ', at);
+            const std::string t = s.substr(at, sp_at == std::string::npos ? std::string::npos : sp_at - at);
+            if (!t.empty()) own.push_back(t);
+            if (sp_at == std::string::npos) break;
+            at = sp_at + 1;
+        }
+    }
+    const std::string log = g_dir + (g_net ? "/other_player.log" : "/opponent.log");
+
+#if defined(__ANDROID__)
+    // An app's process cannot start itself again: the platform runs the copy
+    // in a service of its own process (main_android, VsCopyService.java),
+    // with these arguments and switches. Its process id is not ours to wait
+    // for: it ends itself when its link or its channel closes.
+    if (!g_platform.spawn || !g_platform.spawn(argv, own, log, g_dir)) {
+        std::fprintf(stderr, "vs-cpu: could not start %s (no platform service)\n", sp.who);
+        return false;
+    }
+    g_pid = -1;
+    std::fprintf(stderr, "vs-cpu: %s started (service, link %s, log %s)\n", sp.who, sp.link.c_str(), log.c_str());
+    return true;
+#else
     // Its environment: the player's, less every game, runtime and SDL switch,
-    // then the copy's own. KOL_VS_CHILD_ENV="A=1 B=2" adds more (tests).
+    // then its own.
     std::vector<std::string> env;
     for (char** e = environ; e && *e; ++e) {
         const std::string v = *e;
         if (v.rfind("KOL_", 0) == 0 || v.rfind("GBARECOMP_", 0) == 0 || v.rfind("SDL_", 0) == 0) continue;
         env.push_back(v);
     }
-    // Unseen (gbarecomp GBARECOMP_UNSEEN): no frame composed or presented,
-    // no pacing (its partner here paces it). It drew every picture before,
-    // in software, at its owner's effects: a network copy took more of the
-    // Deck than the game played on it, and both machines ran slow.
-    env.insert(env.end(), {"GBARECOMP_LINK=" + sp.link, "GBARECOMP_SELFHEAL_RECOMPILE=0", "GBARECOMP_UNSEEN=1",
-                           "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software", "SDL_AUDIODRIVER=dummy"});
-    env.insert(env.end(), sp.env.begin(), sp.env.end());
-    if (const char* extra = std::getenv("KOL_VS_CHILD_ENV"); extra && *extra) {
-        std::string s = extra;
-        for (std::size_t at = 0; at < s.size();) {
-            const std::size_t sp_at = s.find(' ', at);
-            const std::string t = s.substr(at, sp_at == std::string::npos ? std::string::npos : sp_at - at);
-            if (!t.empty()) env.push_back(t);
-            if (sp_at == std::string::npos) break;
-            at = sp_at + 1;
-        }
-    }
+    env.insert(env.end(), own.begin(), own.end());
 
     std::vector<char*> av, ev;
     for (auto& a : argv) av.push_back(a.data());
     av.push_back(nullptr);
     for (auto& e : env) ev.push_back(e.data());
     ev.push_back(nullptr);
-    const std::string log = g_dir + (g_net ? "/other_player.log" : "/opponent.log");
     const int log_fd = ::open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     const std::string dir = g_dir;
-    const int kfd = sp.keys_fd, hfd = sp.hash_fd;
 
     const pid_t pid = ::fork();
     if (pid < 0) {
@@ -253,12 +283,6 @@ bool spawn(const Spawn& sp) {
         }
         const int null_fd = ::open("/dev/null", O_RDONLY);
         if (null_fd >= 0) ::dup2(null_fd, 0);
-        // The pipes to fds 3 and 4, by way of high numbers (either may be 3
-        // or 4 already); dup2 clears close-on-exec.
-        const int k = kfd >= 0 ? ::fcntl(kfd, F_DUPFD, 20) : -1;
-        const int h = hfd >= 0 ? ::fcntl(hfd, F_DUPFD, 20) : -1;
-        if (k >= 0) ::dup2(k, 3);
-        if (h >= 0) ::dup2(h, 4);
         if (::chdir(dir.c_str()) != 0) ::_exit(126);
         ::execve(av[0], av.data(), ev.data());
         ::_exit(127);
@@ -269,6 +293,7 @@ bool spawn(const Spawn& sp) {
     std::fprintf(stderr, "vs-cpu: %s started (pid %d, link %s, log %s)\n", sp.who, static_cast<int>(pid),
                  sp.link.c_str(), log.c_str());
     return true;
+#endif
 }
 
 // The copy stopped and the session's folder gone (under g_mu).
@@ -307,8 +332,16 @@ void notice(const char* line) {
 
 // The session over (under g_mu): the network and the link stopped, the copy
 // gone, the game let go if it was held.
+void wifi_lock(bool on) {
+    static bool held = false;
+    if (held == on || !g_platform.wifi_lock) return;
+    held = on;
+    g_platform.wifi_lock(on);
+}
+
 void end_session(const char* why) {
     std::fprintf(stderr, "vs-cpu: session ends: %s\n", why);
+    wifi_lock(false);
     // Out of step, here or there: both sides keep their last memory
     // snapshots (vsnet ring) and logs, to be compared.
     if (why && std::strstr(why, "desync")) g_keep_dir = true;
@@ -352,24 +385,51 @@ bool start_other_game() {
         end_session("the other player's game could not be written here");
         return false;
     }
-    int kp[2] = {-1, -1}, hp[2] = {-1, -1};
-    if (::pipe(kp) != 0 || ::pipe(hp) != 0) {
-        end_session("no pipes to the other player's game");
+    // The channel to it (kol_vs_net): this game listens on a local port,
+    // the copy connects once it runs; taken on a thread of its own.
+    const int ls = ::socket(AF_INET, SOCK_STREAM, 0);
+    int channel_port = -1;
+    if (ls >= 0) {
+        ::fcntl(ls, F_SETFD, FD_CLOEXEC);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t len = sizeof a;
+        if (::bind(ls, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0 && ::listen(ls, 1) == 0 &&
+            ::getsockname(ls, reinterpret_cast<sockaddr*>(&a), &len) == 0)
+            channel_port = ntohs(a.sin_port);
+    }
+    if (channel_port <= 0) {
+        if (ls >= 0) ::close(ls);
+        end_session("no channel to the other player's game");
         return false;
     }
-    for (int fd : {kp[0], kp[1], hp[0], hp[1]}) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-    ::fcntl(hp[0], F_SETFL, ::fcntl(hp[0], F_GETFL) | O_NONBLOCK);
-    ::signal(SIGPIPE, SIG_IGN);   // a copy gone: its pipe's write fails, not the game
+    ::signal(SIGPIPE, SIG_IGN);   // a copy gone: a write to its channel fails, not the game
+    std::thread([ls] {
+        pollfd p{ls, POLLIN, 0};
+        int fd = -1;
+        if (::poll(&p, 1, 20000) > 0) fd = ::accept(ls, nullptr, nullptr);
+        ::close(ls);
+        if (fd < 0) {
+            std::fprintf(stderr, "vs-cpu: the other player's game never took its channel\n");
+            return;
+        }
+        ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+        int one = 1;
+        ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+#if defined(SO_NOSIGPIPE)
+        ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+        vsnet::set_key_sink(fd);
+    }).detach();
 
     Spawn sp;
     sp.state = state;
     sp.save = save;
     sp.who = "the other player's game";
-    sp.keys_fd = kp[0];
-    sp.hash_fd = hp[1];
     char panel[32];
     std::snprintf(panel, sizeof panel, "%ux%u", peer.panel_w, peer.panel_h);
-    sp.env = {"KOL_VS_MIRROR=1", "KOL_VS_MIRROR_KEYS_FD=3", "KOL_VS_MIRROR_HASH_FD=4", "KOL_VS_MIRROR_CFG=" + cfg_dir,
+    sp.env = {"KOL_VS_MIRROR=1", "KOL_VS_MIRROR_CHANNEL=" + std::to_string(channel_port), "KOL_VS_MIRROR_CFG=" + cfg_dir,
               std::string("KOL_VS_MIRROR_PANEL=") + panel, "KOL_VS_MIRROR_FRAME0=" + std::to_string(peer.frame)};
     if (const char* d = std::getenv("KOL_VS_NET_DELAY")) sp.env.push_back(std::string("KOL_VS_NET_DELAY=") + d);
 
@@ -384,16 +444,10 @@ bool start_other_game() {
         sp.link = (g_link_parent ? "child:" : "parent:") + std::to_string(g_link_port);
         ok = spawn(sp);
     }
-    ::close(kp[0]);
-    ::close(hp[1]);
     if (!ok) {
-        ::close(kp[1]);
-        ::close(hp[0]);
         end_session("the other player's game could not be started");
         return false;
     }
-    vsnet::set_key_sink(kp[1]);
-    vsnet::play_attach_hash_fd(hp[0]);
     // This game from its snapshot loaded too, the way its copy over there
     // starts (what ran here since the snapshot is undone, and its pad reads
     // are counted from the load on: vs_cpu_state_path).
@@ -446,6 +500,7 @@ void check_search(std::uint16_t keys) {
     g_b_was = b;
     switch (vsnet::status()) {
     case vsnet::Status::Ready:
+        wifi_lock(false);
         start_other_game();
         return;
     case vsnet::Status::Failed: {
@@ -521,6 +576,8 @@ std::string host_name() {
 }
 
 }  // namespace
+
+void vs_set_platform(const VsPlatform& p) { g_platform = p; }
 
 bool vs_cpu_child() {
     static const bool on = [] {
@@ -711,6 +768,9 @@ bool vs_cpu_state_saved(const char* path) {
     mine.nonce = (static_cast<std::uint64_t>(rd()) << 32) ^ rd() ^
                  static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     if (mine.nonce == 0) mine.nonce = 1;
+    // KOL_VS_NET_NONCE=n (tests): this side's number, so which one connects
+    // (the smaller) is known (an emulator behind its own NAT can only connect out).
+    if (const char* n = std::getenv("KOL_VS_NET_NONCE"); n && *n) mine.nonce = std::strtoull(n, nullptr, 0);
     g_my_nonce = mine.nonce;
     mine.name = host_name();
     mine.rom = vsnet::file_fingerprint(arg_value("--rom"));
@@ -741,6 +801,7 @@ bool vs_cpu_state_saved(const char* path) {
         return true;
     }
     vsnet::play_begin(keyinput, g_dir);
+    wifi_lock(true);   // (Android: broadcasts reach the game only while it is held)
     g_search_start = std::chrono::steady_clock::now();
     g_notice_at = g_search_start;
     g_b_was = true;

@@ -335,7 +335,21 @@ void vs_bot_install() {
     gbarecomp::g_host_keyinput_filter = &filter;
 }
 
+namespace {
+void bot_tick(unsigned long frame);
+}
+
 void vs_bot_tick(unsigned long frame) {
+    bot_tick(frame);
+    // The computer's copy runs headless (kol_vs_cpu): no window polls the
+    // pad, so the key filter above is never asked and its presses reached
+    // nothing. Set here each frame instead.
+    if (vs_cpu_child() && ai_army_enabled())
+        if (gba::GbaBus* bus = gbarecomp::active_bus()) bus->io().set_keyinput(filter(0x03FFu));
+}
+
+namespace {
+void bot_tick(unsigned long frame) {
     if (!kol::kDevTools && !vs_cpu_child()) return;   // VS Computer's copy: every build
     if (!ai_army_enabled()) return;
     g_frame = frame;
@@ -400,5 +414,7 @@ void vs_bot_tick(unsigned long frame) {
     g_settle = 0;
     decide(ew, iw, state);
 }
+
+}  // namespace
 
 }  // namespace kol

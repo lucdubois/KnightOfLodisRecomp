@@ -363,6 +363,14 @@ void apply_view_size() {
 // The choice's audio mode. HD loads its bank here, the first time it is
 // picked (at start or from a menu), so no one else pays for it.
 void apply_sound() {
+    // A game no one sees or hears (VS Mode's unseen copies, GBARECOMP_UNSEEN):
+    // the plain sound and no HD bank. (Loading the bank from the APK goes
+    // through SDL's asset manager, which an Android service process does not
+    // have: the network copy crashed there, 2026-11-23.)
+    if (const char* u = std::getenv("GBARECOMP_UNSEEN"); u && *u == '1') {
+        gba::gba_audio_request_hq_mode(kSoundModes[0]);
+        return;
+    }
     int mode = kSoundModes[g_sound_choice];
     if (g_sound_choice == kSoundHD && !hd_audio_activate()) mode = kSoundModes[1];
     gba::gba_audio_request_hq_mode(mode);

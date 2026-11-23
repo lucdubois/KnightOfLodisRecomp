@@ -24167,5 +24167,47 @@ hashes equal, no desync; "it works well enough". The Mac's game, the link's
 parent, waited 126-199 ms a second on its copy there (the Deck's own game at
 Enhanced is the slower side).
 
-Not yet: the notices' look, a match played to its end and a rematch,
-Android, Windows, internet play.
+### VS Computer and VS Network on Android (2026-11-23)
+
+Asked: "Make it work for Android. CPU and network." An app's process cannot
+fork and exec the app again, so the copy runs in `VsCopyService`, a service
+in a process of its own (`:vscopy` in the manifest; the native runtime runs
+once per process), started through `kol::VsPlatform` (kol_vs_cpu.h), which
+main_android.cpp fills: `VsCopy.start(argv, env, log, dir)` puts the copy's
+arguments and switches in an intent; the service loads SDL2 and main and
+calls `VsCopyService.nativeRun`, which sets the switches (what the desktop
+gives the copy as its environment), sends its output to the session's log,
+loads its owner's settings and runs the runtime headless on a 16 MB thread.
+The copy ends itself when its link or channel closes (no child pid to wait
+for), and the service's process with it.
+- Copies now run headless everywhere (`--no-window --frames 2000000000`: a
+  headless run with no count runs one frame), checked in step with a seen
+  game (142 hashes); `KOL_VS_COPY_WINDOW=1` the old hidden window.
+- The copy's channel is a local TCP socket (the game listens, the copy
+  connects), not inherited pipes: a service inherits no descriptors.
+- Headless, no window polls the pad: the computer's copy's deployment bot
+  pressed nothing until vs_bot_tick set KEYINPUT itself each frame.
+- An unseen game gets the plain sound and no HD bank (settings
+  apply_sound): loading the bank goes through SDL's asset manager, which a
+  service process lacks (the network copy crashed on a null jclass).
+- The Wi-Fi's multicast lock (`VsCopy.wifiLock`, permissions
+  ACCESS_WIFI_STATE + CHANGE_WIFI_MULTICAST_STATE) is held while a game looks
+  for another: Android drops broadcasts without it. TMPDIR = files/vs.
+- Options > Gameplay > VS Mode now on Android too; the second screen's
+  taps and bar buttons that act on the game (a unit's card, next/previous
+  unit, profile, the world map's bar) are held off in a network match.
+Checked on the Android emulator (Medium_Phone_API_36.1, arm64; never the
+Thor): VS Computer from the menu state into the battle (`:vscopy` running,
+linked in 4.9 s, the computer deploying, AI turns); VS Network, emulator
+against this Mac (`adb emu redir add udp:19874:19873`,
+`KOL_VS_NET_PEER=127.0.0.1:19874` on the Mac, `KOL_VS_NET_NONCE=1` on the
+emulator so it is the side that connects out of its NAT): linked, 117
+hashes equal into the battle, ~24 fps (the emulator draws in software).
+Test trap: a test player's settings given by environment (KOL_SETTINGS_OFF)
+never reach its copy on the other machine, which loads its settings file:
+put them in the data folder's enhancements.cfg (a desync at read 2176
+otherwise). The emulator's app is provisioned by run-as with files/env.cfg
+(KOL_LOAD_STATE_AT=300 + slot 9 = quest_menu_vs.state, the key script).
+
+Not yet: the Thor itself (the user installs), the notices' look, a match
+played to its end and a rematch, Windows, internet play.

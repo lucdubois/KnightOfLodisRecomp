@@ -2,7 +2,7 @@
 
 #include "kol_vs_net.h"
 
-#if defined(_WIN32) || defined(__ANDROID__)
+#if defined(_WIN32)
 
 namespace kol {
 bool vs_mirror_child() { return false; }
@@ -21,7 +21,6 @@ void stop(const char*) {}
 void set_on_gone(void (*)()) {}
 void play_begin(std::uint16_t, const std::string&) {}
 void play_reset_calls() {}
-void play_attach_hash_fd(int) {}
 void play_start_keys() {}
 void play_tick(std::uint64_t) {}
 std::uint16_t play_filter(std::uint16_t keys) { return keys; }
@@ -147,12 +146,28 @@ bool read_all(int fd, void* p, std::size_t n) {
     }
     return true;
 }
-// A pipe's whole record (the copy's ends): write() on a pipe.
+// The channel between a seen game and its copy of the other player's game:
+// one local TCP socket, the buttons to the copy and its hashes back (a
+// socket, not inherited pipes: an Android service inherits no descriptors).
+#if defined(MSG_NOSIGNAL)
+constexpr int kNoSig = MSG_NOSIGNAL;
+#else
+constexpr int kNoSig = 0;   // (macOS: SO_NOSIGPIPE on the socket instead)
+#endif
+void no_sigpipe(int fd) {
+#if defined(SO_NOSIGPIPE)
+    int one = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#else
+    (void)fd;
+#endif
+}
+// A whole record on the channel.
 bool pipe_write(int fd, const Rec& r) {
     const auto* b = reinterpret_cast<const std::uint8_t*>(&r);
     std::size_t n = sizeof r;
     while (n > 0) {
-        const ssize_t w = ::write(fd, b, n);
+        const ssize_t w = ::send(fd, b, n, kNoSig);
         if (w <= 0) {
             if (w < 0 && errno == EINTR) continue;
             return false;
@@ -319,8 +334,9 @@ int find_peer(Net& n) {
     std::fprintf(stderr, "vs-net: looking for a player (beacons on UDP %d, TCP %u, number %s)\n", kBeaconPort,
                  tcp_port, hex64(n.mine.nonce).c_str());
 
-    // KOL_VS_NET_PEER=a.b.c.d: beacons to that address too (a network that
-    // drops broadcasts).
+    // KOL_VS_NET_PEER=a.b.c.d[:port]: beacons to that address too (a
+    // network that drops broadcasts; an emulator behind its own NAT, through
+    // a UDP redirect to another port).
     sockaddr_in bcast{};
     bcast.sin_family = AF_INET;
     bcast.sin_port = htons(kBeaconPort);
@@ -328,8 +344,13 @@ int find_peer(Net& n) {
     sockaddr_in extra{};
     bool have_extra = false;
     if (const char* e = std::getenv("KOL_VS_NET_PEER"); e && *e) {
+        std::string host = e;
         extra = bcast;
-        have_extra = ::inet_pton(AF_INET, e, &extra.sin_addr) == 1;
+        if (const auto colon = host.find(':'); colon != std::string::npos) {
+            extra.sin_port = htons(static_cast<std::uint16_t>(std::atoi(host.c_str() + colon + 1)));
+            host.resize(colon);
+        }
+        have_extra = ::inet_pton(AF_INET, host.c_str(), &extra.sin_addr) == 1;
     }
 
     int fd = -1;
@@ -539,7 +560,7 @@ std::atomic<std::uint64_t> g_last_call{0};
 std::atomic<long long> g_last_call_ms{0};
 std::map<std::uint64_t, std::uint16_t> g_local;          // this game's buttons by read
 std::map<std::uint64_t, std::uint64_t> g_mirror_hashes;  // the copy's hashes by read
-int g_hash_fd = -1;
+std::vector<std::uint8_t> g_hash_bytes;                 // the copy's hash records, as they come
 int g_rewind_was = 0;
 bool g_desync = false;
 std::string g_desync_what;
@@ -580,7 +601,7 @@ void mirror_reader(int fd) {
         auto* b = reinterpret_cast<std::uint8_t*>(&r);
         std::size_t got = 0;
         while (got < sizeof r) {
-            const ssize_t n = ::read(fd, b + got, sizeof r - got);
+            const ssize_t n = ::recv(fd, b + got, sizeof r - got, 0);
             if (n <= 0) {
                 if (n < 0 && errno == EINTR) continue;
                 std::lock_guard<std::mutex> lock(g_m_mu);
@@ -812,7 +833,7 @@ void play_begin(std::uint16_t keyinput, const std::string& dir) {
     g_desync = false;
     g_desync_what.clear();
     g_hash_checks = 0;
-    g_hash_fd = -1;
+    g_hash_bytes.clear();
     g_applied.store(keyinput);
     g_physical.store(keyinput);
     g_rewind_was = gbarecomp::g_runtime_rewind_blocked;
@@ -820,8 +841,6 @@ void play_begin(std::uint16_t keyinput, const std::string& dir) {
     settings_net_match(true);
     g_play.store(true);
 }
-
-void play_attach_hash_fd(int fd) { g_hash_fd = fd; }
 
 void play_start_keys() {
     for (std::uint64_t n = 1; n <= delay_frames(); ++n) {
@@ -857,10 +876,25 @@ void play_tick(std::uint64_t frame) {
             }
         }).detach();
     }
-    // The copy's hashes of the other game against the other machine's own.
-    if (g_hash_fd >= 0) {
-        Rec r;
-        while (::read(g_hash_fd, &r, sizeof r) == static_cast<ssize_t>(sizeof r)) g_mirror_hashes[r.frame] = r.value;
+    // The copy's hashes of the other game (its channel, read without
+    // waiting; a record may come in parts) against the other machine's own.
+    if (const auto n = cur()) {
+        std::lock_guard<std::mutex> lock(n->mu);
+        if (n->sink >= 0) {
+            std::uint8_t buf[512];
+            for (;;) {
+                const ssize_t got = ::recv(n->sink, buf, sizeof buf, MSG_DONTWAIT);
+                if (got <= 0) break;
+                g_hash_bytes.insert(g_hash_bytes.end(), buf, buf + got);
+            }
+            std::size_t at = 0;
+            for (; at + sizeof(Rec) <= g_hash_bytes.size(); at += sizeof(Rec)) {
+                Rec r;
+                std::memcpy(&r, g_hash_bytes.data() + at, sizeof r);
+                g_mirror_hashes[r.frame] = r.value;
+            }
+            g_hash_bytes.erase(g_hash_bytes.begin(), g_hash_bytes.begin() + static_cast<std::ptrdiff_t>(at));
+        }
     }
     for (auto it = g_mirror_hashes.begin(); it != g_mirror_hashes.end();) {
         std::uint64_t theirs = 0;
@@ -912,8 +946,6 @@ void play_end() {
     g_counting.store(false);
     gbarecomp::g_runtime_rewind_blocked = g_rewind_was;
     settings_net_match(false);
-    if (g_hash_fd >= 0) ::close(g_hash_fd);
-    g_hash_fd = -1;
     std::fprintf(stderr, "vs-net: the match's buttons end (read %llu, %llu hashes matched%s)\n",
                  static_cast<unsigned long long>(g_calls), g_hash_checks, g_desync ? ", desync" : "");
 }
@@ -929,20 +961,42 @@ void mirror_settings() {
 }
 
 void mirror_install() {
-    const char* k = std::getenv("KOL_VS_MIRROR_KEYS_FD");
-    const char* h = std::getenv("KOL_VS_MIRROR_HASH_FD");
+    const char* c = std::getenv("KOL_VS_MIRROR_CHANNEL");
     const char* f0 = std::getenv("KOL_VS_MIRROR_FRAME0");
-    const int kfd = k && *k ? std::atoi(k) : -1;
-    g_m_hash_fd = h && *h ? std::atoi(h) : -1;
+    const int port = c && *c ? std::atoi(c) : 0;
     g_m_frame0 = f0 && *f0 ? std::strtoull(f0, nullptr, 10) : 1ull;
+    // The channel to the seen game here (it listens; up to 10 s for it).
+    int kfd = -1;
+    for (int tries = 0; port > 0 && kfd < 0 && tries < 100; ++tries) {
+        const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in to{};
+        to.sin_family = AF_INET;
+        to.sin_port = htons(static_cast<std::uint16_t>(port));
+        to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (s >= 0 && ::connect(s, reinterpret_cast<sockaddr*>(&to), sizeof to) == 0) {
+            int one = 1;
+            ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+            no_sigpipe(s);
+            kfd = s;
+            break;
+        }
+        if (s >= 0) ::close(s);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (port > 0 && kfd < 0) {
+        std::fprintf(stderr, "vs-net: the copy ends: no channel to the game on port %d\n", port);
+        std::fflush(stderr);
+        std::_Exit(4);
+    }
+    g_m_hash_fd = kfd;
     if (kfd >= 0) std::thread(mirror_reader, kfd).detach();
     gbarecomp::g_host_keyinput_filter = &mirror_filter;   // the other player's buttons only
     gbarecomp::g_runtime_rewind_blocked = 1;
     settings_net_match(true);
     install_pad_hook();
     std::fprintf(stderr,
-                 "vs-net: this is the other player's game (keys fd %d, hashes fd %d, from frame %llu, delay %llu)\n",
-                 kfd, g_m_hash_fd, static_cast<unsigned long long>(g_m_frame0),
+                 "vs-net: this is the other player's game (channel port %d, from frame %llu, delay %llu)\n",
+                 port, static_cast<unsigned long long>(g_m_frame0),
                  static_cast<unsigned long long>(delay_frames()));
 }
 

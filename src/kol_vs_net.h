@@ -56,9 +56,11 @@ bool start(Side mine);
 Status status();
 const std::string& failure();   // why it failed (Failed)
 const Side& peer();             // the other side (Ready)
-// The peer's buttons are written to `fd` (the copy's key pipe) as they come,
-// those that came before it first. The session owns it from here: closed
-// when replaced, stopped, or when the peer goes (the copy's wait ends).
+// The channel to the copy of the peer's game (a local TCP socket): the
+// peer's buttons go to it as they come, those that came before it first,
+// and the copy's hashes come back on it (play_tick). The session owns it
+// from here: closed when replaced, stopped, or when the peer goes (the
+// copy's wait for buttons then ends, and so does the copy).
 void set_key_sink(int fd);
 // During the match: this game's buttons for a frame, its hash at a frame.
 void send_keys(std::uint64_t frame, std::uint16_t keys);
@@ -80,7 +82,6 @@ void set_on_gone(void (*fn)());
 // starts there, as its copy over there does); tick() each frame (the copy's
 // hashes compared); end() lets the player's buttons through again.
 void play_begin(std::uint16_t keyinput, const std::string& session_dir);
-void play_attach_hash_fd(int fd);   // the copy's hashes (its pipe, non-blocking)
 void play_start_keys();   // the first reads' buttons (none), once the peer is there
 void play_reset_calls();
 void play_tick(std::uint64_t frame);
