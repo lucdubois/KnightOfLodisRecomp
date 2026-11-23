@@ -89,6 +89,8 @@ int next_number(const std::vector<int>& have) {
 const char* on_path(int slot, int save) {
     static std::string out;
     if (const char* vs = vs_cpu_state_path(slot, save)) return vs;   // VS Computer's snapshot
+    if (const char* held = menu_hold_state_path(slot)) return held;   // the options menu's own
+    if (!save) menu_hold_forget();   // another state loaded: the menu's is taken again
     // VS over a network: a state loaded here is not loaded in this game's
     // copy on the other machine; the load fails on a path that is not there.
     if (!save && settings_net_match_on()) {
@@ -248,6 +250,7 @@ std::string ascii_name(const std::uint8_t* ew) {
 
 void on_saved(const char* path) {
     if (vs_cpu_state_saved(path)) return;   // VS Computer's snapshot: the copy starts from it
+    if (menu_hold_saved(path)) return;      // the options menu's held state
     const std::string p = path ? path : "";
     if (dir().empty() || p.rfind(dir() + "/", 0) != 0) return;   // a slot's, not ours
     const std::string stem = p.substr(0, p.size() - 6);   // less ".state"

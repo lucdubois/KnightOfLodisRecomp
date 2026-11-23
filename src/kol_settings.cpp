@@ -405,7 +405,11 @@ void apply_sound() {
     gba::gba_audio_request_hq_mode(mode);
 }
 
+std::atomic<unsigned> g_revision{0};
+bool g_music_quiet = false;
+
 void save() {
+    g_revision.fetch_add(1, std::memory_order_relaxed);
     const std::string path = cfg_path();
     if (path.empty()) return;
     std::FILE* f = std::fopen(path.c_str(), "w");
@@ -568,10 +572,19 @@ unsigned volume_choice_current(bool effects) {
     return effects ? g_effects_volume : g_music_volume;
 }
 
+unsigned settings_revision() { return g_revision.load(std::memory_order_relaxed); }
+
+void settings_music_quiet(bool quiet) {
+    if (quiet == g_music_quiet) return;
+    g_music_quiet = quiet;
+    gba::gba_audio_request_mix_volumes(quiet ? 0 : static_cast<int>(g_music_volume * 10u),
+                                       static_cast<int>(g_effects_volume * 10u));
+}
+
 void volume_choice_set(bool effects, unsigned i) {
     if (i > 10u) return;
     (effects ? g_effects_volume : g_music_volume) = i;
-    gba::gba_audio_request_mix_volumes(static_cast<int>(g_music_volume * 10u),
+    gba::gba_audio_request_mix_volumes(g_music_quiet ? 0 : static_cast<int>(g_music_volume * 10u),
                                        static_cast<int>(g_effects_volume * 10u));
     save();
     std::fprintf(stderr, "settings: music %u%%, effects %u%%\n", g_music_volume * 10u,

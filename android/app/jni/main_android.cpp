@@ -1336,14 +1336,6 @@ Java_com_koldecomp_game_SecondScreen_menuToggle(JNIEnv* env, jclass) {
     return kol::menu_toggle() ? menu_image(env) : nullptr;
 }
 
-// The game held still while the options menu is up over it on a device with
-// one screen (gbarecomp's g_runtime_pause_request); the pad still reaches the
-// menu through the key filter.
-JNIEXPORT void JNICALL
-Java_com_koldecomp_game_SecondScreen_nativePause(JNIEnv*, jclass, jboolean on) {
-    gbarecomp::g_runtime_pause_request = on == JNI_TRUE ? 1 : 0;
-}
-
 JNIEXPORT jintArray JNICALL
 Java_com_koldecomp_game_SecondScreen_menuTouch(JNIEnv* env, jclass, jint action,
                                                jfloat x, jfloat y) {

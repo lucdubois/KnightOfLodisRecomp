@@ -23,12 +23,32 @@
 
 #include "kol_sheet.h"
 
+namespace gbarecomp { struct PresentOverlay; }
+
 namespace kol {
 
 // The menu's canvas is the status sheet's: kSheetW x kSheetH (kol_sheet.h),
 // so the second screen shows it in the same place at the same scale.
 
 bool menu_is_open();
+// gbarecomp's g_runtime_pause_query: the game held while the menu is open,
+// let run a few frames after each change of a setting (kol_menu.cpp).
+int menu_pause_query();
+// Every frame, from the frame hook: counts those frames down.
+void menu_frame_tick();
+// The state saved as the menu holds the game, loaded at each change (from
+// kol_states' path hook): its file for that slot, else null.
+const char* menu_hold_state_path(int slot);
+// After a save: true if it was that state (now ready to load).
+bool menu_hold_saved(const char* path);
+// Another state was loaded: that one is taken again.
+void menu_hold_forget();
+// While the menu is open: the OPTION window's border round the game's
+// picture (a gbarecomp present overlay; false while it is closed).
+bool menu_focus_frame(gbarecomp::PresentOverlay* out);
+// The same as an overlay provider, where the host has none of its own
+// (Android); the desktop's puts the frame under its menu.
+int menu_focus_frame_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out_h);
 // Opens or closes the menu (the corner button). Returns whether it is open.
 bool menu_toggle();
 // The same from the pad (the right stick's click): also tells the second

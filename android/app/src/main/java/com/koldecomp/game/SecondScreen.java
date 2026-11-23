@@ -53,7 +53,6 @@ public final class SecondScreen {
     /** Where the native pictures go. */
     private static StatsView target() { return single() ? sOverlayView : sView; }
 
-    static native void nativePause(boolean on);
 
     private static void buildOverlay(Activity activity) {
         try {
@@ -107,13 +106,13 @@ public final class SecondScreen {
                                                                       Gravity.CENTER_HORIZONTAL));
             }
         }
+        // (The game is held by native while the menu is open: kol_menu's
+        // menu_pause_query, on every layout.)
         sOverlay.setVisibility(View.VISIBLE);
-        nativePause(true);
     }
 
     private static void overlayClosed() {
         if (sOverlay != null) sOverlay.setVisibility(View.GONE);
-        nativePause(false);
     }
 
     /** BACK with one screen (UI thread): the game held and the menu over it, or back to the game. */

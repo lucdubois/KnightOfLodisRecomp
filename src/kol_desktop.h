@@ -11,8 +11,8 @@
 //    second screen (or over the game from Java); here it is a present-time
 //    overlay (gbarecomp g_present_overlay_provider), centred, at a whole
 //    scale. F10 or a click of the right stick opens and closes it; the pad
-//    drives it (kol_menu's key filter), and the picture behind dims
-//    (g_present_dim, as on Android).
+//    drives it (kol_menu's key filter), and the game is held while it is
+//    open (kol_menu's menu_pause_query, as on Android).
 //
 //  - Player mode: the game's files in one directory, as on Android (the ROM
 //    as totkol.gba, the optional BIOS as gba_bios.bin, totkol.sav,

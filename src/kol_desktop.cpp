@@ -238,6 +238,23 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
             const unsigned n = width_choice_count();
             if (n > 0) width_choice_set((width_choice_current() + 1u) % n);
         }
+        // KOL_DESKTOP_TOUCH_AT=<n>,<m>...: a setting "changed" to the value it
+        // has, at those presents (the menu's held state is loaded and the
+        // game runs its frames: compare the pictures before and after).
+        static const std::vector<long> touch_at = [] {
+            std::vector<long> v;
+            if (const char* e = std::getenv("KOL_DESKTOP_TOUCH_AT"))
+                for (const char* p = e; *p;) {
+                    char* end = nullptr;
+                    const long n = std::strtol(p, &end, 10);
+                    if (end == p) break;
+                    v.push_back(n);
+                    p = *end == ',' ? end + 1 : end;
+                }
+            return v;
+        }();
+        for (long t : touch_at)
+            if (presents == t) volume_choice_set(false, volume_choice_current(false));
         // KOL_DESKTOP_POPUP_AT=<n>: a sample notice at the nth present (the
         // achievement popup's place and slide, in present dumps after it).
         static const long pop_at = [] {
@@ -257,21 +274,24 @@ int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out
         }
     }
     int n = 0;
-    if (max >= 1 && menu_is_open()) {
+    // The top screen's frame while the menu has the focus, under the menu.
+    if (max >= 1 && menu_focus_frame(&out[n])) ++n;
+    if (n < max && menu_is_open()) {
         menu_take_dirty();   // the second screen's cue; here every present redraws
         if (menu_render(g_menu_px)) {
             clear_outside(g_menu_px);
             // The largest whole scale that leaves a margin: 4 on the Deck's 1280x800.
             const int scale = std::max(1, std::min(out_w * 95 / 100 / kSheetW, out_h * 95 / 100 / kSheetH));
-            out[0].argb = g_menu_px;
-            out[0].w = kSheetW;
-            out[0].h = kSheetH;
-            out[0].dw = kSheetW * scale;
-            out[0].dh = kSheetH * scale;
-            out[0].x = (out_w - out[0].dw) / 2;
-            out[0].y = (out_h - out[0].dh) / 2;
-            out[0].version = ++g_overlay_version;
-            n = 1;
+            gbarecomp::PresentOverlay& m = out[n];
+            m.argb = g_menu_px;
+            m.w = kSheetW;
+            m.h = kSheetH;
+            m.dw = kSheetW * scale;
+            m.dh = kSheetH * scale;
+            m.x = (out_w - m.dw) / 2;
+            m.y = (out_h - m.dh) / 2;
+            m.version = ++g_overlay_version;
+            ++n;
         }
     }
     // The licenses' page over the menu, while it is open (it goes with it).

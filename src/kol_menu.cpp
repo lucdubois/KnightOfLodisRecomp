@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "gba_bus.h"
+#include "gba_ppu.h"
 #include "kol_a7.h"
 #include "kol_cheevos.h"
 #include "kol_fast_actions.h"
@@ -33,6 +34,7 @@
 #include "kol_states.h"
 #include "kol_unit_data.h"
 #include "mod_function_hooks.h"
+#include "runtime.h"
 #include "runtime.h"
 #include "runtime_arm.h"
 #include "runtime_bus_bridge.h"
@@ -690,8 +692,6 @@ const Row kDebug[] = {
     {Kind::Setting, static_cast<int>(Setting::DebugTileInfo), "Tile Info",
      "The target tile, its heights\nand its record, on screen."},
     {Kind::Page, 3, "Layers", "Hide the picture's layers\none by one."},
-    {Kind::Setting, static_cast<int>(Setting::DebugNoMenuDim), "No Menu Dimming",
-     "The top screen stays bright\nwhile this menu is open."},
     {Kind::Page, 7, "Save States", "Every numbered state:\ntap one to load it."},
     {Kind::Setting, static_cast<int>(Setting::DebugNoSecondScreen), "No Second Screen",
      "As a device with one screen:\nBACK pauses, this menu on top."},
@@ -882,7 +882,9 @@ void sel_selectable(const std::vector<Row>& rows, int& sel) {
 MenuPlatform g_platform;
 bool g_mod_pending = false;   // a mod picked this session, played from the next start
 std::mutex g_mu;
-bool g_open = false;
+// Atomic: the runtime asks it from the guest's thread at every present
+// (menu_pause_query), without g_mu.
+std::atomic<bool> g_open{false};
 std::atomic<bool> g_dirty{false};   // the picture needs sending again
 struct Dialog {
     bool up = false;
@@ -1000,9 +1002,17 @@ std::uint8_t settings_byte(int i) {
     return ew ? ew[kSettings - 0x02000000u + i] : kDefaults[i < 7 ? i : 0];
 }
 
+// The game's options changed since the menu's held state was taken
+// (menu_pause_query): queued again after each load of it, which would
+// otherwise put the old ones back in the game's memory.
+std::uint8_t g_session[8] = {};
+std::uint8_t g_session_mask = 0;
+
 void queue_byte(int i, std::uint8_t v) {
     g_pending[i] = v;
     g_pending_mask = static_cast<std::uint8_t>(g_pending_mask | (1u << i));
+    g_session[i] = v;
+    g_session_mask = static_cast<std::uint8_t>(g_session_mask | (1u << i));
 }
 
 int game_value(int k) {
@@ -2120,6 +2130,178 @@ void login_render(Canvas& c, std::uint32_t* argb, const Art& a, int bob) {
 bool menu_is_open() {
     std::lock_guard<std::mutex> lock(g_mu);
     return g_open;
+}
+
+// The game held while the menu is open, on every layout (asked 2026-11-23:
+// the second screen's menu had dimmed a running game; now the picture stays
+// as it is, held, so a change shows on it). After each change of a setting
+// (settings_revision) the game runs kNudgeFrames frames with the music
+// silent, so the picture is drawn again with it: most effects are set up
+// in the frame hook, which a held game never reaches, and a view size is
+// applied between frames. Those frames start from a state saved as the menu
+// opened (the user's idea, the same day), so however many changes are made
+// the game never gets further than one run of them from where it was held;
+// a state loaded meanwhile (Save States) is saved again. Never in a network
+// match (the other player's game would wait for this one).
+namespace {
+constexpr int kNudgeFrames = 4;
+constexpr int kHoldSlot = 91;   // (kol_states: 90 is a picked load)
+enum : int { kSnapNone, kSnapSaving, kSnapReady };
+std::atomic<int> g_nudge{0};
+std::atomic<unsigned> g_nudge_seen{0};
+std::atomic<int> g_snap{kSnapNone};
+// A load of it asked for and not yet made: the frames are counted from the
+// load (the runner reaches the point where it can load a frame or two on).
+std::atomic<bool> g_load_pending{false};
+
+const std::string& hold_path() {
+    static const std::string p = [] {
+        const std::string dir = settings_dir();
+        // Not "*.state": Android's Files app shows those (SavesProvider).
+        if (!dir.empty()) return dir + "/menu_hold_state.tmp";
+        std::error_code ec;
+        const auto tmp = std::filesystem::temp_directory_path(ec);
+        return ec ? std::string() : (tmp / "kol_menu_hold_state.tmp").string();
+    }();
+    return p;
+}
+}  // namespace
+
+int menu_pause_query() {
+    const unsigned rev = settings_revision();
+    if (!g_open.load(std::memory_order_relaxed) || settings_net_match_on()) {
+        g_nudge_seen.store(rev, std::memory_order_relaxed);
+        g_nudge.store(0, std::memory_order_relaxed);
+        g_snap.store(kSnapNone, std::memory_order_relaxed);
+        return 0;
+    }
+    if (g_snap.load(std::memory_order_relaxed) == kSnapNone && !hold_path().empty()) {
+        {
+            std::lock_guard<std::mutex> lock(g_mu);
+            g_session_mask = 0;
+        }
+        g_snap.store(kSnapSaving, std::memory_order_relaxed);
+        gbarecomp::runtime_request_state_save(kHoldSlot);
+    }
+    if (g_nudge_seen.exchange(rev, std::memory_order_relaxed) != rev) {
+        g_nudge.store(kNudgeFrames, std::memory_order_relaxed);
+        if (g_snap.load(std::memory_order_relaxed) == kSnapReady) {
+            {
+                std::lock_guard<std::mutex> lock(g_mu);
+                for (int i = 0; i < 8; ++i)
+                    if (g_session_mask & (1u << i)) {
+                        g_pending[i] = g_session[i];
+                        g_pending_mask = static_cast<std::uint8_t>(g_pending_mask | (1u << i));
+                    }
+            }
+            g_load_pending.store(true, std::memory_order_relaxed);
+            gbarecomp::runtime_request_state_load(kHoldSlot);
+        }
+    }
+    return g_nudge.load(std::memory_order_relaxed) > 0 ? 0 : 1;
+}
+
+const char* menu_hold_state_path(int slot) {
+    if (slot != kHoldSlot || hold_path().empty()) return nullptr;
+    g_load_pending.store(false, std::memory_order_relaxed);   // (asked as it is saved or loaded)
+    return hold_path().c_str();
+}
+
+bool menu_hold_saved(const char* path) {
+    if (!path || hold_path().empty() || hold_path() != path) return false;
+    int saving = kSnapSaving;
+    g_snap.compare_exchange_strong(saving, kSnapReady, std::memory_order_relaxed);
+    return true;
+}
+
+void menu_hold_forget() { g_snap.store(kSnapNone, std::memory_order_relaxed); }
+
+void menu_frame_tick() {
+    // Once a guest frame (the frame hook can run twice in one: after a load,
+    // a view-size change).
+    static std::uint64_t last = ~0ull;
+    const gba::GbaPpu* ppu = gbarecomp::active_ppu();
+    const std::uint64_t frame = ppu ? ppu->frame_count() : 0;
+    const int n = g_nudge.load(std::memory_order_relaxed);
+    if (n > 0 && frame != last && !g_load_pending.load(std::memory_order_relaxed))
+        g_nudge.store(n - 1, std::memory_order_relaxed);
+    last = frame;
+    settings_music_quiet(n > 0);
+}
+
+// The top screen's frame while the menu has the focus (2026-11-23: the
+// user's pick E of five mock-ups; the picture is no longer dimmed): the
+// OPTION window's own border (tiles 0x11-0x18, bank 4: dark, yellow, olive),
+// its outer 3 pixels only (at kFrameScale), laid round the picture at the view's size as the
+// game lays it round a window, steady (a blink was tried the same day and
+// taken out). Present time only (gbarecomp's overlays): frames and
+// screenshots of the game never have it.
+namespace {
+// The tiles drawn at twice their size (asked the same day): each of the
+// border's three lines two pixels of the picture, 6 in all.
+constexpr int kFrameScale = 2;
+constexpr int kFrameDepth = 3 * kFrameScale;
+std::vector<std::uint32_t> g_frame_px;
+int g_frame_w = 0, g_frame_h = 0;
+unsigned g_frame_version = 0;
+
+void build_focus_frame(const Art& a, int w, int h) {
+    g_frame_px.assign(static_cast<std::size_t>(w) * h, 0u);
+    const std::uint32_t* pal = a.bg_pal[kFrameBank];
+    // One tile at (x0, y0), its pixels inside the picture and within the
+    // border's depth of its edge.
+    constexpr int T = 8 * kFrameScale;   // a tile's size as drawn
+    auto tile = [&](int x0, int y0, int t) {
+        const std::uint8_t* src = &a.bg[static_cast<std::size_t>(t) * 32u];
+        for (int y = 0; y < T; ++y)
+            for (int x = 0; x < T; ++x) {
+                const int gx = x0 + x, gy = y0 + y;
+                if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue;
+                if (std::min(std::min(gx, gy), std::min(w - 1 - gx, h - 1 - gy)) >= kFrameDepth) continue;
+                const int sx = x / kFrameScale, sy = y / kFrameScale;
+                const std::uint8_t b = src[sy * 4 + sx / 2];
+                const int i = (sx & 1) ? (b >> 4) : (b & 0xF);
+                if (i) g_frame_px[static_cast<std::size_t>(gy) * w + gx] = pal[i] | 0xFF000000u;
+            }
+    };
+    for (int x = T; x < w - T; x += T) {   // the edges first, the corners over their ends
+        tile(x, 0, 0x15);
+        tile(x, h - T, 0x16);
+    }
+    for (int y = T; y < h - T; y += T) {
+        tile(0, y, 0x17);
+        tile(w - T, y, 0x18);
+    }
+    tile(0, 0, 0x11);
+    tile(w - T, 0, 0x12);
+    tile(0, h - T, 0x13);
+    tile(w - T, h - T, 0x14);
+    g_frame_w = w;
+    g_frame_h = h;
+    ++g_frame_version;
+}
+}  // namespace
+
+bool menu_focus_frame(gbarecomp::PresentOverlay* out) {
+    if (!g_open.load(std::memory_order_relaxed)) return false;
+    const int w = gbarecomp::g_present_frame_view[2], h = gbarecomp::g_present_frame_view[3];
+    const int* r = gbarecomp::g_present_picture_rect;
+    const Art& a = art();
+    if (!a.ok || w < 16 || h < 16 || r[2] <= 0 || r[3] <= 0) return false;
+    if (w != g_frame_w || h != g_frame_h) build_focus_frame(a, w, h);
+    out->argb = g_frame_px.data();
+    out->w = w;
+    out->h = h;
+    out->x = r[0];
+    out->y = r[1];
+    out->dw = r[2];
+    out->dh = r[3];
+    out->version = g_frame_version;
+    return true;
+}
+
+int menu_focus_frame_provider(gbarecomp::PresentOverlay* out, int max, int, int) {
+    return max >= 1 && menu_focus_frame(out) ? 1 : 0;
 }
 
 void menu_confirm_sound() { g_sound_request.store(kSoundOpen); }

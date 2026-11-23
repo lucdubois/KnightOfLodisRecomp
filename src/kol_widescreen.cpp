@@ -2209,6 +2209,11 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
     // The present path reads the guest through a capture taken at present,
     // so gbarecomp may run it a frame behind on its worker (kol_focus.cpp).
     gbarecomp::g_present_capture_hook = kol::present_capture;
+    gbarecomp::g_runtime_pause_query = kol::menu_pause_query;
+    // The top screen's frame while the menu has the focus: a host with no
+    // overlays of its own (Android) takes the frame's alone.
+    if (!gbarecomp::g_present_overlay_provider)
+        gbarecomp::g_present_overlay_provider = kol::menu_focus_frame_provider;
     // See-through movement-range highlight. Installs its own renderer seam and
     // maintains the shadow it needs; see kol_highlight.cpp.
     kol::highlight_tick();
@@ -2565,17 +2570,11 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
             state = 3;
         }
     }
-    // The main screen dimmed 50% while the second screen's options menu is
-    // open (30% until 10-01; the user asked for darker); the game keeps
-    // running under it. Eased over about 8 frames. Debug > No Menu Dimming
-    // keeps it bright (to judge a setting while changing it).
-    {
-        constexpr float kMenuDim = 0.50f;
-        const float want = kol::menu_is_open() && !kol::setting_on(kol::Setting::DebugNoMenuDim) ? kMenuDim : 0.0f;
-        const float step = kMenuDim / 8.0f;
-        float& dim = gbarecomp::g_present_dim;
-        dim = dim < want ? std::min(want, dim + step) : std::max(want, dim - step);
-    }
+    // The options menu holds the game (kol_menu's menu_pause_query); a
+    // change of a setting lets a few frames run, counted here. The picture
+    // is no longer dimmed under the menu (until 2026-11-23: 50%), so a
+    // change shows as it is made.
+    kol::menu_frame_tick();
 
     // Battle map only, and only when the player switched it on in the BACK
     // menu (KOL_EDGE_BLUR=1 forces it on for desktop runs, KOL_NO_EDGE_BLUR=1

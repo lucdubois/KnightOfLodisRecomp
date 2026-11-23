@@ -45,7 +45,7 @@ enum class Setting {
     LiftProps,        // BG1 props stand off the ground, what they hid shown (kol_focus)
     LiftWalls,        // BG1 terrain over BG0 the same, as its own surface (kol_focus)
     DebugTileInfo,    // the target cell tinted, its heights and record shown (kol_focus)
-    DebugNoMenuDim,   // the main screen not dimmed while the options menu is open (kol_widescreen)
+    DebugNoMenuDim,   // unused since 2026-11-23 (the picture is never dimmed under the menu); kept for the order
     FastLoading,      // the game's decompression and clears run natively (kol_fast_load)
     Water,            // the water ripples, foams at its shore, reflects (kol_perspective)
     AnalogCursor,     // the left stick moves the hand cursor freely (kol_stick_cursor)
@@ -245,6 +245,12 @@ bool debug_map_in_training(unsigned n);
 // analog cursor: it moves the game's cursor outside the buttons).
 void settings_net_match(bool on);
 bool settings_net_match_on();
+// Bumped at every save of enhancements.cfg, i.e. at every change of a setting.
+unsigned settings_revision();
+// The music silent (true) or at its volume again: while the held game runs
+// a few frames for a change (kol_menu's menu_frame_tick). Asks the mixer
+// only when it changes.
+void settings_music_quiet(bool quiet);
 // enhancements.cfg's path ("" before settings_init or without a folder).
 std::string settings_file_path();
 // The display's size given to settings_init (landscape; 0 unknown).
