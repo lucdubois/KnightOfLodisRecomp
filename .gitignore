@@ -75,5 +75,6 @@ totkol-*.sav
 /build-macos/
 /build-macos.*
 /build-windows/
+/build-windows-dev/
 /build-windows-deps/
 /build-windows.*
