@@ -46,6 +46,16 @@ bool states_delete(int number);
 // L3+L do (slot 1, numbered with the setting on); "p3@70" loads state 3.
 void states_test_tick();
 
+// KOL_AI_ARMY=1 (dev): F7 hands the player's own army to the game's AI and
+// takes it back (see the .cpp).
+bool ai_army_enabled();
+void ai_army_toggle();
+// The switch is on (the AI plays this army).
+bool ai_army_active();
+void ai_army_tick(unsigned long frame);
+// The turn-fork hook (VS Mode: this game's own turns go to the AI while F7 is on).
+void ai_army_install();
+
 // A new numbered state, as L3+R makes one (the Save States page's save
 // button): asks the runtime for slot 1, which the path hook numbers.
 void states_save_new();

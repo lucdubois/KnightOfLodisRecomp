@@ -82,6 +82,16 @@ bool setting_on(Setting s);
 
 // Where enhancements.cfg lives (empty: no persistence).
 std::string settings_dir();
+// The BIOS (Options > Technical > BIOS). In use now: the GBA's own (true) or
+// gbarecomp's built-in replacements (false, --no-bios), told by the platform
+// at start. For the next start: the marker no_bios in settings_dir() (as
+// Android's setup screen writes it) asks for the built-in one; the GBA BIOS
+// needs gba_bios.bin there.
+void bios_in_use_set(bool real);
+bool bios_in_use();
+bool bios_next_real();
+void bios_next_set(bool real);
+bool bios_file_present();
 
 // A mod (a ROM patch, gbarecomp --rom-patch): its file name, else null, and
 // "-<first 8 of the patched ROM's SHA-1>" for files kept apart from the stock
@@ -193,6 +203,23 @@ void debug_map_set(unsigned n);
 // lives, and show in a story scene only (New Game). The menu lists them
 // apart: Battle Map steps through the first, Scene Map the rest.
 bool debug_map_in_training(unsigned n);
+
+// VS Mode's other GBA (desktop, kol_vs_cpu.h): 0 "Computer" (an unseen copy
+// of this game, played by the game's AI), 1 "Network" (a player on the local
+// network, kol_vs_net.h). Saved as vs_mode=; Computer unless chosen.
+// A VS match over the network is on (kol_vs_net): what would change one
+// machine's copy of a game and not the other's is held off for it (the
+// analog cursor: it moves the game's cursor outside the buttons).
+void settings_net_match(bool on);
+bool settings_net_match_on();
+// enhancements.cfg's path ("" before settings_init or without a folder).
+std::string settings_file_path();
+// The display's size given to settings_init (landscape; 0 unknown).
+void settings_panel(unsigned* w, unsigned* h);
+unsigned vs_mode_choice_count();
+const char* vs_mode_choice_label(unsigned i);
+unsigned vs_mode_choice_current();
+void vs_mode_choice_set(unsigned i);
 
 unsigned sound_choice_count();
 const char* sound_choice_label(unsigned i);

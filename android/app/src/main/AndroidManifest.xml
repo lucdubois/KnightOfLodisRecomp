@@ -9,6 +9,11 @@
     <!-- Options > Achievements: RetroAchievements (Cheevos.java). Only
          retroachievements.org is contacted, only once a player logs in. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- VS Mode over the network (kol_vs_net.cpp, VsCopy.java): the two games
+         find each other by UDP broadcast on the local network, which Android
+         delivers only while a multicast lock is held. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- The icon is the emblem medallion (res/mipmap-*; made by
          koldecomp/medallion_detail/icon_render.py + icon_res.py). -->
@@ -51,6 +56,13 @@
             android:process=":restart"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true" />
+
+        <!-- VS Mode's unseen copy of the game (VsCopyService.java): its own
+             process, as the native runtime runs once per process. -->
+        <service
+            android:name=".VsCopyService"
+            android:exported="false"
+            android:process=":vscopy" />
 
         <!-- The save and the save states in Android's Files app
              (SavesProvider.java). Only the system's file picker may ask. -->

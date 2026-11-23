@@ -1612,8 +1612,40 @@ mode = "thumb"
 addr = 0x080020B8
 mode = "thumb"
 
+# 0x08000A04 is called by the main loop (bl at 0x08000614) right before it
+# reads KEYINPUT (0x0800061C) and hands the pressed buttons to its key state
+# (0x08002504, IWRAM 0x03000820). VS Mode over the network
+# (src/kol_vs_net.cpp) sets KEYINPUT there for the match's pad read n, so
+# both machines' copies of a game take read n's buttons at the same
+# instruction; it always declines (the routine runs as it is).
+[[mod_function_hook]]
+addr = 0x08000A04
+mode = "thumb"
+
 [[mod_function_hook]]
 addr = 0x0801FBAC
+mode = "thumb"
+
+# 0x0806D924 asks who plays the next turn: the map object of a unit the game's
+# AI plays, 0 for the player's choice (negative for the link's own answers).
+# Called from the unit-turn machine 0x0806AB4C (its result becomes the acting
+# unit, task +0x40) and the move executor 0x080632D4. src/kol_states.cpp
+# (dev, KOL_AI_ARMY=1) only logs it, with each unit's HP and cell: answering
+# it directly skipped the AI's plan (the unit walked to cell 0,0).
+[[mod_function_hook]]
+addr = 0x0806D924
+mode = "thumb"
+
+# 0x08142FAC reads story variable n (byte 0x0200122C + n). Variables 0 and 1
+# say whether side 0 / side 1 is played by the computer (a story battle: 0 and
+# 1); both are 0 in VS Mode. Two places ask them for a turn: the AI picker
+# 0x08097098 (calls at 0x0809711E, 0x08097230, 0x08097242) and the unit-turn
+# machine's sub-state 2 (0x0806AE68, 0x0806AE80), which runs the AI controller
+# (task +0x1A4) in VS Mode only with variable 1 set. src/kol_states.cpp
+# answers 1 to those five calls on this game's own phase (dev, KOL_AI_ARMY=1,
+# F7); every other caller (222 in all) reads the variable as before.
+[[mod_function_hook]]
+addr = 0x08142FAC
 mode = "thumb"
 
 # 0x08060E54(task) is the battle task (0x0202A5B0), one case per state byte
@@ -1788,6 +1820,50 @@ source_addr = 0x087D563C
 mode        = "thumb"
 name        = "iwram_sound_5b24"
 note        = "bridged x7200 per 600 frames on the third pass (~12/frame). Inside the iwram_sound_driver copy; entry point only."
+
+# The link cable's two IWRAM routines (VS Mode), found 2026-11-22 on the
+# vs-link branch with two linked runs (GBARECOMP_LINK): bridged x281,060 and
+# x19,986 over 20,000 frames of a VS battle. The multi-player library's init
+# copies them with CpuSet (literal pool 0x080060D8): 0x40 words from
+# 0x08006474 to 0x03002B70, the serial interrupt's handler (the IRQ table at
+# 0x0815D918 names it, ARM), and 0x10 words from 0x08006434 to 0x03002CA0
+# (its pool reference at 0x080063E4). Entered only with the serial interrupt
+# on, after that copy. Both spans byte-identical to ROM in the IWRAM dumps of
+# both linked games at the run's end.
+[[code_copy]]
+runtime_start = 0x03002B70
+source_start  = 0x08006474
+size          = 0x00000100
+name          = "iwram_link_irq"
+note          = "ARM. The serial interrupt's handler, copied at the link's init."
+
+[[code_copy]]
+runtime_start = 0x03002CA0
+source_start  = 0x08006434
+size          = 0x00000040
+name          = "iwram_link_2ca0"
+note          = "ARM. Copied at the link's init with the handler."
+
+[[extra_func]]
+addr        = 0x03002B70
+source_addr = 0x08006474
+mode        = "arm"
+name        = "iwram_link_irq"
+note        = "bridged x281,060 over a 20,000-frame linked VS battle"
+
+[[extra_func]]
+addr        = 0x03002CA0
+source_addr = 0x08006434
+mode        = "arm"
+name        = "iwram_link_2ca0"
+note        = "bridged x19,986 over a 20,000-frame linked VS battle"
+
+[[extra_func]]
+addr        = 0x03006DF0
+source_addr = 0x087D6908
+mode        = "thumb"
+name        = "iwram_sound_6df0"
+note        = "bridged x638 in a linked VS battle where both armies fought (2026-11-22). Inside the iwram_sound_driver copy, starts with push {r4-r7,lr} after a literal pool; reached through a pointer only. Byte-identical to ROM in the linked runs' IWRAM dumps."
 
 # The sound driver produced a NEW interior PC on every pass -- 0x030061C8,
 # then 0x03005B24, then 0x03005AC0, each "near gf_tfunc_03005A94" and each

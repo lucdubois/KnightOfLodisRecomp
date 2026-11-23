@@ -26,6 +26,9 @@ public final class Mods {
     /** The picked mod's name, or null and why not (kol::menu_mod_picked). */
     static native void nativePicked(String name, String error);
 
+    /** A BIOS picked from Options > Technical > BIOS: null, or why not (kol::menu_bios_picked). */
+    static native void nativeBiosPicked(String error);
+
     /** The mod file in files/mod/, or null. */
     static File current(Context ctx) {
         File[] fs = new File(ctx.getFilesDir(), DIR).listFiles();
@@ -51,6 +54,15 @@ public final class Mods {
         onUi(act -> {
             Intent i = new Intent(act, SetupActivity.class);
             i.putExtra(SetupActivity.EXTRA_PICK_MOD, true);
+            act.startActivity(i);
+        });
+    }
+
+    /** From native (Options > Technical > BIOS, no BIOS file yet): the file picker. */
+    public static void pickBios() {
+        onUi(act -> {
+            Intent i = new Intent(act, SetupActivity.class);
+            i.putExtra(SetupActivity.EXTRA_PICK_BIOS, true);
             act.startActivity(i);
         });
     }

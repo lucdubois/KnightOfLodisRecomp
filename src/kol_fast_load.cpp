@@ -374,7 +374,11 @@ void memo_apply(const MemoEntry& e, ArmCpuState* cpu, std::uint32_t ret) {
 }
 int memo_entry(int fn, ArmCpuState* cpu) {
     const MemoFn& f = kMemoFns[fn];
-    if (!enabled() || g_rec_fn >= 0) return 0;
+    // Not in a VS match over the network: each machine's memo file is its
+    // own, and a hit takes the load ~48 frames less than a miss, so the two
+    // machines' copies of a game would leave it on different frames (they
+    // did, 2026-11-22). The game runs these routines itself there.
+    if (!enabled() || g_rec_fn >= 0 || settings_net_match_on()) return 0;
     int site = -1;
     for (int i = 0; i < kMemoSiteCount; ++i)
         if (kMemoSites[i].fn == fn && kMemoSites[i].ret == (cpu->R[14] & ~1u)) site = i;

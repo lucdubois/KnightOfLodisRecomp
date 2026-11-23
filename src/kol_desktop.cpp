@@ -349,6 +349,11 @@ int key_hook(int scancode, int down) {
     // F5 saves a new numbered state and F6 loads the latest (asked
     // 2026-11-21), as Shift+F1 and F1 do (the host's slot 1, which
     // kol_states numbers); with Shift too, controller or not.
+    // KOL_AI_ARMY=1 (dev): F7 hands this side's army to the AI, and back.
+    if (scancode == SDL_SCANCODE_F7 && ai_army_enabled()) {
+        if (down) ai_army_toggle();
+        return 1;
+    }
     if (scancode == SDL_SCANCODE_F5 || scancode == SDL_SCANCODE_F6) {
         if (down) {
             if (scancode == SDL_SCANCODE_F5) states_save_new();
@@ -401,6 +406,15 @@ void quit_game() {
     SDL_Event e{};
     e.type = SDL_QUIT;
     SDL_PushEvent(&e);
+}
+
+// A restart (Options > Technical > BIOS, Mod): the game quits as by Quit
+// Game (its save written), and main starts the program again
+// (desktop_restart_requested).
+std::atomic<bool> g_restart{false};
+void restart_game() {
+    g_restart.store(true);
+    quit_game();
 }
 
 // ── Options > Display ───────────────────────────────────────────────────
@@ -501,6 +515,8 @@ bool exists(const std::string& p) {
 
 }  // namespace
 
+bool desktop_restart_requested() { return g_restart.load(); }
+
 bool desktop_player_mode() { return g_player; }
 
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
@@ -520,6 +536,7 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     gbarecomp::g_host_assist_keys[1] = SDL_SCANCODE_2;
     MenuPlatform platform;
     platform.quit = &quit_game;
+    platform.restart = &restart_game;
     // Options > Licenses: the notices on a page over the window.
     platform.show_licenses = &licenses_show;
     platform.page_up = &licenses_up;
@@ -550,6 +567,7 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     std::vector<std::string> args = {argc > 0 ? argv[0] : "KnightOfLodisRecomp"};
     if (dir.empty()) {   // the developer's run, as before
         args.insert(args.end(), rest.begin(), rest.end());
+        bios_in_use_set(std::find(rest.begin(), rest.end(), "--no-bios") == rest.end());
         return args;
     }
 
@@ -641,8 +659,13 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     // The real BIOS when the file is one (by its SHA-1), else the built-in
     // replacements (as Android's files/no_bios): a file that is not the GBA
     // BIOS would stop the runtime at start.
-    if (setup_file_is(bios, kBiosSha1)) { args.emplace_back("--bios"); args.push_back(bios); }
+    // <dir>/no_bios (Options > Technical > BIOS) asks for the built-in ones
+    // whatever the file.
+    std::error_code bios_ec;
+    const bool want_builtin = std::filesystem::exists(dir + "/no_bios", bios_ec);
+    if (!want_builtin && setup_file_is(bios, kBiosSha1)) { args.emplace_back("--bios"); args.push_back(bios); }
     else args.emplace_back("--no-bios");
+    bios_in_use_set(args.back() != "--no-bios");
     // The mod: the one file in <dir>/mod, tried on the ROM first, as the
     // runtime will (main_android.cpp pick_mod). One that does not apply, or
     // changes the game's code, is set aside in <dir>/mod_refused and the
@@ -827,6 +850,7 @@ void window_size_now(int* w, int* h) { *w = *h = 0; }
 void window_size_step(int) {}
 void display_ratio_changed() {}
 bool desktop_player_mode() { return false; }
+bool desktop_restart_requested() { return false; }
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;
     return std::vector<std::string>(argv, argv + argc);

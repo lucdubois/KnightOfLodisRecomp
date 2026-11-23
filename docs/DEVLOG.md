@@ -23772,3 +23772,442 @@ perspective on the Metal fallback draws none. gbarecomp now asks for the
 The packaged app logs `renderer=opengl`, the GL warp mesh and the disc blur
 ready. The Windows build forces direct3d11 and has the same gap (not
 changed: it has never run on a real Windows PC).
+
+## VS Mode over a linked pair, and an AI opponent (branch vs-link, 2026-11-21)
+
+Asked: how the link-cable battle works, then whether VS Mode could be played
+against an AI. Quest Mode (title screen) has Quest (exploration, no cable),
+VS and Exchange (cable). gbarecomp's `GBARECOMP_LINK` now links two runs
+(ENHANCEMENTS "The link cable between two runs"): VS and Exchange work
+between two windows (the user played setup and turns).
+
+**The protocol** (GBARECOMP_LINK_LOG, both sides logged the same 300k words):
+Nintendo's multiplayer library pattern (SIOCNT 0x6033, timer 3 every ~1.19 ms
+kicks a transfer; state struct 0x0300102A; MultiSioMain 0x08006210). One
+packet per frame per side: FEFE, counter, checksum, 7 words. Messages: idle
+0x0001 / 0x21 / 0x41 / 0x61 / 0x81 handshakes; 0x2A named sync points
+("formend", "atwait", "getemb", "okemb", "atok", "battle"...); blocks
+0x4C header (length, source, destination) / 0x4E chunks / 0x54 end, 0x4F a
+refusal. Battle start: each side sends its 5 units' records (0x68 from
+0x02001420) and battle entries (0x1C from 0x02001AA0) into the other's enemy
+slots, checksummed. Each action: the acting side sends a 4-halfword command
+from 0x0202B570 (0x45 / 0x46). So moves travel as commands, not inputs.
+
+**The AI experiment** (dev `KOL_AI_ARMY=1` + F7 in kol_states / kol_desktop):
+- A battle entry's +0x17 flags: 0x40 player, 0x41 its leader, 0x42 map 2's
+  allied AI army, 0xC0/0xC1 enemies, 0x20 "the other game's, over the link";
+  +0x00 = 0x80 | roster index for a roster unit, 0xFF otherwise.
+- Story battle (BL_enemy_turn): setting bit 1 on the player's units makes
+  the AI play their phase (Alphonse done at +5600 frames, Allos +6400; the
+  control run waits for input). The fork is in unit-turn step 1: 0x0806D924
+  returns a unit (AI path, writes at 0x0806AC5A) or 0 (the player's cursor,
+  0x0806AD6C).
+- VS: the same marks (and also +0x00 = 0xFF, as an allied army) leave the
+  turn the player's: on the linked headless pair the parent's own unit
+  marked 0xFF/0x43 before its first turn still took 0x0806AD6C. Set during
+  the battle-start exchange, the marks break its checksum (endless 0x4F on
+  "Now loading").
+- Mode byte 0x020012E0 = 4 in Quest battles (2 in story); flags 0x020011CC
+  bit 7 = 1, bit 20 = 0 in VS; the picker path in 0x0806D924 then reaches
+  0x08097098 in both, yet VS returns 0. Open: why.
+
+**Headless pair** (session scratchpad rig2.py, gone next session; rebuild
+from this): two `--tcp` runs with GBARECOMP_LINK parent/child; the parent
+steps frames, the child is `resume`d (the link holds it to the parent; frame
+steps of both deadlock, their step ends differ). From `connecting.state`
+(Quest menu, VS, eight NAVI pages): A both = attack order (parent 1st);
+roulette; Winning Condition (parent); FIGHT IT OUT; deploy: A (Alphonse),
+A..., facing; R, A (Start Game), Up, A ("Start battle?" defaults to No);
+leader: A, A, Up, A ("Appoint as leader?" defaults to No); the battle. Pair
+save states fail (the child cannot park mid-link).
+
+### The AI plays a VS army (2026-11-22)
+
+Both linked games handed to the AI fight each other: units walk up, attack,
+use talents (Atropos), HP drops on both sides, and both games agree on every
+unit's cell and HP at every turn (12,000 frames of battle checked). Dev only:
+`KOL_AI_ARMY=1` and F7, or `KOL_AI_ARMY_AT=<frame>` for a headless pair. In
+VS Mode the switch changes no memory (no slot marks), so it can be on from
+the start, before the battle-start exchange.
+
+How VS Mode decides who plays, and the three answers it needs
+(src/kol_states.cpp, two `[[mod_function_hook]]`s in game.toml: the fork,
+which only logs, and the variables):
+
+- The turn fork 0x0806D924's first test, 0x080A16F8, is "this game's own
+  phase": story flag 7 (the second attacker's phase) XOR flag 20 (set in the
+  first attacker's game). That was the open "why" above: flag 7 alone is not
+  whose turn it is. On its own phase the game asks the AI picker 0x08097098;
+  on the other's, the link.
+- Story variables 0 and 1 (byte 0x0200122C + n, read by 0x08142FAC, 222
+  callers) say whether side 0 / side 1 is the computer's: 0 and 1 in a story
+  battle, both 0 in VS Mode. The picker asks them (0x0809711E, 0x08097230,
+  0x08097242), and so does the unit-turn machine's sub-state 2 (0x0806AE68,
+  0x0806AE80): in VS Mode it runs the AI controller only with variable 1 set
+  (after variable 0 or flag 7), so VS against the computer on side 1 looks
+  built in. The hook answers yes to those five calls on this game's own
+  phase, whichever side it is; every other caller reads the real variable.
+- The AI controller is a function pointer at battle task +0x1A4 (0x0809F511,
+  installed at every battle's start by 0x0806045A -> 0x0809F35C), called
+  from sub-state 2 with the unit and its work block (+0x1A8, 0x0202B340,
+  0x1E0 bytes). It plans the move: the destination goes to task +0x1AC/+0x1AD
+  (setter 0x0806BA68), the executor copies it to +0x148/+0x14C and moves the
+  unit there (0x08066C4A).
+- The unit's AI profile: battle entry +0x0F picks an 8-byte row of 0x08622618
+  (read by 0x0809E438). Story enemies use 1, 2, 4, 0x4B; a roster unit has 0,
+  whose row ends in 3 where the others end in 2. Giving our units profile 1
+  while the planner read it changed nothing: the same cells and HP at every
+  turn as with 0, so it was taken out.
+
+Wrong turns, for the record: answering the fork itself with the unit made
+the AI path run without a plan: each unit "vanished" and stood on cell 0,0
+(the executor moved it to an unset destination). A logging hook on the unit
+removal routine 0x0805FE54 (taken out again) showed no removal in the turn
+(only the three during deployment), and a write watch on the object's X/Z
+found 0x08066C4A. A profile hook on 0x0809E438 put in alone never fired: the
+controller was not running.
+
+The link's IWRAM routines are compiled now (game.toml `iwram_link_irq`
+0x03002B70 from 0x08006474, `iwram_link_2ca0` 0x03002CA0 from 0x08006434,
+copied by the link's init with CpuSet): linked runs were bridged ~280k times
+in 20,000 frames. Once the armies fought, one more: 0x03006DF0, an entry of
+the resident sound driver reached through a pointer (`iwram_sound_6df0`,
+from 0x087D6908).
+
+Tools: `KOL_AI_TRACE=<pc>,...` logs entries of guest functions through
+gbarecomp's function-entry hook (it sees calls made through dispatch only,
+not direct calls inside generated code); gbarecomp
+`GBARECOMP_PRESENT_DUMP_EVERY=K` (one present in K). The headless pair now
+runs without the TCP rig: both games load `connecting.state` with
+`GBARECOMP_INPUT_REPLAY` files made from the rig's plan (setup ends at frame
+7552; the first turn's fork at 7314 is the parent's) and `--window` with SDL's
+dummy driver, so KoL's hooks run.
+
+Not done: the opponent is a second copy of the game driven by a script up to
+the battle; the user plays one window, the AI the other. A single-player
+"VS against the computer" still needs the second game hidden and its menus
+(army, leader, Start) played for it.
+
+### The computer deploys its army and picks a leader (2026-11-22)
+
+Asked: the computer chooses and places random units and selects a random
+leader. `src/kol_vs_bot.cpp` (dev, with the AI army switch): in VS Mode's
+preparation it dispatches up to five random units (VS's MEMBER limit) on
+random free deployment cells, opens R > Start Game > Yes, then appoints a
+random one of them leader > Yes. It presses keys through the host's key
+filter, chosen from the game's own state, so the game's menus and checks do
+the work and no guest memory is written. Checked on a linked pair with both
+games run by it (seeds 7 and 11): each dispatched a different five, both
+appointed a leader (Cybil on the right), and the battle ran with the AIs
+fighting, in step, fully static.
+
+The preparation, found on GG (a story preparation, the same screens) with a
+TCP session, and on the pair with `KOL_AI_STATE_LOG=1` (the battle task's
+bytes when they change) and `KOL_AI_DUMP=<frame>,...` (EWRAM / IWRAM at
+those frames; pairs cannot save states):
+- Battle task phase 0x0202A81C / sub-state 0x0202A82E. Phase 2: 05 the
+  unit list, 09 placing, 08 the box "Choose the direction that the
+  character will face.", 0C the facing. Phase 3: 01 the R menu (VS: Start
+  Game first; GG's has Create Team B / Organize / System), 10 "Start
+  battle?", 1B the leader, 1C-20 the exchange ("Now loading").
+- The unit list 0x02037B40: from +0x00 the roster index of each entry, then
+  zeros (this save: roster 0-15, then 20; the 0x14 at +0x10 is an entry,
+  not a count), +0x2C the cursor's place on the page (two a row), +0x2E rows
+  scrolled. On the last entry, alone in its row, Right goes back one.
+- A deployed unit's battle entry: +0x00 = 0x80 | roster index, +0x14/+0x15
+  its cell, +0x16 facing (the parent's in slots 0-4, the child's in 8-12).
+- Deployment cells: flag 0x40 of the cell table [0x02029CCC] (+2).
+- The Yes/No box 0x020376A0: +0x1F 3 while it takes input, +0x1E the hand
+  (1 No, where it opens; 0 Yes). The block keeps the last box's state (1)
+  after it closes.
+- The leader: "Please select a leader." (A), the map cursor, A on a unit
+  (its cell blinks), A again, then "Appoint X as leader?".
+
+Test: `KOL_KEY_SCRIPT=<file>` (gbarecomp replay lines) presses keys up to
+its last line (GBARECOMP_INPUT_REPLAY would override the filter);
+`KOL_AI_SEED`, `KOL_AI_BOT_LOG=1`.
+
+Then the screens before it (same day; linked runs only, gbarecomp's SioLink
+has a peer; VS Mode's byte 0x020012E0 is still 0 there):
+- "Connecting... Please wait.", then "Decide which player attacks 1st.":
+  IWRAM 0x03000EF0 is 2 while it takes input; the hand opens on Attack 1st
+  in the parent's game and Attack 2nd in the child's, so A in both agrees.
+- A roulette on the world map picks the battlefield by itself.
+- "<town> is the battlefield. 1st attacker sets Winning Condition.": the
+  world map's state pointer 0x02029BD0 is 0x08246D50 and 0x02029BD4 is 1
+  (0x08246D18 before, 0x08246D34 at FIGHT IT OUT); the hand opens on Defeat
+  Leader, which A takes in the first attacker's game (the other only shows
+  it). Found by dumping both games at each screen and keeping the bytes
+  that differ only there.
+With both games run by the computer from `connecting.state` and no key
+script, both reached the battle (Solea, Defeat Leader) in about 1,700 frames
+and the AIs fought; fully static. A pair where the parent replayed the old
+scripted presses fell out of step (the presses were timed for the slower
+flow): a test-harness limit, not the bot's.
+
+### VS Computer: one window, the opponent a hidden copy (2026-11-22)
+
+Asked: how the second game starts in normal play; agreed: a snapshot at
+"Connecting...", desktop first. Options > Gameplay > VS Computer
+(`vs_computer`, on; not on Android or Windows), `src/kol_vs_cpu.cpp`:
+- The player's game, on VS Mode's Connecting screen (world state 0x08246D18,
+  battle mode byte not 4, its serial port in Multi-Player mode, no link),
+  asks the runtime for a state save into its own slot (0x5653), with its path
+  in a session folder under the system's temporary folder (kol_states' path
+  and saved hooks ask kol_vs_cpu first).
+- The save written: gbarecomp's link starts as the parent on a free local
+  port at the snapshot's time (`SioLink::start_parent(guest_cycle)`), a
+  second copy of the program starts from the snapshot (fork + exec of the
+  program's own path, same ROM / BIOS / mod, a copy of the save, SDL dummy
+  video, render and audio drivers, `KOL_VS_OPPONENT=1`,
+  `GBARECOMP_LINK=child:<port>`, every other KOL_/GBARECOMP_/SDL_ variable
+  dropped), and the game is held (`g_runtime_pause_request`: the window
+  stays alive) until the copy's hello. Both then go on from the same point,
+  as the tested pairs did loading one state.
+- The copy (`vs_cpu_child()`, any build): no player mode, the AI army on
+  from the start, the deployment bot, no slot pokes. It takes the player's
+  settings that change how the game runs (Fast Loading / Actions / Walking /
+  Attacks / Spells, Quick Enemy Turns, Smooth Pacing) through
+  KOL_SETTINGS_ON / _OFF. It ends when the link closes, its parent goes, or
+  no link comes in 20 s.
+- The session ends when the game's port leaves Multi-Player mode for 3 s or
+  the link drops; the player's game ending ends the copy (atexit, and the
+  socket closing). A failed try (no snapshot in 5 s, no link in 20 s, the
+  copy gone) is not retried until the Connecting screen is left.
+
+gbarecomp (`sio_link`): `start_parent` / `stop` (the link made and ended
+while the game runs; `instance()` an atomic pointer, a stopped link kept,
+not deleted). The hello waits for each side's clock: the parent sends it
+once its clock is known, the child aligns to it once its own is (its first
+tick, now noted before the first tick's wait). Before, both sides' clocks
+were 0 at the hello in the tested pairs, which is why their offset came out
+0; a parent started mid-game would have been a whole game's time off.
+
+Checked headless from `connecting.state` with the player's side also run by
+the AI (KOL_AI_ARMY=1, dev): linked after 134 ms, clock offset 0, both games
+through attack order, Winning Condition and deployment into the battle
+(first turn decisions at frames 5531 / 5528, five units each), fully static;
+the copy ended with the player's game, nothing left running. Its files:
+`KOL_VS_KEEP=1` keeps the session folder (opponent.log),
+`KOL_VS_CHILD_ENV="A=1 B=2"` passes test switches to it.
+
+Then, from the user (the dev app, from the title): "it goes to Connecting,
+please wait, and then it goes back". From the Quest / VS / Exchange menu the
+port is already in Multi-Player mode, and the world state is 0x08246D18
+from the first of VS's eight NAVI pages of rules (frame 1648 from
+`quest_menu_vs.state` + A); the snapshot was taken there, the copy waited on
+the first page for an A no one pressed, and the player's Connecting (about
+4.5 s, frames 2063-2336) found no one and went back. The Connecting screen
+itself: also 0x02002830 = 0x24 (the world map's scene; 0x46 on the NAVI
+pages, 0x02 on the menu) and IWRAM 0x03000EF0 = 0 (2 while the pages take
+input). `KOL_VS_LOG=1` logs those bytes as they change. Checked from the
+menu (A on VS, A through the pages; the player's side by KOL_KEY_SCRIPT and
+the AI): snapshot at 2063, linked in 134 ms, both games into the battle
+(first turns at 5712 / 5715); `connecting.state` still starts it at once.
+
+Then, still "it goes back to the Quest / VS / Exchange menu", in the dev app
+with the user's save (`KOL_VS_LOG=1`): no NAVI pages at all. A save that has
+seen VS's rules skips them, so the world state stays 0 and the trigger never
+fired. Two causes, both fixed:
+- The screen. The menu's own screen pointer, EWRAM 0x02029B80, is
+  0x08246C18 from the menu's A on (the NAVI pages and Connecting; 0x08246CA8
+  on the menu), and its cursor, IWRAM 0x03000ED1, stays on the item chosen
+  (0 Quest, 1 VS, 2 Exchange) through Connecting (found by diffing states
+  with the cursor on each item and on both Connecting screens). Connecting
+  is 0x02002830 = 0x24 and 0x02002836 = 0x1A on both paths. Exchange's
+  Connecting is the same screen with cursor 2, so it starts no copy. The
+  world state and 0x03000EF0 are logged only now.
+- The port. A Connecting that timed out takes the port out of Multi-Player
+  mode; the next one puts it back only ~32 frames in. The old rule (port in
+  Multi-Player mode) took the snapshot on that frame. It linked in 138 ms,
+  and both ports were told to each other, but no transfer ever started on
+  either side: the game had looked at its cable with no link there. The
+  snapshot is now taken on Connecting's first frame, whatever the port.
+Checked headless: a retry after a timeout (rules shown again in that save)
+snapshot at 2827, linked, attack order at 2918; the NAVI path as before
+(2057, linked, 2148); Exchange never starts one. Then the user in the dev
+app, from the title: linked at frame 4920 in 138 ms, attack order,
+roulette, Winning Condition, FIGHT IT OUT, deployment, and the computer's
+turns in the battle (its log) until the app was closed at ~15,600.
+
+### VS Network: a player on the local network (2026-11-22)
+
+Asked: VS Mode as an option, "VS CPU or VS Network", P2P network play; a
+local network first; the Mac and the Steam Deck first (Android would need
+the copy as a service, as VS Computer does). Options > Gameplay > VS Mode =
+Computer / Network (`vs_mode=`, Computer by default; replaces the VS
+Computer switch; `KOL_VS_MODE=0/1` for tests).
+
+Measured first: the game makes ~14 link transfers every frame, from
+Connecting through the battle, and the link waits a round trip for each;
+this network's round trip to the Deck is ~15 ms (32 at worst), so the cable
+itself over the network would run at ~5 fps. So each machine runs BOTH
+games and only buttons cross the network (`src/kol_vs_net.{h,cpp}`, the
+session in `kol_vs_cpu.cpp`):
+
+- Connecting's first frame (the VS Computer trigger): a snapshot, then the
+  game is held and looks for another game held on Connecting (UDP broadcast
+  beacons on port 19873 every 0.5 s with a TCP port; the smaller random
+  number connects; `KOL_VS_NET_PEER=a.b.c.d` beacons to an address too).
+  B stops looking; 2 minutes without a player gives up; the game's own
+  Connecting then times out as without a cable.
+- The two swap a hello (ROM, BIOS, mod fingerprints: refused if they
+  differ), their snapshot, their save and their enhancements.cfg. Each then
+  starts the OTHER player's game here, unseen (`KOL_VS_MIRROR=1`: its
+  owner's settings and screen size, `KOL_VS_MIRROR_CFG/PANEL`), linked
+  locally; the smaller number's game is the link's parent on both machines.
+  The seen game loads its own snapshot back as the match starts, so all four
+  games start loaded; its end of the local link is made at that load.
+- Buttons by the game's own pad reads, not frames: a
+  `[[mod_function_hook]]` on 0x08000A04, which the main loop calls right
+  before it reads KEYINPUT (0x0800061C) and hands the buttons to its key
+  state (0x08002504, IWRAM 0x03000820). Read n gets the player's buttons
+  from read n - 4 (~67 ms), here and, by the network, in the copy there,
+  which waits for them. Every 64th read both copies hash all of EWRAM and
+  IWRAM; the two machines compare; a difference ends the match ("went out
+  of step"; `KOL_VS_NET_DESYNC_GO_ON=1` goes on). During a match the
+  analog cursor is off (it moves the game's cursor outside the buttons),
+  rewind is blocked, and Fast Loading's memo is not used (each machine's
+  file is its own and a hit takes a load ~48 frames less).
+
+Making two machines' copies of a game run alike took, in order (each found
+by dumping both copies' memory at the same point, `KOL_VS_NET_DUMP=<dir>`
+`KOL_VS_NET_DUMP_FROM=<read>`, and diffing):
+1. The memo: the first desync, a load leaving on different frames.
+2. KoL's frame function runs twice in a frame when the view changes size
+   (battle preparation): a frame-numbered timeline sent nothing new on the
+   second call and the copy, having taken the frame's buttons, waited for
+   them again: both games stuck.
+3. Buttons set from the frame hook landed a few instructions apart in the
+   two copies (the hook fires at a chunk's end): the camera eased a frame
+   later in one (0x02026C90). Hence the pad-read hook.
+4. A stored stack pointer (0x02026C90 is written with SP-relative addresses
+   at 0x08021FEC) and the stack differed by 20 bytes, every run the same:
+   gbarecomp's snapshot did not bring the devices up to the CPU before a
+   save, and a load kept the loader's unflushed cycles (gbarecomp
+   ENHANCEMENTS "Two copies of one pair must agree"). Fixed there; also the
+   link's "ready" line now carries times (`peer_multi_at`).
+Excluding the stack from the hash (tried first) only hid 4.
+
+Checked headless on this Mac, two players with their own data folders,
+both armies played by the AI (`KOL_AI_ARMY=1`, the copies too through
+`KOL_VS_CHILD_ENV`): found each other, swapped, linked in ~160-210 ms,
+12,000 frames into the battle, 191 hashes equal (stack included). VS
+Computer still links and reaches the battle; both render invariants hold
+(66e13ab2 / 9054c456). Test script: two `--data-dir` copies of the dev
+data, quest_menu_vs.state, `KOL_KEY_SCRIPT` A presses.
+
+Then between two machines, the Mac and the Deck (headless, both armies the
+AI's; the Deck's player in the SDK sandbox WITH `--share=network`, which
+`~/kol/run_test.sh` lacks): found each other, linked in 212 ms, 100 hashes
+equal into the battle, a Mac (arm64) and a Deck (x86-64) build agreeing to
+the byte. The Deck then went to sleep mid-match: the Mac's copy of its game
+waited its 30 s for buttons, so the game (held in the link meanwhile) only
+then ended the match. Now the session's thread, on 15 s of silence, a
+goodbye or a closed connection, closes the copy's button pipe and kills it
+(SIGKILL: SDL turns SIGTERM into a quit event a held copy never reads), and
+the game ends the match with "The other player left." 16 s after the other
+game froze (checked by SIGSTOPping one of two players on this Mac).
+(The Deck had moved to 192.168.0.62; `ssh -o HostName=192.168.0.62 -o
+HostKeyAlias=192.168.0.59 steamdeck` verified it against its stored key.)
+
+Then the user, Mac against Deck: "it works, but it's slow, on both". The
+copies drew every picture, in software, at their owner's effects (the
+Deck's copy 128% of a core, more than the game played on it, 103%), and the
+two machines go at the slower one's pace. Copies now run unseen (gbarecomp
+`GBARECOMP_UNSEEN=1`: no frame composed or presented, no pacing; the
+network copy's sound Original): sampled during a match, the copy is waits
+but ~3%. Still in step (140 hashes).
+
+And that match went out of step at read 5760 (90 hashes equal before).
+Not reproducible afterwards (no memory kept then); the likely cause: host
+actions that act on the game on one machine only. Held off during a
+network match now: X/Y's next/previous unit (kol_actions on_pad_button;
+it moves the game's cursor and expires by the wall clock), the options
+menu's sounds played into the game and its Game Options writes (kept until
+the match ends), state loads, and changes to Fast Loading / Actions / Walk
+/ Attacks / Spells, Quick Enemy, Shop Anywhere, No Encounters, the analog
+cursor, rewind, the preset, the view size and the ratio. A desync now keeps
+both sides' session folders with their last four hash points' memory
+(`own_<read>.bin`, `copy_<read>.bin`), to diff the two sides of it.
+
+Then "still super slow" (2026-11-22 night), measured overnight, and three
+causes found:
+- The unseen copies still composed every scanline: `render_skip_now()`
+  set the PPU's skip back to 0 at every present of a windowed run.
+- The link's time reports went at every device flush (tens of thousands of
+  messages a second each way): in the Deck's processes the link's socket
+  thread took 20-30% of a core, and `__sendto` 27% of a copy's main thread
+  on the Mac. Now every `SioLink::kSync` (16384) cycles, the child's own
+  time only once per time and before a wait; `kLookahead` 4 kSync.
+- Then the two sides took turns: the child stopped at the parent's last
+  told time while the parent emulated kSync more, and the parent stopped at
+  each transfer for the child: `GBARECOMP_LINK_STATS=1` showed each visible
+  game waiting 120-135 ms a second. The parent now tells its time at once
+  when the child has caught up (`child_caught_up`): 12 ms a second as the
+  link's parent, ~48 as its child; the copies ~25% of a Mac core (no audio
+  device either), a local match at 57-58 fps with the test players drawing
+  in software.
+And a desync cause that matches the human match: the game culls its own
+sprites by a window KoL widens from the APPLIED view margins plus the
+perspective's live overscan (the right stick's look, the combat camera's
+zoom): host state the other machine's copy never has, and the applied size
+changes at a host-timed boundary, at the battle's preparation. In a network
+match the window now follows the size the scene asks for and a fixed
+overscan (kol_widescreen, `g_vs_target_w/h`; `KOL_VS_NET_CULL_OLD=1` old).
+With `KOL_PERSP_LOOK=0.6,1` given to the seen games only: old, out of step at
+read 2048; new, 142 hashes to the end. Both invariants unchanged.
+
+Then Mac against Deck again (2026-11-23), the Deck rebuilt. Headless, the
+Deck's test player drawing in software: 24 fps, a test artifact (the Deck's
+CPU drawing every frame; the app draws on its GPU). With that player unseen:
+59-60 fps, the Mac's game waiting ~7% on its copy, the Deck 76% idle. Then
+the user, Mac app against the Deck's app, a human match: 58-60 fps, 124
+hashes equal, no desync; "it works well enough". The Mac's game, the link's
+parent, waited 126-199 ms a second on its copy there (the Deck's own game at
+Enhanced is the slower side).
+
+### VS Computer and VS Network on Android (2026-11-23)
+
+Asked: "Make it work for Android. CPU and network." An app's process cannot
+fork and exec the app again, so the copy runs in `VsCopyService`, a service
+in a process of its own (`:vscopy` in the manifest; the native runtime runs
+once per process), started through `kol::VsPlatform` (kol_vs_cpu.h), which
+main_android.cpp fills: `VsCopy.start(argv, env, log, dir)` puts the copy's
+arguments and switches in an intent; the service loads SDL2 and main and
+calls `VsCopyService.nativeRun`, which sets the switches (what the desktop
+gives the copy as its environment), sends its output to the session's log,
+loads its owner's settings and runs the runtime headless on a 16 MB thread.
+The copy ends itself when its link or channel closes (no child pid to wait
+for), and the service's process with it.
+- Copies now run headless everywhere (`--no-window --frames 2000000000`: a
+  headless run with no count runs one frame), checked in step with a seen
+  game (142 hashes); `KOL_VS_COPY_WINDOW=1` the old hidden window.
+- The copy's channel is a local TCP socket (the game listens, the copy
+  connects), not inherited pipes: a service inherits no descriptors.
+- Headless, no window polls the pad: the computer's copy's deployment bot
+  pressed nothing until vs_bot_tick set KEYINPUT itself each frame.
+- An unseen game gets the plain sound and no HD bank (settings
+  apply_sound): loading the bank goes through SDL's asset manager, which a
+  service process lacks (the network copy crashed on a null jclass).
+- The Wi-Fi's multicast lock (`VsCopy.wifiLock`, permissions
+  ACCESS_WIFI_STATE + CHANGE_WIFI_MULTICAST_STATE) is held while a game looks
+  for another: Android drops broadcasts without it. TMPDIR = files/vs.
+- Options > Gameplay > VS Mode now on Android too; the second screen's
+  taps and bar buttons that act on the game (a unit's card, next/previous
+  unit, profile, the world map's bar) are held off in a network match.
+Checked on the Android emulator (Medium_Phone_API_36.1, arm64; never the
+Thor): VS Computer from the menu state into the battle (`:vscopy` running,
+linked in 4.9 s, the computer deploying, AI turns); VS Network, emulator
+against this Mac (`adb emu redir add udp:19874:19873`,
+`KOL_VS_NET_PEER=127.0.0.1:19874` on the Mac, `KOL_VS_NET_NONCE=1` on the
+emulator so it is the side that connects out of its NAT): linked, 117
+hashes equal into the battle, ~24 fps (the emulator draws in software).
+Test trap: a test player's settings given by environment (KOL_SETTINGS_OFF)
+never reach its copy on the other machine, which loads its settings file:
+put them in the data folder's enhancements.cfg (a desync at read 2176
+otherwise). The emulator's app is provisioned by run-as with files/env.cfg
+(KOL_LOAD_STATE_AT=300 + slot 9 = quest_menu_vs.state, the key script).
+
+Not yet: the Thor itself (the user installs), the notices' look, a match
+played to its end and a rematch, Windows, internet play.

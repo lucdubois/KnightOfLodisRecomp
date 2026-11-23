@@ -24,6 +24,8 @@
 #include "kol_shop_buy.h"
 #include "kol_gulls.h"
 #include "kol_states.h"
+#include "kol_vs_bot.h"
+#include "kol_vs_cpu.h"
 #include "kol_rumble.h"
 #include "kol_stick_cursor.h"
 #include "kol_auto_win.h"
@@ -167,6 +169,9 @@ inline unsigned ui_layers() { return g_world_bg2 ? 0x8u : 0xCu; }
 // (KOL_WS_WAS_BATTLE=1: a state loaded in a scene that only stays the battle map coming
 // from it, is_battle_map's was_battle, starts as if it did: map 88's collapse, 0294.)
 bool g_battle_scene = std::getenv("KOL_WS_WAS_BATTLE") != nullptr;
+// The view size the scene asks for, settled (the request below), whatever
+// size is applied yet: VS over a network culls by it (kol_vs_net).
+unsigned g_vs_target_w = 0, g_vs_target_h = 0;
 
 // Set per frame: is there actually full-width furniture to continue? The
 // dialogue box occupies the same scanlines as the bottom bar, and continuing
@@ -2238,11 +2243,17 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
         kol::fast_actions_install();
         kol::scene_strip_install();
         kol::states_install();
+        kol::ai_army_install();
+        kol::vs_bot_install();   // after every other key filter: it overrides them
+        kol::vs_cpu_install();
     }
     kol::terrain_probe_tick(f->frame_count);
     kol::debug_scene_camera_tick();
     kol::tile_edit_test_tick(f->frame_count);
     kol::states_test_tick();
+    kol::ai_army_tick(f->frame_count);
+    kol::vs_bot_tick(f->frame_count);
+    kol::vs_cpu_tick();
     kol::edit_panel_test_tick(f->frame_count);
     // KOL_SAVE_STATE_AT=<frame>[,<slot>] (headless runs): one save state at
     // that absolute frame, to the ROM's .state<slot> (default 9), the way
@@ -2760,9 +2771,24 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
     // whose margins are blacked out must keep the stock window, or the game
     // spends OAM slots on sprites nobody can see. Zero margins restore the
     // stock immediates exactly, so the faithful render is untouched.
-    if (g_ws_pillarbox)
+    // VS over a network (kol_vs_net): the guest's cull is the game's own
+    // sprite list, and the other machine's copy of this game must build the
+    // same one, so it follows only what both copies know alike: the size
+    // this scene asks for (g_vs_target_w/h, below: the applied one lags by a
+    // host-timed boundary) and the settings, with a fixed overscan for the
+    // perspective's far side rather than the camera's (the right stick's
+    // look and the combat camera's zoom move it). Matches went out of step
+    // at the battle's preparation, where the view widens (2026-11-22).
+    if (g_ws_pillarbox) {
         kol::obj_cull_set_margins(0, 0, 0, 0);
-    else
+    } else if (kol::settings_net_match_on() && g_vs_target_w >= 240u && g_vs_target_h >= 160u &&
+               !env_on("KOL_VS_NET_CULL_OLD")) {   // (=1: the applied view and live overscan, as before)
+        const unsigned xw = g_vs_target_w - 240u, xh = g_vs_target_h - 160u;
+        const unsigned el = xw / 2u, er = xw - el, et = xh / 2u, eb = xh - et;
+        const unsigned os = perspective ? g_vs_target_w / 4u : 0u;   // past the perspective's widest at rest
+        const unsigned ot = perspective ? g_vs_target_h / 4u : 0u;
+        kol::obj_cull_set_margins(el + os, er + os, et + ot, eb);
+    } else
         kol::obj_cull_set_margins(f->extra_left + g_ppu_scene_overscan[0],
                                   f->extra_right + g_ppu_scene_overscan[1],
                                   f->extra_top + g_ppu_scene_overscan[2],
@@ -2821,6 +2847,10 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
                 seen_w = want_w; seen_h = want_h; settled = 0;
             } else if (settled < kSettleFrames) {
                 ++settled;
+            }
+            if (settled >= kSettleFrames) {   // what the scene asks for, whatever is applied (VS cull, above)
+                g_vs_target_w = want_w;
+                g_vs_target_h = want_h;
             }
             if (settled >= kSettleFrames &&
                 (f->view_width != want_w || f->view_height != want_h) &&

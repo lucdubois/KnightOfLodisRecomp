@@ -31,6 +31,8 @@
 #include <fstream>
 #include <iterator>
 
+#include "kol_vs_cpu.h"
+#include "kol_vs_net.h"
 #include "kol_dev.h"
 #include "kol_settings.h"
 #include "kol_rumble.h"
@@ -169,6 +171,59 @@ bool rumble_bind(JNIEnv* env) {
     return true;
 }
 
+// VS Mode's copies (kol_vs_cpu.h VsPlatform): VsCopy.start(argv, env, log,
+// dir) runs one in VsCopyService, a process of its own (":vscopy": an app's
+// process cannot start the native game twice); VsCopy.wifiLock holds the
+// Wi-Fi's multicast lock while a game looks for another on the network
+// (Android drops broadcasts without it). Resolved on SDLThread like Rumble.
+jclass    g_vs_class = nullptr;
+jmethodID g_vs_start = nullptr;
+jmethodID g_vs_wifi = nullptr;
+
+bool vs_bind(JNIEnv* env) {
+    if (!env) return false;
+    jclass local = env->FindClass("com/koldecomp/game/VsCopy");
+    if (!local) { env->ExceptionClear(); return false; }
+    g_vs_class = static_cast<jclass>(env->NewGlobalRef(local));
+    env->DeleteLocalRef(local);
+    g_vs_start = env->GetStaticMethodID(g_vs_class, "start",
+        "([Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z");
+    g_vs_wifi = env->GetStaticMethodID(g_vs_class, "wifiLock", "(Z)V");
+    if (!g_vs_start || !g_vs_wifi) { env->ExceptionClear(); return false; }
+    return true;
+}
+
+jobjectArray vs_strings(JNIEnv* env, const std::vector<std::string>& v) {
+    jclass str = env->FindClass("java/lang/String");
+    jobjectArray a = env->NewObjectArray(static_cast<jsize>(v.size()), str, nullptr);
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        jstring s = env->NewStringUTF(v[i].c_str());
+        env->SetObjectArrayElement(a, static_cast<jsize>(i), s);
+        env->DeleteLocalRef(s);
+    }
+    env->DeleteLocalRef(str);
+    return a;
+}
+
+bool vs_spawn_android(const std::vector<std::string>& argv, const std::vector<std::string>& envs,
+                      const std::string& log, const std::string& dir) {
+    auto* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env || !g_vs_start) return false;
+    jobjectArray a = vs_strings(env, argv), e = vs_strings(env, envs);
+    jstring l = env->NewStringUTF(log.c_str()), d = env->NewStringUTF(dir.c_str());
+    const bool ok = env->CallStaticBooleanMethod(g_vs_class, g_vs_start, a, e, l, d);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    env->DeleteLocalRef(a); env->DeleteLocalRef(e); env->DeleteLocalRef(l); env->DeleteLocalRef(d);
+    return ok;
+}
+
+void vs_wifi_lock_android(bool on) {
+    auto* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env || !g_vs_wifi) return;
+    env->CallStaticVoidMethod(g_vs_class, g_vs_wifi, on ? JNI_TRUE : JNI_FALSE);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
 // RetroAchievements (kol_cheevos.h): Cheevos.java's HTTP, toast and login
 // form. Resolved on SDLThread like Rumble; post() is called on the native
 // worker each request runs on, attached through SDL_AndroidGetJNIEnv.
@@ -255,6 +310,7 @@ void cheevos_login_form_android() {
 jclass    g_mods_class = nullptr;
 jclass    g_setup_class = nullptr;
 jmethodID g_mods_pick = nullptr, g_mods_remove = nullptr, g_mods_restart = nullptr, g_mods_licenses = nullptr;
+jmethodID g_mods_pick_bios = nullptr;
 jmethodID g_setup_unlink = nullptr;
 
 bool platform_bind(JNIEnv* env) {
@@ -273,6 +329,8 @@ bool platform_bind(JNIEnv* env) {
     g_mods_remove = env->GetStaticMethodID(g_mods_class, "remove", "()V");
     g_mods_restart = env->GetStaticMethodID(g_mods_class, "restart", "()V");
     g_mods_licenses = env->GetStaticMethodID(g_mods_class, "showLicenses", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    g_mods_pick_bios = env->GetStaticMethodID(g_mods_class, "pickBios", "()V");
     g_setup_unlink = env->GetStaticMethodID(g_setup_class, "unlinkRom", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     return g_mods_pick && g_mods_remove && g_mods_restart && g_setup_unlink;
@@ -289,6 +347,7 @@ void mods_remove_android() { call_static(g_mods_class, g_mods_remove); }
 void restart_android() { call_static(g_mods_class, g_mods_restart); }
 void unlink_rom_android() { call_static(g_setup_class, g_setup_unlink); }
 void licenses_android() { call_static(g_mods_class, g_mods_licenses); }
+void bios_pick_android() { call_static(g_mods_class, g_mods_pick_bios); }
 
 // The mod to play: the one file in files/mod/ (Mods.java puts it there), or
 // "". It is checked here first, as the runtime will (rom_patch.h): one that
@@ -774,6 +833,13 @@ int main(int argc, char** argv) {
     const std::string rom  = std::string(base) + "/totkol.gba";
     const std::string bios = std::string(base) + "/gba_bios.bin";
     const std::string save = std::string(base) + "/totkol.sav";
+    // VS Mode's session folders (kol_vs_cpu: std::filesystem's temporary
+    // folder): an app has no /tmp; files/vs is its own.
+    {
+        const std::string tmp = std::string(base) + "/vs";
+        mkdir(tmp.c_str(), 0700);
+        SDL_setenv("TMPDIR", tmp.c_str(), 1);
+    }
 
     // Android has no runtime C toolchain and blocks dlopen() of app-written
     // .so files, so the self-heal recompile tier cannot run. The interpreter
@@ -836,8 +902,11 @@ int main(int argc, char** argv) {
     // "Play without a BIOS (experimental)" switch. The runtime then takes the
     // built-in replacements (--no-bios) and no BIOS file at all, so
     // gba_bios.bin may be absent. Without the marker the real BIOS is used,
-    // as before.
-    const bool no_bios = access((std::string(base) + "/no_bios").c_str(), F_OK) == 0;
+    // as before. Options > Enhancement Options > Technical > BIOS writes or
+    // removes the same marker, for the next start (2026-11-23); with no
+    // gba_bios.bin the built-in one is the only choice.
+    const bool no_bios = access((std::string(base) + "/no_bios").c_str(), F_OK) == 0 ||
+                         access(bios.c_str(), R_OK) != 0;
     if (no_bios) {
         std::printf("android: files/no_bios set; playing without a BIOS "
                     "(built-in replacements)\n");
@@ -910,6 +979,8 @@ int main(int argc, char** argv) {
     }
     kol::settings_init(base, static_cast<unsigned>(resolved_width),
                        panel_w, panel_h);
+    kol::bios_in_use_set(!no_bios);   // Technical > BIOS: what this start plays with
+    kol::vs_cpu_args(args);   // VS Mode's copies start with the same ROM, BIOS and mod
     std::vector<char*> argv_storage;
     argv_storage.reserve(args.size() + 1);
     for (auto& a : args) argv_storage.push_back(a.data());
@@ -955,10 +1026,19 @@ int main(int argc, char** argv) {
         p.remove_mod = &mods_remove_android;
         p.restart = &restart_android;
         if (g_mods_licenses) p.show_licenses = &licenses_android;
+        if (g_mods_pick_bios) p.pick_bios = &bios_pick_android;   // Technical > BIOS
         if constexpr (kol::kDevTools) p.unlink_rom = &unlink_rom_android;   // Debug > Unlink ROM
         kol::menu_set_platform(p);
     } else {
         std::fprintf(stderr, "mods: Mods / SetupActivity not bound; no Options > Mod\n");
+    }
+    if (vs_bind(static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv()))) {
+        kol::VsPlatform vp;
+        vp.spawn = &vs_spawn_android;
+        vp.wifi_lock = &vs_wifi_lock_android;
+        kol::vs_set_platform(vp);
+    } else {
+        std::fprintf(stderr, "vs: VsCopy not bound; no VS against the computer or the network\n");
     }
     if (rumble_bind(static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv())))
         kol::rumble_set_backend(&rumble_android);
@@ -982,6 +1062,66 @@ int main(int argc, char** argv) {
 }
 
 
+// ── VS Mode's copy, in VsCopyService's process ──────────────────────────────
+// The other player's (or the computer's) game, unseen: the session's switches
+// set first (they are what the desktop passes as the copy's environment),
+// its output to the session's log, its settings from its owner's file, then
+// the runtime headless on a thread of our own size, as main() runs it.
+extern "C" JNIEXPORT jint JNICALL Java_com_koldecomp_game_VsCopyService_nativeRun(JNIEnv* env, jclass,
+                                                                               jobjectArray jargv, jobjectArray jenv,
+                                                                               jstring jlog, jstring jdir) {
+    auto strings = [env](jobjectArray a) {
+        std::vector<std::string> v;
+        const jsize n = a ? env->GetArrayLength(a) : 0;
+        for (jsize i = 0; i < n; ++i) {
+            auto s = static_cast<jstring>(env->GetObjectArrayElement(a, i));
+            const char* c = s ? env->GetStringUTFChars(s, nullptr) : nullptr;
+            v.emplace_back(c ? c : "");
+            if (c) env->ReleaseStringUTFChars(s, c);
+            if (s) env->DeleteLocalRef(s);
+        }
+        return v;
+    };
+    auto string = [env](jstring s) {
+        const char* c = s ? env->GetStringUTFChars(s, nullptr) : nullptr;
+        std::string out = c ? c : "";
+        if (c) env->ReleaseStringUTFChars(s, c);
+        return out;
+    };
+    std::vector<std::string> args = strings(jargv);
+    const std::vector<std::string> sets = strings(jenv);
+    const std::string log = string(jlog), dir = string(jdir);
+    if (!log.empty()) {
+        std::freopen(log.c_str(), "w", stdout);
+        std::freopen(log.c_str(), "a", stderr);
+        setvbuf(stdout, nullptr, _IOLBF, 0);
+        setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+    if (!dir.empty() && chdir(dir.c_str()) != 0) std::fprintf(stderr, "vs: no folder %s\n", dir.c_str());
+    for (const std::string& kv : sets) {
+        const std::size_t eq = kv.find('=');
+        if (eq != std::string::npos) setenv(kv.substr(0, eq).c_str(), kv.substr(eq + 1).c_str(), 1);
+    }
+    if (kol::vs_mirror_child()) kol::vsnet::mirror_settings();
+    std::vector<char*> argv_storage;
+    for (auto& a : args) argv_storage.push_back(a.data());
+    argv_storage.push_back(nullptr);
+    GuestArgs ga{static_cast<int>(argv_storage.size() - 1), argv_storage.data(), 1};
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, kGuestStackBytes);
+    pthread_t guest;
+    if (pthread_create(&guest, &attr, guest_thread, &ga) != 0) {
+        pthread_attr_destroy(&attr);
+        return 1;
+    }
+    pthread_attr_destroy(&attr);
+    pthread_join(guest, nullptr);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    return ga.result;
+}
+
 // ── The settings menu's bridge ───────────────────────────────────────────────
 // Java builds the menu from this list rather than carrying its own copy, so a
 // new toggle needs no Java change: add it to kol::Setting and it appears.
@@ -995,6 +1135,15 @@ extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativePicked(JNIE
     const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
     kol::menu_mod_picked(n, e);
     if (n) env->ReleaseStringUTFChars(name, n);
+    if (e) env->ReleaseStringUTFChars(error, e);
+}
+
+// Options > Technical > BIOS's picker (Mods.nativeBiosPicked): kept and
+// chosen for the next start, or why not; the game says so in its dialog.
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeBiosPicked(JNIEnv* env, jclass,
+                                                                             jstring error) {
+    const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
+    kol::menu_bios_picked(e);
     if (e) env->ReleaseStringUTFChars(error, e);
 }
 

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -40,7 +41,8 @@ constexpr int kCount = static_cast<int>(Setting::Count);
 bool g_on[kCount] = {true, true, true, false, false, false, true, false, false, false,
                      false, false, false, false, false, false, false, false, true,
                      false, false, false, false, false, false, true, true, true, true,
-                     false, false, false, false, false, true, true, true, false, false, true, true, true};
+                     false, false, false, false, false, true, true, true, false, false, true, true, true,
+                     false, false, false};
 // The layer switches are for the moment: never saved, never loaded.
 bool persisted(int i) {
     return i < static_cast<int>(Setting::DebugHideBG0) || i > static_cast<int>(Setting::DebugHideOBJ);
@@ -80,6 +82,12 @@ const char* const kRumbleChoices[] = {"Off", "Light", "Medium", "Strong"};
 constexpr float kRumbleStrength[] = {0.0f, 0.4f, 0.7f, 1.0f};
 constexpr unsigned kRumbleChoiceCount = sizeof(kRumbleChoices) / sizeof(kRumbleChoices[0]);
 unsigned g_rumble_choice = 2;
+// VS Mode's other GBA (kol_vs_cpu): the computer, or a player on the local
+// network; saved as vs_mode=.
+const char* const kVsModeChoices[] = {"Computer", "Network"};
+constexpr unsigned kVsModeChoiceCount = sizeof(kVsModeChoices) / sizeof(kVsModeChoices[0]);
+unsigned g_vs_mode_choice = 0;
+std::atomic<bool> g_net_match{false};
 // Shadows cast by the terrain: off or on. The sun is 36 degrees above the
 // ground (its direction is kol_focus shadow_dir_pick's) unless the map has
 // its own sun (kol_focus kMapSuns, the editor's `sun` lines): the sun the
@@ -356,6 +364,14 @@ void apply_view_size() {
 // The choice's audio mode. HD loads its bank here, the first time it is
 // picked (at start or from a menu), so no one else pays for it.
 void apply_sound() {
+    // A game no one sees or hears (VS Mode's unseen copies, GBARECOMP_UNSEEN):
+    // the plain sound and no HD bank. (Loading the bank from the APK goes
+    // through SDL's asset manager, which an Android service process does not
+    // have: the network copy crashed there, 2026-11-23.)
+    if (const char* u = std::getenv("GBARECOMP_UNSEEN"); u && *u == '1') {
+        gba::gba_audio_request_hq_mode(kSoundModes[0]);
+        return;
+    }
     int mode = kSoundModes[g_sound_choice];
     if (g_sound_choice == kSoundHD && !hd_audio_activate()) mode = kSoundModes[1];
     gba::gba_audio_request_hq_mode(mode);
@@ -372,6 +388,7 @@ void save() {
     std::fprintf(f, "music_quality=%u\n", g_sound_choice);
     std::fprintf(f, "ambient_occlusion=%u\n", g_ao_choice);
     std::fprintf(f, "rumble=%u\n", g_rumble_choice);
+    std::fprintf(f, "vs_mode=%u\n", g_vs_mode_choice);
     std::fprintf(f, "shadows=%u\n", g_shadow_choice);
     std::fprintf(f, "music_volume=%u\n", g_music_volume * 10u);
     std::fprintf(f, "effects_volume=%u\n", g_effects_volume * 10u);
@@ -407,6 +424,10 @@ unsigned width_choice_current() {
 }
 
 void width_choice_set(unsigned i) {
+    if (g_net_match.load(std::memory_order_relaxed)) {   // the view: the game's sprite lists follow it
+        std::fprintf(stderr, "settings: the view stays as it is during a VS match over the network\n");
+        return;
+    }
     if (i >= g_choice_count) return;
     g_widescreen_width = g_choices[i].width;
     g_widescreen_height = g_choices[i].height;
@@ -477,6 +498,34 @@ void volume_choice_set(bool effects, unsigned i) {
 
 std::string settings_dir() { return g_dir; }
 
+namespace {
+bool g_bios_real = true;
+}
+void bios_in_use_set(bool real) { g_bios_real = real; }
+bool bios_in_use() { return g_bios_real; }
+bool bios_next_real() {
+    if (g_dir.empty()) return g_bios_real;
+    std::error_code ec;
+    return !std::filesystem::exists(g_dir + "/no_bios", ec);
+}
+void bios_next_set(bool real) {
+    if (g_dir.empty()) return;
+    const std::string marker = g_dir + "/no_bios";
+    if (real) {
+        std::remove(marker.c_str());
+    } else if (std::FILE* f = std::fopen(marker.c_str(), "w")) {
+        std::fputs("1\n", f);
+        std::fclose(f);
+    }
+    std::fprintf(stderr, "settings: BIOS at the next start: %s\n", real ? "the GBA's" : "built-in");
+}
+bool bios_file_present() {
+    if (g_dir.empty()) return false;
+    std::error_code ec;
+    const std::string bios = g_dir + "/gba_bios.bin";
+    return std::filesystem::exists(bios, ec) && std::filesystem::file_size(bios, ec) == 16384u;
+}
+
 const char* rom_patch_name() { return g_runtime_rom_patch_name; }
 std::string rom_file_tag() {
     if (!g_runtime_rom_patch_name || !g_runtime_rom_sha1) return {};
@@ -543,6 +592,30 @@ void rumble_choice_set(unsigned i) {
     save();
     std::fprintf(stderr, "settings: rumble = %s\n", kRumbleChoices[i]);
     std::fflush(stderr);
+}
+std::string settings_file_path() { return cfg_path(); }
+void settings_net_match(bool on) { g_net_match.store(on); }
+bool settings_net_match_on() { return g_net_match.load(std::memory_order_relaxed); }
+void settings_panel(unsigned* w, unsigned* h) {
+    if (w) *w = g_panel_w;
+    if (h) *h = g_panel_h;
+}
+unsigned vs_mode_choice_count() { return kVsModeChoiceCount; }
+const char* vs_mode_choice_label(unsigned i) { return i < kVsModeChoiceCount ? kVsModeChoices[i] : ""; }
+unsigned vs_mode_choice_current() {
+    // KOL_VS_MODE=0/1 for a desktop test run (no enhancements.cfg needed).
+    static const int env = [] {
+        const char* e = std::getenv("KOL_VS_MODE");
+        return e && *e ? std::atoi(e) : -1;
+    }();
+    if (env >= 0 && static_cast<unsigned>(env) < kVsModeChoiceCount) return static_cast<unsigned>(env);
+    return g_vs_mode_choice;
+}
+void vs_mode_choice_set(unsigned i) {
+    if (i >= kVsModeChoiceCount) return;
+    g_vs_mode_choice = i;
+    save();
+    std::fprintf(stderr, "settings: vs_mode = %s\n", kVsModeChoices[i]);
 }
 float rumble_strength() { return kRumbleStrength[g_rumble_choice < kRumbleChoiceCount ? g_rumble_choice : 0]; }
 
@@ -675,6 +748,10 @@ int preset_current() {
     return -1;
 }
 void preset_apply(unsigned i) {
+    if (g_net_match.load(std::memory_order_relaxed)) {   // the view: the game's sprite lists follow it
+        std::fprintf(stderr, "settings: the view stays as it is during a VS match over the network\n");
+        return;
+    }
     if (i >= kPresetCount) return;
     const Preset& p = kPresets[i];
     preset_fields(p);
@@ -705,6 +782,10 @@ void size_for_new_shape(int preset, unsigned old_w, unsigned old_h) {
 }  // namespace
 
 void ratio_choice_set(unsigned i) {
+    if (g_net_match.load(std::memory_order_relaxed)) {   // the view: the game's sprite lists follow it
+        std::fprintf(stderr, "settings: the view stays as it is during a VS match over the network\n");
+        return;
+    }
     if (i >= kRatioCount) return;
     const int preset = preset_current();
     g_ratio = i;
@@ -757,6 +838,7 @@ bool setting_on(Setting s) {
     // always on, in every build, no menu row (the user, 2026-11-16, wanted it
     // fixed on: it is the players' only way to make states).
     if (s == Setting::DebugNumberedStates) return true;
+    if (s == Setting::AnalogCursor && g_net_match.load(std::memory_order_relaxed)) return false;
     // A public build (kol_dev.h): every debug setting off, whatever an old
     // enhancements.cfg says. Not No Random Battles: a Cheats row since 10-21.
     if constexpr (!kol::kDevTools)
@@ -773,9 +855,26 @@ bool setting_on(Setting s) {
     return (i >= 0 && i < kCount) ? g_on[i] : false;
 }
 
+// VS over a network (settings_net_match): what changes how the game itself
+// runs stays as the match began (the other machine's copy of this game has
+// it so), until the match ends.
+static bool held_in_match(Setting s) {
+    if (!g_net_match.load(std::memory_order_relaxed)) return false;
+    switch (s) {
+    case Setting::FastLoading: case Setting::FastActions: case Setting::FastWalk: case Setting::QuickEnemy:
+    case Setting::FastAttack: case Setting::FastSpells: case Setting::ShopAnywhere: case Setting::DebugNoEncounters:
+    case Setting::AnalogCursor: case Setting::Rewind:
+        std::fprintf(stderr, "settings: %s stays as it is during a VS match over the network\n", setting_key(s));
+        return true;
+    default:
+        return false;
+    }
+}
+
 void setting_set(Setting s, bool on) {
     const int i = static_cast<int>(s);
     if (i < 0 || i >= kCount) return;
+    if (held_in_match(s)) return;
     g_on[i] = on;
     apply(s);
     save();
@@ -849,6 +948,11 @@ void settings_init(const char* dir, unsigned widescreen_width,
                     std::strcmp(line, "effects_volume") == 0) {
                     const unsigned v = static_cast<unsigned>(std::min(std::max(value, 0), 100) + 5) / 10u;
                     (line[0] == 'm' ? g_music_volume : g_effects_volume) = v;
+                    continue;
+                }
+                if (std::strcmp(line, "vs_mode") == 0) {
+                    if (value >= 0 && static_cast<unsigned>(value) < kVsModeChoiceCount)
+                        g_vs_mode_choice = static_cast<unsigned>(value);
                     continue;
                 }
                 if (std::strcmp(line, "rumble") == 0) {

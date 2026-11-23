@@ -164,7 +164,13 @@ std::int64_t now_ms() {
 // older than this.
 constexpr std::int64_t kCycleResetMs = 2000;
 std::int64_t g_last_served_ms = 0;
+// VS over a network (kol_vs_net): what a tap, a shortcut or a bar button
+// asks of the game acts on this machine's game only, never on its copy on
+// the other machine, so the two would go out of step: none in a match.
+bool held_in_match() { return settings_net_match_on(); }
+
 void request(int dir) {
+    if (held_in_match()) return;
     g_request_ms.store(now_ms(), std::memory_order_relaxed);
     g_dir.store(dir, std::memory_order_release);
 }
@@ -1184,6 +1190,10 @@ void on_pad_button(int button, int down) {
     }
     if (menu_is_open()) return;   // the second screen's menu has the pad
     if (!which) return;
+    // VS over a network: they move the game's cursor outside the buttons,
+    // and the other machine's copy of this game would not see it (a match
+    // went out of step, 2026-11-22).
+    if (settings_net_match_on()) return;
     g_button_held.store(which, std::memory_order_relaxed);
     request(which == 1 ? 1 : -1);
 }
@@ -1685,12 +1695,13 @@ void actions_install() {
 
 void action_next_unit() { request(1); }
 void action_cursor_to_object(int index) {
-    if (index < 0 || index >= kObjCount) return;
+    if (index < 0 || index >= kObjCount || held_in_match()) return;
     g_jump_ms.store(now_ms(), std::memory_order_relaxed);
     g_jump.store(index, std::memory_order_release);
 }
 void action_previous_unit() { request(-1); }
 void action_open_profile(std::uint32_t record) {
+    if (held_in_match()) return;
     g_profile_request_ms.store(now_ms(), std::memory_order_relaxed);
     g_profile_record.store(record, std::memory_order_release);
 }
@@ -1699,7 +1710,7 @@ void action_world_item(int item) {
     static constexpr int kNext[5] = {kCommandOrganize, kCommandOrganize, kCommandOrganize,
                                      kCommandTraining, kCommandShop};
     static constexpr int kScreen[5] = {4, 9, 15, 0, 0};
-    if (item < 0 || item > 4) return;
+    if (item < 0 || item > 4 || held_in_match()) return;
     if (item <= 2 && action_organize_ready()) {   // already in Organize
         g_org_request_ms.store(now_ms(), std::memory_order_relaxed);
         g_org_request.store(item + 1, std::memory_order_release);
@@ -1711,10 +1722,12 @@ void action_world_item(int item) {
 }
 int action_world_items_ok() { return g_items_ok.load(std::memory_order_relaxed); }
 void action_world_save() {
+    if (held_in_match()) return;
     g_menu_request_ms.store(now_ms(), std::memory_order_relaxed);
     g_menu_request.store(kCommandSave, std::memory_order_release);
 }
 void action_world_load() {
+    if (held_in_match()) return;
     g_menu_request_ms.store(now_ms(), std::memory_order_relaxed);
     g_menu_request.store(kCommandLoad, std::memory_order_release);
 }

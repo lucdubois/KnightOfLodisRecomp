@@ -56,6 +56,10 @@ public class SetupActivity extends Activity {
     // back, no auto-launch.
     static final String EXTRA_PICK_MOD = "pick_mod";
     private boolean pickModOnly;
+    // Options > Technical > BIOS with no BIOS file (Mods.pickBios): the picker
+    // alone, the file checked, the answer to the game (Mods.nativeBiosPicked).
+    static final String EXTRA_PICK_BIOS = "pick_bios";
+    private boolean pickBiosOnly;
 
     private static final int RED = 0xFFD32F2F, GREEN = 0xFF2E7D32, GREY = 0xFF9E9E9E;
 
@@ -225,6 +229,11 @@ public class SetupActivity extends Activity {
             if (savedInstanceState == null) pick(REQ_MOD);
             return;
         }
+        pickBiosOnly = getIntent().getBooleanExtra(EXTRA_PICK_BIOS, false);
+        if (pickBiosOnly) {
+            if (savedInstanceState == null) pick(REQ_BIOS);
+            return;
+        }
         // Already provisioned from a previous run (the right ROM): go straight
         // to the game.
         if (romOk) launchGame();
@@ -242,23 +251,53 @@ public class SetupActivity extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
-            if (pickModOnly) finish();
+            if (pickModOnly || pickBiosOnly) finish();
             return;
         }
         if (request == REQ_MOD) {
             pickedMod(data.getData());
             return;
         }
+        if (pickBiosOnly) {
+            pickedBios(data.getData());
+            return;
+        }
         String name = (request == REQ_ROM) ? ROM_NAME : BIOS_NAME;
         try {
             copyToPrivate(data.getData(), name);
             if (request == REQ_ROM) new File(getFilesDir(), UNLINKED_NAME).delete();
+            // A BIOS chosen here is the one to play with (launchGame puts the
+            // marker back if the file is not the GBA BIOS).
+            if (request == REQ_BIOS) setNoBios(false);
         } catch (Exception e) {
             Log.e(TAG, "copy failed", e);
             status.setText("Copy failed: " + e.getMessage());
             return;
         }
         refresh();   // the player presses Play
+    }
+
+    /** A BIOS picked from the game's menu: kept only if it is the GBA BIOS, and
+     *  then played with from the next start (the game asks to restart). */
+    private void pickedBios(Uri uri) {
+        String error = null;
+        File tmp = new File(getFilesDir(), BIOS_NAME + ".new");
+        try {
+            copyToPrivate(uri, tmp.getName());
+            if (!BIOS_SHA1.equalsIgnoreCase(sha1(tmp))) {
+                error = displayName(uri) + " is not the GBA BIOS.";
+            } else if (!tmp.renameTo(new File(getFilesDir(), BIOS_NAME))) {
+                error = "The BIOS could not be loaded.";
+            } else {
+                setNoBios(false);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "bios copy failed", e);
+            error = "Copy failed: " + e.getMessage();
+        }
+        tmp.delete();
+        Mods.nativeBiosPicked(error);
+        finish();
     }
 
     /** A patch picked: checked for a patch's header, then files/mod/<its name>. */
@@ -401,9 +440,11 @@ public class SetupActivity extends Activity {
             status.setText("Select the game's ROM first.");
             return;
         }
-        // The real BIOS when there is one, else the HLE BIOS (files/no_bios).
+        // No GBA BIOS: the HLE BIOS (files/no_bios). With one, the marker is the
+        // player's choice (Options > Technical > BIOS, or a BIOS picked here):
+        // this runs on every start, the menu's restarts too, so it must not undo it.
         File bios = new File(getFilesDir(), BIOS_NAME);
-        setNoBios(!(bios.exists() && BIOS_SHA1.equalsIgnoreCase(sha1(bios))));
+        if (!(bios.exists() && BIOS_SHA1.equalsIgnoreCase(sha1(bios)))) setNoBios(true);
         startActivity(new Intent(this, MainActivity.class));
         finish();
     }
