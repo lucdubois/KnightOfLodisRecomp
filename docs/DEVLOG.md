@@ -24389,3 +24389,31 @@ from there), and rcheevos is built with threads; rc_client calls the
 login callback after releasing its lock. Builds on Mac and Android. Not
 run: a login, which needs an account (the Thor, debug app: log out and in
 from the menu, and the page should show the points without closing it).
+
+## crt-hyllian failed on Android (2026-11-24)
+
+The Thor's log: `crt-hyllian.glsl (fragment): ERROR: 0:221: '[' : Syntax
+error`. The shader asks for #version 120, so on GLES it was compiled as ES
+1.00 (gbarecomp shader_preset.cpp `stage_source`). Desktop 1.20 has what ES
+1.00 lacks: array constructors (`vec3[](magenta, green, ...)`, its masks) and
+globals set from uniforms (`float B = 1.0 - HFILTER_SHARPNESS;`).
+
+Fix (gbarecomp): a pass that ES 1.00 refuses, on an ES3 context, from a
+shader below 1.30 with the collection's `__VERSION__ >= 130` path, is tried
+once more as `#version 300 es`, with a default float precision first (it
+declares `out vec4 FragColor` above its precision line) and
+`GL_EXT_shader_non_constant_global_initializers` enabled where the driver
+lists it (the Thor's Adreno does). Only after a failure, so every shader
+that compiled before compiles as before. Logged: "compiled as ES 3.00
+(ES 1.00 refused it)", or the retry's error.
+
+Checked: glslang over the collection's below-1.30 shaders (ES 1.00 vs the
+retry): crt-hyllian and its curvature / glow variants compile as the retry
+builds them, 126 refused by glslang's ES 1.00 pass it accepts (most compile
+on Adreno's ES 1.00 already). The emulator (ANGLE): the same ES 1.00 error
+reproduced; the retry got past the arrays but ANGLE has no global
+initializer extension, so it still fails there. The Thor (debug app,
+12:38): "crt-hyllian.glsl compiled as ES 3.00 (ES 1.00 refused it)", 1 pass,
+12 parameters; the user: works.
+Devices without the extension (maybe Mali: the Pixel 6) would need the
+globals moved into main() by the loader: not done.
