@@ -24529,3 +24529,30 @@ that show in the middle before an attack.
   tiles: 38 small dot, 39 medium, 40 the ball (entries 19, 20). The chevron
   heads are 16x16 at 0x13C / 0x140 / 0x144 (two 16x8 each).
 
+## Shader presets: an uneven dot grid (2026-11-24)
+
+The user: many shaders look weird; gba-dot-matrix-white on the Thor (a
+5x picture): an uneven grid. Measured on the Thor's screenshot: 171 of 219
+cells along a row 5 px wide, the rest 4/6 pairs or a missing line, in
+patches; on the emulator (6x, ANGLE) worse, 2 to 13 px.
+
+Cause: gbarecomp's chain made every texture at its exact size
+(TextureSize == InputSize). RetroArch's GL driver (gl2), which the legacy
+GLSL collection is written against, puts the frame in a square
+power-of-two texture (256x256 for 240x160) and every pass's output in
+power-of-two targets, TexCoord running to InputSize / TextureSize. The
+preset's pass 0 tests `mod(TEX0.x, dot) > dot / scale` after a half-pixel
+shift: with exact textures every fifth column lands exactly on a dot's
+edge and rounding decides; padded, 2.6e-5 clear of it.
+
+Fix (gbarecomp shader_preset.cpp): RetroArch's layout. The picture copied
+into a square power-of-two texture each frame (the copy program, at its
+corner), passes and history in power-of-two targets (cleared when a
+picture changes size inside one), the quad's TexCoord streamed per draw to
+the input's share, TextureSize the padded size, InputSize the picture's.
+Emulator, same preset: every cell 6 px along three rows and three columns
+(237 / 157 of 237 / 157). crt-geom (one pass, TextureSize/InputSize in its
+curvature) and crt-royale (12 passes, aliases, LUTs) draw in place.
+crt-hyllian still fails on the emulator only (ANGLE lacks the global
+initializer extension, as before). Not seen on the Thor yet.
+
