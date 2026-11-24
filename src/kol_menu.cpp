@@ -600,13 +600,14 @@ const Row kEnhancements[] = {
 const Row kTechnical[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
     {Kind::Bios, 0, "BIOS", "The GBA BIOS, or the built-in\none. Takes effect on restart."},
-    {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
 #if defined(__ANDROID__)
     // Replaced Logs > Save (2026-11-24, asked): the logs go there too.
     {Kind::Sync, 0, "Sync Folder", "The save, states and logs\ncopied to a folder you choose."},
 #else
     {Kind::Logs, 0, "Logs", "The game's logs: send them with\na bug report or after a crash."},
 #endif
+    // Last (asked 2026-11-24).
+    {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
 };
 // Page 9, Display: the picture's shape (2026-11-21, both platforms; it picks
 // the sizes Graphics > View Size offers) and a desktop's window, which is not
