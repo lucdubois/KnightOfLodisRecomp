@@ -24556,3 +24556,27 @@ curvature) and crt-royale (12 passes, aliases, LUTs) draw in place.
 crt-hyllian still fails on the emulator only (ANGLE lacks the global
 initializer extension, as before). Not seen on the Thor yet.
 
+### Then: doubled rows and a torn roof under a preset, with the perspective (2026-11-24)
+
+The user (Thor, crt-hyllian, map 6, perspective + DoF, 384x216 at 5x): a
+tear at the top of a house's roof, and some pixel rows doubled. Cause: with
+a preset, the warp was drawn at the view's size (the preset needs the
+picture at its own size), so each row of the warped picture took one row of
+the game's: rows the perspective stretches past a pixel came twice, rows it
+shrinks went missing, slanted edges broke, and a CRT preset drew doubled
+scanlines. Without a preset the warp is drawn at the window's size, where
+this does not show.
+
+Fix (gbarecomp): with a warp provider, present_through_shader draws the
+picture k times larger (k: the window's whole scale, at most 4) into
+`shader_hi`; the chain's first copy averages each k x k block (kBoxGlsl,
+highp) into the padded input; the history copies the averaged input. A
+flat frame comes out pixel for pixel (frame texture read nearest for it).
+The copy shaders now ask for highp (mediump misplaced coordinates over
+1536-2048 wide textures). `GBARECOMP_SHADER_NO_SUPERSAMPLE=1` = the old way.
+Emulator (GL_bush_house_wall, crt-geom, same build A/B): the roof's top edge
+and its outline continuous with the change, stepped and broken without.
+Not seen on the Thor yet; GPU cost not measured (about the no-preset
+path's: the warp at 1536x864 instead of 1920x1080, plus a 16-tap copy at
+384x216).
+
