@@ -24623,3 +24623,26 @@ when dirty, so its history stopped moving; it now draws 8 frames more
 after each picture (APK 15:28). (The emulator attached beside the Thor
 stops the Thor's install task: shut it down before the user installs.)
 
+## Presets that GLES refused: gizmo-crt and a sweep (2026-11-24)
+
+The user: gizmo-crt does not work (top screen). The Thor's log: as ES 1.00,
+`'fwidth' : requires extension GL_OES_standard_derivatives`; as ES 3.00,
+`'gl_FragColor' : undeclared identifier` (it writes gl_FragColor where
+its own >= 130 path declares FragColor).
+
+gbarecomp shader_preset: a retry with ES fixes after a shader fails as it
+is (so nothing that compiled before changes): ES 1.00 fragments get
+`GL_OES_standard_derivatives` where they call fwidth/dFdx/dFdy and a
+default float precision; ES 3.00 compiles get the global-initializer
+extension and the precision for >= 130 shaders too, and gl_FragColor
+written into the shader's own FragColor. The ES 3.00 retry (crt-hyllian's)
+takes the fixes as well.
+
+A glslangValidator sweep of the 622 presets of libretro's GLSL pack, each
+pass compiled as the Thor would (scratchpad sweep2.py): 69 failing before,
+36 with the fixes (gizmo-crt and its slotmask variant, the cubic ones,
+mame_hlsl's global initializers...). Left: token pasting `##` (11, the
+MMJ cel ones: no ES), int/float mixed arithmetic (about 14: desktop GL
+converts, ES does not), HLSL-isms (`float2`), and one-offs. glslang is a
+stand-in for the Thor's compiler: counts are indicative.
+
