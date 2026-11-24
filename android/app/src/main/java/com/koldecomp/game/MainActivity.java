@@ -57,6 +57,9 @@ public class MainActivity extends SDLActivity {
         CrashLog.install(this);   // a Java crash in files/logs/last_run.log
         // The Thor's second panel. No-op on a single-screen device.
         SecondScreen.start(this);
+        // Options > Technical > Sync Folder: the saves copied to the player's
+        // folder as they change (a thread; nothing when no folder is set).
+        SyncFolder.start(this);
         // The game's 60 frames a second, said to the display. Unsaid, a phone
         // with adaptive refresh guesses from what the app presents: a Pixel 6
         // (90 Hz) rendered it at 45 and held the game there (2026-11-17,
@@ -87,6 +90,7 @@ public class MainActivity extends SDLActivity {
     @Override
     protected void onStop() {
         SecondScreen.onBackground();
+        SyncFolder.nudge();   // what changed, copied before the app may be stopped
         super.onStop();
     }
 

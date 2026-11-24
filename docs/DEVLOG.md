@@ -24334,6 +24334,8 @@ add `KOL_DESKTOP_MENU_CLOSE_AT=300`.
 
 ## Technical > Logs > Save on Android (2026-11-24)
 
+(Replaced the same day by Sync Folder, below: the code described here is gone.)
+
 Asked: save the logs to a folder the player picks. Why: a player could not
 find them. On a Pixel the "Files" icon is Files by Google, which may not
 list SavesProvider (Android's own browser has no icon there), and one player
@@ -24417,3 +24419,80 @@ initializer extension, so it still fails there. The Thor (debug app,
 12 parameters; the user: works.
 Devices without the extension (maybe Mali: the Pixel 6) would need the
 globals moved into main() by the loader: not done.
+
+## Technical > Sync Folder on Android (2026-11-24)
+
+Asked: in place of the logs' Save button, a folder the player picks, the
+saves copied there automatically from then on. A folder that already holds
+saves or states: ask whether to use them or the game's, and back up the
+other set whichever is chosen.
+
+What is copied, by path under files/ (the same path in the folder): the
+saves `totkol.sav` / `totkol-<8 hex>.sav` (a mod's), the slot states
+`totkol*.stateN`, the numbered states' folders `states` / `states-<8 hex>`
+(every file: .state, .png, .txt, `next`), and `logs`. Not the ROM, BIOS,
+settings, `menu_hold_state.tmp` or `.bak` files.
+
+- **Menu** (kol_menu): Technical's last row is "Sync Folder" on Android
+  (Off / On), Logs on a computer. Off: "Choose a folder..." Choose / Cancel.
+  On: where, the last copy's error if any, Change / Stop / OK.
+  `MenuPlatform::sync_pick / sync_stop / sync_answer`; Java tells the menu
+  through `menu_sync_state` (folder, error), `menu_sync_ask` (the question:
+  Folder's / Game's / Cancel), `menu_sync_done` (a message, or "Restart
+  now?" via ask_restart). The logs-save code is removed (save_logs,
+  menu_logs_saved, Mods.saveLogs / nativeLogsSaved, EXTRA_SAVE_LOGS).
+- **SyncFolder.java** does everything else. SetupActivity's sync mode
+  (`EXTRA_SYNC_PICK`) opens ACTION_OPEN_DOCUMENT_TREE in Documents and hands
+  the tree to `SyncFolder.picked` on a thread: the permission is persisted,
+  every save in the folder is compared BYTE FOR BYTE with the game's file of
+  the same path. All alike (or none there): linked at once. Otherwise the
+  question, with each side's save date and state count.
+  - **Game's**: the folder's differing files are MOVED to
+    `backup-<yyyy-MM-dd-HHmmss>/` inside the picked folder (moveDocument,
+    copy + delete where refused), then linked and copied.
+  - **Folder's**: the folder's whole set is copied into `files/sync_import/`
+    with a plan, and the game asks to restart. At the next start,
+    SetupActivity runs `applyImport` BEFORE MainActivity: the game's files
+    that the staged set does not repeat are copied to a backup folder in the
+    picked folder, the staged files are renamed into place, the game's others
+    deleted, the folder linked. Done at start because the running game keeps
+    its save in memory and flushes it (gbarecomp maybe_flush_save / the final
+    flush_save): replaced under a running game, the import could be written
+    over. "Later" is safe for the same reason: whatever the game writes until
+    the next start is what gets backed up. A backup that fails leaves the
+    game's files as they were (the error on the setup screen, Play to go on).
+    A note ("Playing with the saves from X. The game's earlier ones are in
+    backup-... there.") shows 4 s after the game starts.
+- **Copying**: a thread started by MainActivity looks every 3 s (and at
+  onStop) at the files' size + mtime against `files/sync_record` (tree URI,
+  then per path: the game's size/mtime and the folder doc's after the copy).
+  A file changed under 1.5 s ago waits (kol_states writes .state then .png
+  then .txt in place); a log is copied at most once a minute (last_run.log
+  grows all session). Before writing over a folder file whose size/mtime
+  no longer match the record (another device, a hand), it is moved to a
+  backup folder. A file gone from the game (a numbered state deleted) is
+  deleted in the folder only if the folder's copy is still the one made here.
+  Errors (folder gone, permission lost) reach the menu's Sync Folder dialog.
+- **Stop**: worker stopped, prefs and record cleared, a waiting import
+  dropped, the permission released; the folder keeps its copies.
+
+**Checked on the emulator** (Medium_Phone_API_36.1, Android 16, the debug
+app; files restored after): a Documents/KoLSync folder with a different
+save, a slot state and a numbered state + png. Picked from the menu (the
+KOL_MENU_PPM taps of the Logs test reach the same row): the question showed
+both sides. Game's -> the three folder files in `backup-...135744/` (save
+byte-identical to what was pushed), the game's save and state9 copied
+byte-identical, logs/last_run.log copied. A slot state and a numbered state
+made in files/ appeared within one look; the numbered state deleted in the
+game was deleted in the folder; the folder's save overwritten from adb then
+the game's save touched -> the pushed save moved to `backup-...135833/`
+(byte-identical), the game's copied. Change -> the same folder with a
+differing save/state1 -> Folder's -> staged -> Restart -> after the restart
+files/ held the folder's set (save byte-identical), the game's old save in
+`backup-...135958/` (byte-identical), sync_import gone, no re-copy of the
+saves, the note shown. Stop -> record and prefs cleared, the persisted
+permission gone, nothing copied after. Desktop: kol_menu.cpp compiles (the
+Logs row unchanged there). Not tried: the Thor, a real in-game save or
+L3+R state (the same files, written the same ways), a cloud folder
+provider (one that changes mtimes on its own would cause extra backups).
+

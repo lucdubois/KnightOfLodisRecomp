@@ -314,7 +314,7 @@ jclass    g_setup_class = nullptr;
 jmethodID g_mods_pick = nullptr, g_mods_remove = nullptr, g_mods_restart = nullptr, g_mods_licenses = nullptr;
 jmethodID g_mods_pick_bios = nullptr;
 jmethodID g_mods_pick_shaders = nullptr;
-jmethodID g_mods_save_logs = nullptr;
+jmethodID g_mods_sync_pick = nullptr, g_mods_sync_stop = nullptr, g_mods_sync_answer = nullptr;
 jmethodID g_setup_unlink = nullptr;
 
 bool platform_bind(JNIEnv* env) {
@@ -338,7 +338,11 @@ bool platform_bind(JNIEnv* env) {
     if (env->ExceptionCheck()) env->ExceptionClear();
     g_mods_pick_shaders = env->GetStaticMethodID(g_mods_class, "pickShaders", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
-    g_mods_save_logs = env->GetStaticMethodID(g_mods_class, "saveLogs", "()V");
+    g_mods_sync_pick = env->GetStaticMethodID(g_mods_class, "syncPick", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    g_mods_sync_stop = env->GetStaticMethodID(g_mods_class, "syncStop", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    g_mods_sync_answer = env->GetStaticMethodID(g_mods_class, "syncAnswer", "(I)V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     g_setup_unlink = env->GetStaticMethodID(g_setup_class, "unlinkRom", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
@@ -358,7 +362,14 @@ void unlink_rom_android() { call_static(g_setup_class, g_setup_unlink); }
 void licenses_android() { call_static(g_mods_class, g_mods_licenses); }
 void bios_pick_android() { call_static(g_mods_class, g_mods_pick_bios); }
 void shaders_pick_android() { call_static(g_mods_class, g_mods_pick_shaders); }
-void logs_save_android() { call_static(g_mods_class, g_mods_save_logs); }
+void sync_pick_android() { call_static(g_mods_class, g_mods_sync_pick); }
+void sync_stop_android() { call_static(g_mods_class, g_mods_sync_stop); }
+void sync_answer_android(int which) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env || !g_mods_class || !g_mods_sync_answer) return;
+    env->CallStaticVoidMethod(g_mods_class, g_mods_sync_answer, static_cast<jint>(which));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
 
 // The mod to play: the one file in files/mod/ (Mods.java puts it there), or
 // "". It is checked here first, as the runtime will (rom_patch.h): one that
@@ -1044,7 +1055,11 @@ int main(int argc, char** argv) {
         if (g_mods_licenses) p.show_licenses = &licenses_android;
         if (g_mods_pick_bios) p.pick_bios = &bios_pick_android;   // Technical > BIOS
         if (g_mods_pick_shaders) p.pick_shader_folder = &shaders_pick_android;   // Display > Shader
-        if (g_mods_save_logs) p.save_logs = &logs_save_android;   // Technical > Logs
+        if (g_mods_sync_pick && g_mods_sync_stop && g_mods_sync_answer) {   // Technical > Sync Folder
+            p.sync_pick = &sync_pick_android;
+            p.sync_stop = &sync_stop_android;
+            p.sync_answer = &sync_answer_android;
+        }
         if constexpr (kol::kDevTools) p.unlink_rom = &unlink_rom_android;   // Debug > Unlink ROM
         kol::menu_set_platform(p);
     } else {
@@ -1166,16 +1181,27 @@ extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeShadersImpo
     if (e) env->ReleaseStringUTFChars(error, e);
 }
 
-// Technical > Logs > Save's answer (Mods.nativeLogsSaved).
-extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeLogsSaved(JNIEnv* env, jclass, jstring names,
-                                                                            jstring folder, jstring error) {
-    const char* n = names ? env->GetStringUTFChars(names, nullptr) : nullptr;
+// Technical > Sync Folder (Mods.nativeSync*, from SyncFolder.java's threads).
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeSyncState(JNIEnv* env, jclass, jstring folder,
+                                                                            jstring error) {
     const char* f = folder ? env->GetStringUTFChars(folder, nullptr) : nullptr;
     const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
-    kol::menu_logs_saved(n, f, e);
-    if (n) env->ReleaseStringUTFChars(names, n);
+    kol::menu_sync_state(f, e);
     if (f) env->ReleaseStringUTFChars(folder, f);
     if (e) env->ReleaseStringUTFChars(error, e);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeSyncAsk(JNIEnv* env, jclass, jstring text) {
+    const char* t = text ? env->GetStringUTFChars(text, nullptr) : nullptr;
+    kol::menu_sync_ask(t ? t : "");
+    if (t) env->ReleaseStringUTFChars(text, t);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeSyncDone(JNIEnv* env, jclass, jstring text,
+                                                                           jboolean restart) {
+    const char* t = text ? env->GetStringUTFChars(text, nullptr) : nullptr;
+    kol::menu_sync_done(t ? t : "", restart == JNI_TRUE);
+    if (t) env->ReleaseStringUTFChars(text, t);
 }
 
 // Options > Technical > BIOS's picker (Mods.nativeBiosPicked): kept and

@@ -32,9 +32,15 @@ public final class Mods {
     /** Display > Shader > Import Folder's answer (kol::menu_shaders_imported). */
     static native void nativeShadersImported(int presets, String name, String error);
 
-    /** Technical > Logs > Save's answer: the files saved and the folder, or
-     *  why not (kol::menu_logs_saved). */
-    static native void nativeLogsSaved(String names, String folder, String error);
+    /** Technical > Sync Folder (SyncFolder.java): the folder's name (null: none
+     *  set) and the last copy's error, if it failed (kol::menu_sync_state). */
+    static native void nativeSyncState(String folder, String error);
+
+    /** A picked folder already holds other saves: which to keep (kol::menu_sync_ask). */
+    static native void nativeSyncAsk(String text);
+
+    /** What came of a pick or an answer; restart: the game asks to restart (kol::menu_sync_done). */
+    static native void nativeSyncDone(String text, boolean restart);
 
     /** The mod file in files/mod/, or null. */
     static File current(Context ctx) {
@@ -74,14 +80,24 @@ public final class Mods {
         });
     }
 
-    /** From native (Options > Technical > Logs > Save): the folder picker, the
-     *  logs copied there (SetupActivity's save-logs mode). */
-    public static void saveLogs() {
+    /** From native (Options > Technical > Sync Folder > Choose): the folder
+     *  picker (SetupActivity's sync mode), then SyncFolder.picked. */
+    public static void syncPick() {
         onUi(act -> {
             Intent i = new Intent(act, SetupActivity.class);
-            i.putExtra(SetupActivity.EXTRA_SAVE_LOGS, true);
+            i.putExtra(SetupActivity.EXTRA_SYNC_PICK, true);
             act.startActivity(i);
         });
+    }
+
+    /** From native (Sync Folder > Stop). */
+    public static void syncStop() {
+        SyncFolder.stop();
+    }
+
+    /** From native: the answer to nativeSyncAsk (0 the folder's, 1 the game's, 2 cancel). */
+    public static void syncAnswer(int which) {
+        SyncFolder.answer(which);
     }
 
     /** From native (Options > Technical > BIOS, no BIOS file yet): the file picker. */

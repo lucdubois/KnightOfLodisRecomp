@@ -173,7 +173,12 @@ struct MenuPlatform {
     void (*pick_mod)() = nullptr;     // the system's file picker; then menu_mod_picked
     void (*pick_bios)() = nullptr;    // the same for a BIOS file; then menu_bios_picked
     void (*pick_shader_folder)() = nullptr;   // Android: a folder of shaders copied in; then menu_shaders_imported
-    void (*save_logs)() = nullptr;    // Android: a folder picked, the logs copied there; then menu_logs_saved
+    // Android, Technical > Sync Folder (SyncFolder.java): the folder picker
+    // (then menu_sync_ask or menu_sync_done), no folder any more, the answer
+    // to menu_sync_ask (0 the folder's saves, 1 the game's, 2 neither).
+    void (*sync_pick)() = nullptr;
+    void (*sync_stop)() = nullptr;
+    void (*sync_answer)(int which) = nullptr;
     void (*remove_mod)() = nullptr;   // files/mod/ emptied
     void (*restart)() = nullptr;      // the app ends and starts again
     void (*unlink_rom)() = nullptr;   // the ROM copy set aside, then restart
@@ -214,9 +219,14 @@ void menu_bios_picked(const char* error);
 // Display > Shader > Import Folder's answer: the presets copied in (and the
 // folder's name), or an error.
 void menu_shaders_imported(int presets, const char* name, const char* error);
-// Technical > Logs > Save's answer: the files saved ("last_run.log,
-// previous_run.log") and the folder's name, or an error (names null).
-void menu_logs_saved(const char* names, const char* folder, const char* error);
+// Technical > Sync Folder: the folder the saves are copied to (null: none)
+// and why the last copy failed (null: it did not).
+void menu_sync_state(const char* folder, const char* error);
+// A picked folder holds other saves of the game: the question, answered
+// through MenuPlatform::sync_answer.
+void menu_sync_ask(const char* text);
+// What came of a pick or an answer; restart: "Restart now?" after it.
+void menu_sync_done(const char* text, bool restart);
 
 // For the other second-screen pages (kol_edit_panel): the game's window
 // frame over tile cells c0..c1 x r0..r1 of a w x h canvas, and one line of

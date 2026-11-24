@@ -503,6 +503,7 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  UnlinkRom,     // Debug: back to the setup screen
                                  Licenses,      // the third-party notices (the platform shows them)
                                  Logs,          // the session's log and the last crash's (kol_crash)
+                                 Sync,          // Android: the saves and logs copied to a folder (SyncFolder.java)
                                  Quit,          // a desktop: ends the game, after a question
                                  DisplayMode,   // a desktop: window or full screen (kol_desktop.h)
                                  WindowSize,    // a desktop: the window's size
@@ -574,7 +575,12 @@ const Row kTechnical[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
     {Kind::Bios, 0, "BIOS", "The GBA BIOS, or the built-in\none. Takes effect on restart."},
     {Kind::Licenses, 0, "Licenses", "The licenses of the software\nthis app is built with."},
+#if defined(__ANDROID__)
+    // Replaced Logs > Save (2026-11-24, asked): the logs go there too.
+    {Kind::Sync, 0, "Sync Folder", "The save, states and logs\ncopied to a folder you choose."},
+#else
     {Kind::Logs, 0, "Logs", "The game's logs: send them with\na bug report or after a crash."},
+#endif
 };
 // Page 9, Display: the picture's shape (2026-11-21, both platforms; it picks
 // the sizes Graphics > View Size offers) and a desktop's window, which is not
@@ -881,6 +887,9 @@ void sel_selectable(const std::vector<Row>& rows, int& sel) {
 
 // ── State ────────────────────────────────────────────────────────────────
 MenuPlatform g_platform;
+// Technical > Sync Folder: the folder's name and the last copy's error, from
+// Java (menu_sync_state).
+std::string g_sync_folder, g_sync_error;   // under g_mu
 bool g_mod_pending = false;   // a mod picked this session, played from the next start
 std::mutex g_mu;
 // Atomic: the runtime asks it from the guest's thread at every present
@@ -1178,6 +1187,7 @@ Text value_text(const Art& a, const Row& r) {
         }
         case Kind::Licenses: return encode(">");
         case Kind::Logs: return encode(">");
+        case Kind::Sync: return encode(g_sync_folder.empty() ? "Off" : "On");
         case Kind::Bios: return encode(bios_next_real() ? "GBA BIOS" : "Built-in");
         case Kind::Quit: return encode(">");
         case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
@@ -1372,6 +1382,42 @@ void ask_restart(const std::string& text, const char* title = "Mod") {
     });
 }
 
+// Technical > Sync Folder (Android; SyncFolder.java does the copying).
+MenuPlatform platform_copy() {
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_platform;
+}
+
+// Under g_mu: none set, Choose; one set, where, and Change / Stop.
+void sync_dialog() {
+    if (!g_platform.sync_pick) {
+        open_dialog("Sync Folder", "Not on this platform.", {"OK"}, 0, nullptr);
+        return;
+    }
+    if (g_sync_folder.empty()) {
+        open_dialog("Sync Folder",
+                    "Choose a folder: the save, the save states and the logs are copied there whenever they "
+                    "change, to keep, to take to another device, or to send with a bug report.",
+                    {"Choose", "Cancel"}, 1, [](int b) {
+                        const MenuPlatform p = platform_copy();
+                        if (b == 0 && p.sync_pick) p.sync_pick();
+                    });
+        return;
+    }
+    std::string text = "Copied to " + g_sync_folder +
+                       " whenever they change: the save, the save states and the logs.";
+    if (!g_sync_error.empty()) text += " The last copy failed: " + g_sync_error + ".";
+    open_dialog("Sync Folder", text.c_str(), {"Change", "Stop", "OK"}, 2, [](int b) {
+        const MenuPlatform p = platform_copy();
+        if (b == 0 && p.sync_pick) {
+            p.sync_pick();
+        } else if (b == 1 && p.sync_stop) {
+            p.sync_stop();
+            menu_dialog("Sync Folder", "No more copies. The folder keeps what it holds.", {"OK"}, 0, nullptr);
+        }
+    });
+}
+
 // Technical > BIOS (under g_mu): the other BIOS from the next start, then
 // "Restart now?". Read once at start (kol_desktop desktop_prepare,
 // main_android), so the choice is a marker file, files/no_bios, the one the
@@ -1551,19 +1597,7 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Logs: {
             // last_run.log is this session's; previous_run.log the one before
             // (after a crash, the one with its report).
-            if (g_platform.save_logs) {   // Android: copied to a folder the player picks
-                open_dialog("Logs", "Save the game's logs to a folder you choose, then send them with your report.",
-                            {"Save", "Cancel"}, 1, [](int b) {
-                                MenuPlatform p;
-                                {
-                                    std::lock_guard<std::mutex> lock(g_mu);
-                                    p = g_platform;
-                                }
-                                if (b == 0 && p.save_logs) p.save_logs();
-                            });
-                break;
-            }
-#if defined(__ANDROID__)
+#if defined(__ANDROID__)   // (Android has Sync Folder in its place)
             open_dialog("Logs", "In the Files app: Knight of Lodis, then logs. Send last_run.log and previous_run.log.",
                         {"OK"}, 0, nullptr);
 #else
@@ -1575,6 +1609,9 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
 #endif
             break;
         }
+        case Kind::Sync:
+            sync_dialog();
+            break;
         case Kind::Quit:
             open_dialog("Quit Game", "Close the game? Unsaved progress is lost.",
                         {"Quit", "Cancel"}, 1, [](int b) {
@@ -3461,16 +3498,23 @@ void menu_shaders_imported(int presets, const char* name, const char* error) {
     menu_dialog("Shaders", text.c_str(), {"OK"}, 0, nullptr);
 }
 
-void menu_logs_saved(const char* names, const char* folder, const char* error) {
-    if (error && *error) {
-        menu_dialog("Logs", error, {"OK"}, 0, nullptr);
-        return;
-    }
-    const std::string f = folder && *folder ? folder : "the folder";
-    const std::string n = names ? names : "";
-    const std::string text = "Saved in " + f + ": " + n + ". Send " +
-                             (n.find(',') != std::string::npos ? "them" : "it") + " with your report.";
-    menu_dialog("Logs", text.c_str(), {"OK"}, 0, nullptr);
+void menu_sync_state(const char* folder, const char* error) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_sync_folder = folder ? folder : "";
+    g_sync_error = error ? error : "";
+    g_dirty.store(true, std::memory_order_release);
+}
+
+void menu_sync_ask(const char* text) {
+    menu_dialog("Sync Folder", text, {"Folder's", "Game's", "Cancel"}, 2, [](int b) {
+        const MenuPlatform p = platform_copy();
+        if (p.sync_answer) p.sync_answer(b == 0 || b == 1 ? b : 2);
+    });
+}
+
+void menu_sync_done(const char* text, bool restart) {
+    if (restart) ask_restart(text ? text : "", "Sync Folder");
+    else menu_dialog("Sync Folder", text ? text : "", {"OK"}, 0, nullptr);
 }
 
 void menu_bios_picked(const char* error) {
