@@ -24331,3 +24331,42 @@ presses the pad into the menu (k = KEYINPUT bits: 1 A, 2 B, 10 right, 80
 down; a page opens on its first row under Back). The open menu holds the
 game, so `--frames` never runs out (and a perl alarm did not stop it):
 add `KOL_DESKTOP_MENU_CLOSE_AT=300`.
+
+## Technical > Logs > Save on Android (2026-11-24)
+
+Asked: save the logs to a folder the player picks. Why: a player could not
+find them. On a Pixel the "Files" icon is Files by Google, which may not
+list SavesProvider (Android's own browser has no icon there), and one player
+sent a log from another app's `Android/data` folder instead.
+
+- Options > Technical > Logs on Android: "Save the game's logs to a folder
+  you choose..." with Save / Cancel. Save calls `MenuPlatform::save_logs` ->
+  `Mods.saveLogs` -> SetupActivity's save-logs mode (`EXTRA_SAVE_LOGS`):
+  ACTION_OPEN_DOCUMENT_TREE, opened in Documents (EXTRA_INITIAL_URI, API 26+).
+  Android 11+ refuses the storage's top and Download itself as a picked tree,
+  and Documents is allowed.
+- Every file in `files/logs` (last_run.log, previous_run.log, a diag
+  build's input_debug.log) is copied on a thread under its own name. One
+  already there is replaced (mode "wt"), so the folder always holds the
+  latest. Created as application/octet-stream, so the provider keeps the
+  name as given (with a text type it may add ".txt").
+- The answer comes back through `Mods.nativeLogsSaved` -> `kol::menu_logs_saved`:
+  "Saved in Documents: last_run.log, previous_run.log. Send them with your
+  report." Cancelling the picker says nothing. With no folder picker, the
+  old Files-app text is shown (the folder's name corrected to "Knight of Lodis",
+  SavesProvider's title; it said "Knight of Lodis Recomp").
+- Desktop unchanged: the row opens the logs folder.
+
+Checked on the Android 16 phone emulator (debug build, driven with
+KOL_MENU_PPM keys + uiautomator taps): the picker opened in Documents with
+Use This Folder enabled. The first save wrote last_run.log; the second
+replaced it in place and added previous_run.log, byte-identical to the
+app's copy. Not checked: a real phone, a picker other than Google's
+DocumentsUI, a cloud folder (Drive) as the target.
+
+adb on a public install (not debuggable): `run-as` refuses it, and `adb shell
+content read` on SavesProvider is refused too ("requires that you obtain
+access using ACTION_OPEN_DOCUMENT"; checked on the emulator). What works:
+`adb logcat -d -s KoL` (the log's lines go to logcat as they are written,
+while the buffer holds them), `adb logcat -d -b crash` for a crash, or
+Save to Documents and then `adb pull /sdcard/Documents/last_run.log`.

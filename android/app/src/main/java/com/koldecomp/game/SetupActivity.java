@@ -54,6 +54,11 @@ public class SetupActivity extends Activity {
     private static final int REQ_BIOS = 2;
     private static final int REQ_MOD  = 3;
     private static final int REQ_SHADERS = 4;
+    private static final int REQ_LOGS = 5;
+    // Options > Technical > Logs > Save (Mods.saveLogs): a folder picked, every
+    // file of files/logs copied into it, the answer to the game.
+    static final String EXTRA_SAVE_LOGS = "save_logs";
+    private boolean saveLogsOnly;
     // Options > Display > Shader > Import Folder (Mods.pickShaders): a folder
     // picked, copied into files/shaders/<its name>, the count to the game.
     static final String EXTRA_PICK_SHADERS = "pick_shaders";
@@ -249,6 +254,27 @@ public class SetupActivity extends Activity {
             }
             return;
         }
+        saveLogsOnly = getIntent().getBooleanExtra(EXTRA_SAVE_LOGS, false);
+        if (saveLogsOnly) {
+            if (savedInstanceState == null) {
+                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                // Opens in Documents, where "Use this folder" is allowed:
+                // Android 11 and later refuse the storage's top and Download
+                // itself as a picked folder.
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri(
+                            "com.android.externalstorage.documents", "primary:Documents"));
+                }
+                try {
+                    startActivityForResult(i, REQ_LOGS);
+                } catch (Exception e) {
+                    Mods.nativeLogsSaved(null, null,
+                            "This device has no folder picker. In the Files app: Knight of Lodis, then logs.");
+                    finish();
+                }
+            }
+            return;
+        }
         pickBiosOnly = getIntent().getBooleanExtra(EXTRA_PICK_BIOS, false);
         if (pickBiosOnly) {
             if (savedInstanceState == null) pick(REQ_BIOS);
@@ -271,7 +297,7 @@ public class SetupActivity extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
-            if (pickModOnly || pickBiosOnly || pickShadersOnly) finish();
+            if (pickModOnly || pickBiosOnly || pickShadersOnly || saveLogsOnly) finish();
             return;
         }
         if (request == REQ_MOD) {
@@ -284,6 +310,10 @@ public class SetupActivity extends Activity {
         }
         if (request == REQ_SHADERS) {
             importShaders(data.getData());
+            return;
+        }
+        if (request == REQ_LOGS) {
+            saveLogs(data.getData());
             return;
         }
         String name = (request == REQ_ROM) ? ROM_NAME : BIOS_NAME;
@@ -299,6 +329,71 @@ public class SetupActivity extends Activity {
             return;
         }
         refresh();   // the player presses Play
+    }
+
+    /** The logs (every file in files/logs: last_run.log, previous_run.log, a
+     *  diagnostic build's input_debug.log) copied into the picked folder under
+     *  their own names; one already there of that name is replaced, so the
+     *  folder holds the latest. On a thread; the answer to the game. */
+    private void saveLogs(final Uri tree) {
+        status.setText("Saving logs...");
+        new Thread(() -> {
+            String error = null, folder = null;
+            final StringBuilder names = new StringBuilder();
+            try {
+                final File[] logs = new File(getFilesDir(), "logs").listFiles(File::isFile);
+                if (logs == null || logs.length == 0) throw new java.io.IOException("there are no logs yet");
+                java.util.Arrays.sort(logs, (a, b) -> a.getName().compareTo(b.getName()));
+                final String rootId = DocumentsContract.getTreeDocumentId(tree);
+                final Uri dir = DocumentsContract.buildDocumentUriUsingTree(tree, rootId);
+                folder = documentName(dir);
+                // What the folder holds already, by name.
+                final java.util.Map<String, String> there = new java.util.HashMap<>();
+                try (Cursor c = getContentResolver().query(
+                        DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId),
+                        new String[] {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                      DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                    if (c != null) while (c.moveToNext()) there.put(c.getString(1), c.getString(0));
+                }
+                for (File f : logs) {
+                    final String id = there.get(f.getName());
+                    // octet-stream: the provider keeps the name as given (a
+                    // text type could get ".txt" added).
+                    final Uri doc = id != null ? DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                            : DocumentsContract.createDocument(getContentResolver(), dir,
+                                                               "application/octet-stream", f.getName());
+                    if (doc == null) throw new java.io.IOException("cannot write " + f.getName());
+                    try (InputStream in = new java.io.FileInputStream(f);
+                         OutputStream out = getContentResolver().openOutputStream(doc, "wt")) {
+                        if (out == null) throw new java.io.IOException("cannot write " + f.getName());
+                        byte[] buf = new byte[1 << 16];
+                        int n;
+                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    }
+                    if (names.length() > 0) names.append(", ");
+                    names.append(f.getName());
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "saving logs failed", e);
+                error = "The logs could not be saved: "
+                        + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + ".";
+            }
+            final String err = error, where = folder;
+            runOnUiThread(() -> {
+                Mods.nativeLogsSaved(err == null ? names.toString() : null, where, err);
+                finish();
+            });
+        }, "save-logs").start();
+    }
+
+    /** A document's name (a picked folder's), or null. */
+    private String documentName(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri,
+                new String[] {DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) return c.getString(0);
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     /** A BIOS picked from the game's menu: kept only if it is the GBA BIOS, and

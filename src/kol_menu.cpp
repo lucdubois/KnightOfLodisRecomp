@@ -1551,8 +1551,20 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Logs: {
             // last_run.log is this session's; previous_run.log the one before
             // (after a crash, the one with its report).
+            if (g_platform.save_logs) {   // Android: copied to a folder the player picks
+                open_dialog("Logs", "Save the game's logs to a folder you choose, then send them with your report.",
+                            {"Save", "Cancel"}, 1, [](int b) {
+                                MenuPlatform p;
+                                {
+                                    std::lock_guard<std::mutex> lock(g_mu);
+                                    p = g_platform;
+                                }
+                                if (b == 0 && p.save_logs) p.save_logs();
+                            });
+                break;
+            }
 #if defined(__ANDROID__)
-            open_dialog("Logs", "In the Files app: Knight of Lodis\nRecomp, then logs. Send\nlast_run.log and previous_run.log.",
+            open_dialog("Logs", "In the Files app: Knight of Lodis, then logs. Send last_run.log and previous_run.log.",
                         {"OK"}, 0, nullptr);
 #else
             const std::string d = crash_logs_dir();
@@ -3447,6 +3459,18 @@ void menu_shaders_imported(int presets, const char* name, const char* error) {
               ". They are listed under Your Shaders."
         : "No .glslp preset in " + n + ": choose a folder of RetroArch GLSL shaders.";
     menu_dialog("Shaders", text.c_str(), {"OK"}, 0, nullptr);
+}
+
+void menu_logs_saved(const char* names, const char* folder, const char* error) {
+    if (error && *error) {
+        menu_dialog("Logs", error, {"OK"}, 0, nullptr);
+        return;
+    }
+    const std::string f = folder && *folder ? folder : "the folder";
+    const std::string n = names ? names : "";
+    const std::string text = "Saved in " + f + ": " + n + ". Send " +
+                             (n.find(',') != std::string::npos ? "them" : "it") + " with your report.";
+    menu_dialog("Logs", text.c_str(), {"OK"}, 0, nullptr);
 }
 
 void menu_bios_picked(const char* error) {

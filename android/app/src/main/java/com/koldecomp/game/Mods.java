@@ -32,6 +32,10 @@ public final class Mods {
     /** Display > Shader > Import Folder's answer (kol::menu_shaders_imported). */
     static native void nativeShadersImported(int presets, String name, String error);
 
+    /** Technical > Logs > Save's answer: the files saved and the folder, or
+     *  why not (kol::menu_logs_saved). */
+    static native void nativeLogsSaved(String names, String folder, String error);
+
     /** The mod file in files/mod/, or null. */
     static File current(Context ctx) {
         File[] fs = new File(ctx.getFilesDir(), DIR).listFiles();
@@ -66,6 +70,16 @@ public final class Mods {
         onUi(act -> {
             Intent i = new Intent(act, SetupActivity.class);
             i.putExtra(SetupActivity.EXTRA_PICK_SHADERS, true);
+            act.startActivity(i);
+        });
+    }
+
+    /** From native (Options > Technical > Logs > Save): the folder picker, the
+     *  logs copied there (SetupActivity's save-logs mode). */
+    public static void saveLogs() {
+        onUi(act -> {
+            Intent i = new Intent(act, SetupActivity.class);
+            i.putExtra(SetupActivity.EXTRA_SAVE_LOGS, true);
             act.startActivity(i);
         });
     }

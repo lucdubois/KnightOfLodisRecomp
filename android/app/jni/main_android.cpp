@@ -314,6 +314,7 @@ jclass    g_setup_class = nullptr;
 jmethodID g_mods_pick = nullptr, g_mods_remove = nullptr, g_mods_restart = nullptr, g_mods_licenses = nullptr;
 jmethodID g_mods_pick_bios = nullptr;
 jmethodID g_mods_pick_shaders = nullptr;
+jmethodID g_mods_save_logs = nullptr;
 jmethodID g_setup_unlink = nullptr;
 
 bool platform_bind(JNIEnv* env) {
@@ -336,6 +337,9 @@ bool platform_bind(JNIEnv* env) {
     g_mods_pick_bios = env->GetStaticMethodID(g_mods_class, "pickBios", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     g_mods_pick_shaders = env->GetStaticMethodID(g_mods_class, "pickShaders", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    g_mods_save_logs = env->GetStaticMethodID(g_mods_class, "saveLogs", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
     g_setup_unlink = env->GetStaticMethodID(g_setup_class, "unlinkRom", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     return g_mods_pick && g_mods_remove && g_mods_restart && g_setup_unlink;
@@ -354,6 +358,7 @@ void unlink_rom_android() { call_static(g_setup_class, g_setup_unlink); }
 void licenses_android() { call_static(g_mods_class, g_mods_licenses); }
 void bios_pick_android() { call_static(g_mods_class, g_mods_pick_bios); }
 void shaders_pick_android() { call_static(g_mods_class, g_mods_pick_shaders); }
+void logs_save_android() { call_static(g_mods_class, g_mods_save_logs); }
 
 // The mod to play: the one file in files/mod/ (Mods.java puts it there), or
 // "". It is checked here first, as the runtime will (rom_patch.h): one that
@@ -1039,6 +1044,7 @@ int main(int argc, char** argv) {
         if (g_mods_licenses) p.show_licenses = &licenses_android;
         if (g_mods_pick_bios) p.pick_bios = &bios_pick_android;   // Technical > BIOS
         if (g_mods_pick_shaders) p.pick_shader_folder = &shaders_pick_android;   // Display > Shader
+        if (g_mods_save_logs) p.save_logs = &logs_save_android;   // Technical > Logs
         if constexpr (kol::kDevTools) p.unlink_rom = &unlink_rom_android;   // Debug > Unlink ROM
         kol::menu_set_platform(p);
     } else {
@@ -1157,6 +1163,18 @@ extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeShadersImpo
     const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
     kol::menu_shaders_imported(presets, n, e);
     if (n) env->ReleaseStringUTFChars(name, n);
+    if (e) env->ReleaseStringUTFChars(error, e);
+}
+
+// Technical > Logs > Save's answer (Mods.nativeLogsSaved).
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeLogsSaved(JNIEnv* env, jclass, jstring names,
+                                                                            jstring folder, jstring error) {
+    const char* n = names ? env->GetStringUTFChars(names, nullptr) : nullptr;
+    const char* f = folder ? env->GetStringUTFChars(folder, nullptr) : nullptr;
+    const char* e = error ? env->GetStringUTFChars(error, nullptr) : nullptr;
+    kol::menu_logs_saved(n, f, e);
+    if (n) env->ReleaseStringUTFChars(names, n);
+    if (f) env->ReleaseStringUTFChars(folder, f);
     if (e) env->ReleaseStringUTFChars(error, e);
 }
 
