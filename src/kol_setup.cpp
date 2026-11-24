@@ -170,6 +170,89 @@ std::string setup_mod_path(const std::string& dir) {
     return dir + "/mod/" + names.front();
 }
 
+bool setup_mod_take(const std::string& dir, const std::string& file, std::string* why) {
+    std::vector<std::uint8_t> data;
+    if (!read_file(file, &data)) { *why = "Cannot read that file."; return false; }
+    // A patch that does not apply, or changes the game's code, is refused
+    // here when the ROM is in place to try it on.
+    std::vector<std::uint8_t> rom, out;
+    std::string summary, err;
+    if (read_file(dir + "/totkol.gba", &rom) && same_hex(sha1_of(rom), kRomSha1) &&
+        !gbarecomp::rom_patch_load_and_check(file, rom, &out, &summary, &err)) {
+        *why = "That mod can't be played: " + err + ".";
+        return false;
+    }
+    std::error_code ec;
+    fs::create_directories(dir + "/mod", ec);
+    for (const fs::directory_entry& e : fs::directory_iterator(dir + "/mod", ec)) fs::remove(e.path(), ec);
+    if (!write_file(dir + "/mod/" + fs::path(file).filename().string(), data)) { *why = "Copy failed."; return false; }
+    return true;
+}
+
+void setup_mod_remove(const std::string& dir) {
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(dir + "/mod", ec)) fs::remove(e.path(), ec);
+}
+
+namespace {
+const char* const kAskFile[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+                                 "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
+#if defined(__linux__)
+std::unique_ptr<SystemPick> g_game_pick;   // setup_file_dialog's, from the running game
+#endif
+}  // namespace
+
+int setup_file_dialog(int what, std::string* file) {
+    if (what < 0 || what > 2) return 0;
+#if defined(__APPLE__)
+    SDL_Window* const window = SDL_GetKeyboardFocus();
+    const bool chosen = setup_mac_open_panel(kAskFile[what], file);
+    if (window) SDL_RaiseWindow(window);
+    if (!chosen) file->clear();
+    return 1;
+#elif defined(_WIN32)
+    SDL_Window* const window = SDL_GetKeyboardFocus();
+    const bool chosen = setup_win_open_dialog(window, what, kAskFile[what], file);
+    if (window) SDL_RaiseWindow(window);
+    if (!chosen) file->clear();
+    return 1;
+#elif defined(__linux__)
+    if (g_game_pick) return 2;   // (one at a time: the one up answers)
+    const std::string cmd = system_dialog_command(kAskFile[what]);
+    if (cmd.empty()) return 0;
+    g_game_pick = std::make_unique<SystemPick>();
+    SystemPick* p = g_game_pick.get();
+    p->thread = std::thread([p, cmd] {
+        if (FILE* f = ::popen(cmd.c_str(), "r")) {
+            char buf[4096];
+            std::string out;
+            while (std::fgets(buf, sizeof buf, f)) out += buf;
+            const int rc = ::pclose(f);
+            while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+            p->chosen = rc == 0 && !out.empty();
+            p->file = out;
+        }
+        p->done.store(true, std::memory_order_release);
+    });
+    return 2;
+#else
+    (void)file;
+    return 0;
+#endif
+}
+
+bool setup_file_dialog_poll(std::string* file) {
+#if defined(__linux__)
+    if (!g_game_pick || !g_game_pick->done.load(std::memory_order_acquire)) return false;
+    *file = g_game_pick->chosen ? g_game_pick->file : std::string();
+    g_game_pick.reset();
+    return true;
+#else
+    (void)file;
+    return false;
+#endif
+}
+
 namespace {
 
 // ── Drawing ─────────────────────────────────────────────────────────────
@@ -524,18 +607,8 @@ struct Setup {
             if (!same_hex(sha1_of(data), kBiosSha1)) { status = "Not the GBA BIOS: the HLE BIOS will be used."; return; }
             if (!write_file(dir + "/gba_bios.bin", data)) { status = "Copy failed."; return; }
         } else {
-            // A patch that does not apply, or changes the game's code, is
-            // refused here when the ROM is in place to try it on.
-            std::vector<std::uint8_t> rom, out;
-            std::string summary, err;
-            if (read_file(dir + "/totkol.gba", &rom) && same_hex(sha1_of(rom), kRomSha1) &&
-                !gbarecomp::rom_patch_load_and_check(file, rom, &out, &summary, &err)) {
-                status = "That mod can't be played: " + err + ".";
-                return;
-            }
-            fs::create_directories(dir + "/mod", ec);
-            for (const fs::directory_entry& e : fs::directory_iterator(dir + "/mod", ec)) fs::remove(e.path(), ec);
-            if (!write_file(dir + "/mod/" + fs::path(file).filename().string(), data)) { status = "Copy failed."; return; }
+            std::string why;
+            if (!setup_mod_take(dir, file, &why)) { status = why; return; }
         }
         status.clear();
         picking = -1;
@@ -566,8 +639,7 @@ struct Setup {
     }
 
     void remove_mod() {
-        std::error_code ec;
-        for (const fs::directory_entry& e : fs::directory_iterator(dir + "/mod", ec)) fs::remove(e.path(), ec);
+        setup_mod_remove(dir);
         refresh();
     }
 
@@ -1128,6 +1200,10 @@ void setup_text_page(const std::string& title, const std::string& text, const st
 namespace kol {
 bool setup_file_is(const std::string&, const char*) { return false; }
 std::string setup_mod_path(const std::string&) { return {}; }
+bool setup_mod_take(const std::string&, const std::string&, std::string* why) { *why = "Not here."; return false; }
+void setup_mod_remove(const std::string&) {}
+int setup_file_dialog(int, std::string*) { return 0; }
+bool setup_file_dialog_poll(std::string*) { return false; }
 bool setup_run(const std::string&, bool) { return true; }
 void setup_text_page(const std::string&, const std::string&, const std::string&, int, int, int, std::uint32_t*,
                      int*, int*) {}

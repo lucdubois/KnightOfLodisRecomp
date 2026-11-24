@@ -42,6 +42,9 @@ bool desktop_player_mode();
 // The menu asked for a restart (restart_game): main starts the program again
 // with its first arguments once the game has quit.
 bool desktop_restart_requested();
+// That restart is onto the setup screen (Options > Mod where no system
+// dialog can be used): main adds --setup.
+bool desktop_restart_on_setup();
 
 // The right stick's click, from kol_actions' pad hook (down 1, up 0), with
 // whether the left stick is held. A short click alone opens or closes the

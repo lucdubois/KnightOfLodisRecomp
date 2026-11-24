@@ -107,6 +107,10 @@ int main(int argc, char** argv) {
     opts.rewind_history_seconds = 20;
     kol::configure_extended_view(opts);
     const int result = gbarecomp::run_game(argc, argv, opts);
-    if (!copy && kol::desktop_restart_requested()) start_again(first);
+    if (!copy && kol::desktop_restart_requested()) {
+        std::vector<std::string> again = first;
+        if (kol::desktop_restart_on_setup()) again.emplace_back("--setup");
+        start_again(again);
+    }
     return result;
 }

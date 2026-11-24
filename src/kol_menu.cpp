@@ -1415,6 +1415,10 @@ void bios_dialog() {
 
 // Options > Mod (under g_mu): what plays, and Choose / Remove / Cancel.
 void mod_dialog() {
+    if (settings_dir().empty()) {   // a developer's run: its command line decides
+        open_dialog("Mod", "This run's mod is set on its command line (--rom-patch).", {"OK"}, 0, nullptr);
+        return;
+    }
     if (!g_platform.pick_mod) {
         open_dialog("Mod", "A mod is chosen on the setup window. To open it again, quit and delete totkol.gba "
                            "in the game's folder (your save is kept), or start the game with --setup.",

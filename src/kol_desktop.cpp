@@ -210,8 +210,10 @@ void clear_outside(std::uint32_t* px) {
 // each time while it is open (its hand bobs, a touch or the pad changes it);
 // closed, nothing is drawn and nothing is rendered.
 void display_poll();
+void mod_poll();
 int overlay_provider(gbarecomp::PresentOverlay* out, int max, int out_w, int out_h) {
     display_poll();
+    mod_poll();
     // Desktop check: KOL_DESKTOP_MENU_AT=<n> opens the menu at the nth present
     // (a present dump after it shows the overlay). Not in a public build.
     if constexpr (kDevTools) {
@@ -437,6 +439,64 @@ void restart_game() {
     g_restart.store(true);
     quit_game();
 }
+// The same, onto the setup screen (main adds --setup).
+std::atomic<bool> g_restart_setup{false};
+void restart_on_setup() {
+    g_restart_setup.store(true);
+    restart_game();
+}
+
+// ── Options > Mod ───────────────────────────────────────────────────────
+// As Android's (MenuPlatform::pick_mod / remove_mod, asked 2026-11-23): Choose
+// opens the system's Open dialog, the file is checked on the ROM and copied
+// in as <dir>/mod's one file (kol_setup setup_mod_take: the setup screen's
+// Mod box does the same), then the menu asks "Restart to play ...?"
+// (menu_mod_picked); the desktop reads <dir>/mod at start (desktop_prepare).
+// Remove empties <dir>/mod. Where no system dialog can be used (the Deck's
+// Gaming Mode, Big Picture, a Linux with neither kdialog nor zenity), the
+// setup screen's own browser, made for the pad: a restart there.
+void mod_take(const std::string& file) {
+    if (file.empty()) return;   // (cancelled)
+    std::string why;
+    if (!setup_mod_take(settings_dir(), file, &why)) {
+        std::fprintf(stderr, "desktop: mod %s not taken: %s\n", file.c_str(), why.c_str());
+        menu_mod_picked(nullptr, why.c_str());
+        return;
+    }
+    const std::string name = std::filesystem::path(file).filename().string();
+    std::fprintf(stderr, "desktop: mod %s taken, played from the next start\n", name.c_str());
+    menu_mod_picked(name.c_str(), nullptr);
+}
+
+void mod_pick() {
+    // Desktop check: KOL_MOD_PICK_FILE=<path> stands in for the dialog's
+    // answer. Not in a public build.
+    if constexpr (kDevTools)
+        if (const char* e = std::getenv("KOL_MOD_PICK_FILE"); e && *e) { mod_take(e); return; }
+    std::string file;
+    switch (setup_file_dialog(2, &file)) {
+        case 1: mod_take(file); return;
+        case 2:   // (answered at a present: mod_poll)
+            menu_dialog("Mod", "Choose the mod in the window that opened.", {"OK"}, 0, nullptr);
+            return;
+        default: break;
+    }
+    menu_dialog("Mod", "Choose the mod on the setup screen? The game restarts there; your save is kept.",
+                {"Restart", "Cancel"}, 1, [](int b) {
+                    if (b == 0) restart_on_setup();
+                });
+}
+
+// At every present: a dialog up on a thread (Linux) has answered.
+void mod_poll() {
+    std::string file;
+    if (setup_file_dialog_poll(&file)) mod_take(file);
+}
+
+void mod_remove() {
+    setup_mod_remove(settings_dir());
+    std::fprintf(stderr, "desktop: mod removed, the original game from the next start\n");
+}
 
 // ── Options > Display ───────────────────────────────────────────────────
 // The window's mode and size go to gbarecomp as requests (runtime.h
@@ -537,6 +597,7 @@ bool exists(const std::string& p) {
 }  // namespace
 
 bool desktop_restart_requested() { return g_restart.load(); }
+bool desktop_restart_on_setup() { return g_restart_setup.load(); }
 
 bool desktop_player_mode() { return g_player; }
 
@@ -558,6 +619,10 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     MenuPlatform platform;
     platform.quit = &quit_game;
     platform.restart = &restart_game;
+    // Options > Mod: Choose / Remove, as on Android (player mode only: a
+    // developer's run takes --rom-patch, and kol_menu says so).
+    platform.pick_mod = &mod_pick;
+    platform.remove_mod = &mod_remove;
     // Options > Licenses: the notices on a page over the window.
     platform.show_licenses = &licenses_show;
     platform.page_up = &licenses_up;
@@ -715,7 +780,7 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
                 std::filesystem::create_directories(dir + "/mod_refused", ec);
                 std::filesystem::rename(mod, dir + "/mod_refused/" + name, ec);
                 const std::string text = "The mod " + name + " can't be played: " + err +
-                                         ".\n\nThe original game starts instead.";
+                                         ".\n\nThe original game starts instead. Choose another mod in Options > Mod.";
                 std::fprintf(stderr, "desktop: mod %s refused: %s\n", name.c_str(), err.c_str());
                 SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Mod", text.c_str(), nullptr);
             }
@@ -902,6 +967,7 @@ void window_size_step(int) {}
 void display_ratio_changed() {}
 bool desktop_player_mode() { return false; }
 bool desktop_restart_requested() { return false; }
+bool desktop_restart_on_setup() { return false; }
 int window_size_multiple(int, int) { return 0; }
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;

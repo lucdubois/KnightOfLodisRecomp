@@ -24283,3 +24283,51 @@ Java crash, the Files app's logs folder by hand.
 For a release: the packages are stripped, so a player's offsets need that
 release's unstripped binaries (build-windows/, build-macos/, the Deck's
 build-release/) to be named: keep a copy of them with each release.
+
+## Options > Mod on a computer (2026-11-23)
+
+Asked: the mod swappable from the menu, as on Android. Before, the desktop's
+Mod row only said a mod is chosen on the setup window (quit, delete
+totkol.gba or start with `--setup`).
+
+Now it works as Android's: Options > Enhancement Options > Mod shows what
+plays, with Choose / Remove / Cancel.
+- **Choose** opens the system's Open dialog: the Open panel on a Mac,
+  Windows' Open dialog, kdialog or zenity on Linux (on a thread, answered
+  at a present: the window keeps drawing). The file is checked on the ROM
+  as the setup screen checks it: a patch that does not apply, or changes
+  the game's code, is refused with the reason. A good one becomes
+  `<data folder>/mod`'s one file, then "Restart to play ...?" (kol_menu's
+  `menu_mod_picked`, Android's own dialog).
+- Where no system dialog can be used (the Deck's Gaming Mode or Big
+  Picture, a Linux with neither kdialog nor zenity, `KOL_FILE_PICKER=builtin`),
+  Choose offers a restart onto the setup screen, whose browser is made for
+  the pad (main adds `--setup`: `desktop_restart_on_setup`).
+- **Remove** empties `<data folder>/mod`, then "Mod removed. Restart now?".
+- A developer's run (no data folder) says its mod is on its command line
+  (`--rom-patch`).
+
+Code: kol_setup `setup_mod_take` / `setup_mod_remove` (the setup screen's Mod
+box now uses them too), `setup_file_dialog` / `setup_file_dialog_poll`;
+kol_desktop `mod_pick` / `mod_remove` / `mod_poll` (at each present) set as
+`MenuPlatform::pick_mod` / `remove_mod`. A mod refused at start now says to
+choose another in Options > Mod. `KOL_MOD_PICK_FILE=<path>` (dev builds)
+stands in for the dialog's answer.
+
+Checked on the Mac, headless (KOL_MENU_PPM pad presses into the menu, player
+mode over a scratch folder): Choose took Re-Rebalanced.ips ("Restart to play
+Tactics Ogre TKoL Re-Rebalanced?"); the next start played it ("IPS patch, 695
+bytes changed, no code touched") and the row said "Playing: ..." with Choose /
+Remove / Cancel; Remove, then Restart: the program started again on the
+original game. On the Deck (dev build, off-screen, `KOL_FILE_PICKER=builtin`
+as in Gaming Mode): Choose offered "Choose the mod on the setup screen?",
+Restart started the program again with `--setup` and the setup screen came
+up. Windows and Android compile. Not seen: the Open panel itself in the
+running game (no windowed runs on the Mac), Windows' dialog (not run under
+Wine), kdialog/zenity.
+
+Test recipe: `KOL_MENU_PPM=<out.ppm>,k80;k1;k80;k80;k80;k80;k80;k80;k1;...`
+presses the pad into the menu (k = KEYINPUT bits: 1 A, 2 B, 10 right, 80
+down; a page opens on its first row under Back). The open menu holds the
+game, so `--frames` never runs out (and a perl alarm did not stop it):
+add `KOL_DESKTOP_MENU_CLOSE_AT=300`.
