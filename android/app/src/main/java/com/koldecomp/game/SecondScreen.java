@@ -40,6 +40,10 @@ public final class SecondScreen {
     private static Activity sActivity;
     private static Presentation sPresentation;
     private static StatsView sView;
+    // The panel's content: StatsView, and over it, while a Bottom Shader runs,
+    // its GL surface (BottomShaderView). UI thread.
+    private static FrameLayout sRoot;
+    private static BottomShaderView sShade;
     // One screen: the same view over the game, shown while the menu is open.
     private static FrameLayout sOverlay;
     private static StatsView sOverlayView;
@@ -181,7 +185,11 @@ public final class SecondScreen {
                             android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
                 sView = new StatsView(sPresentation.getContext());
                 sView.setBottomScreen(true);   // its size to native: Options > Display > Bottom Screen
-                sPresentation.setContentView(sView, new ViewGroup.LayoutParams(
+                sRoot = new FrameLayout(sPresentation.getContext());
+                sRoot.setBackgroundColor(Color.BLACK);
+                sRoot.addView(sView, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                sPresentation.setContentView(sRoot, new ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT));
                 sPresentation.show();
@@ -283,6 +291,40 @@ public final class SecondScreen {
     }
     static int bottomScaling() {
         try { return nativeBottomScaling(); } catch (Throwable t) { return 0; }
+    }
+
+    // Options > Display > Bottom Shader (kol_shaders screen 1): the second
+    // screen's own preset. Its status (0 none, 1 running, 2 loading, -1
+    // failed), its passes run from BottomShaderView's thread, and that
+    // surface's context going away.
+    private static native int nativeBottomShader();
+    private static native boolean nativeShadeBottom(int tex, int w, int h, int dx, int dy, int dw, int dh, int outH);
+    private static native void nativeBottomGlLost();
+    /** A preset asked for the second screen and not failed. */
+    static boolean bottomShaderWanted() {
+        try { final int s = nativeBottomShader(); return s == 1 || s == 2; } catch (Throwable t) { return false; }
+    }
+    static boolean shadeBottom(int tex, int w, int h, int dx, int dy, int dw, int dh, int outH) {
+        try { return nativeShadeBottom(tex, w, h, dx, dy, dw, dh, outH); } catch (Throwable t) { return false; }
+    }
+    static void bottomGlLost() {
+        try { nativeBottomGlLost(); } catch (Throwable t) { /* native not ready */ }
+    }
+    /** The panel's GL surface while a Bottom Shader runs (UI thread), else null. */
+    static BottomShaderView bottomShading() { return sShade; }
+    /** UI thread (StatsView asks as it draws): the GL surface over the panel, or gone. */
+    static void setShaded(boolean on) {
+        if (sRoot == null || sView == null || sPresentation == null) return;
+        if (on == (sShade != null)) return;
+        if (on) {
+            sShade = new BottomShaderView(sPresentation.getContext(), () -> { if (sView != null) sView.invalidate(); });
+            sRoot.addView(sShade, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else {
+            sRoot.removeView(sShade);
+            sShade = null;
+        }
+        sView.invalidate();
     }
     static native int[] menuTouch(int action, float x, float y);
     // The Save States page's grid (kol::menu_states_*): StatsView scrolls its rows.

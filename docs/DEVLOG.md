@@ -24580,3 +24580,46 @@ Not seen on the Thor yet; GPU cost not measured (about the no-preset
 path's: the warp at 1536x864 instead of 1920x1080, plus a 16-tap copy at
 384x216).
 
+## Options > Display > Bottom Shader: the second screen's own preset (2026-11-24)
+
+Asked: shaders on the bottom screen, with a separate preset in a second
+row of the Display page. The panel is no SDL window: StatsView (Java)
+composes the sheet, list, menu and their slides at the panel's size.
+
+- **Setting:** `bottom_shader=` / `bottom_shader_params=` (kol_settings);
+  kol_shaders' API takes a screen (0 the picture, 1 the second screen) and
+  applies both at start. Menu: Display > Bottom Shader (Android; off with no
+  second screen), row id 15 opening the Shader page (13) with
+  `g_sh_screen` 1: the same list, Parameters page and Reset for that
+  screen's preset; back lands on the row that opened it.
+- **gbarecomp shader_preset:** the request, status, parameters and chain
+  are per screen (`Slot`, g_top / g_bottom); the window's API unchanged.
+  New: runtime_set_bottom_shader_preset / _status / _error,
+  shader::bottom_params / set_bottom_param(_overrides), `run_gl(tex, w, h,
+  dest, out_h)` (the current context, no SDL: build_gl_raw, GL functions
+  from libGLESv2 / eglGetProcAddress: SDL's lookup gave nothing on that
+  thread, "GL functions missing" on the emulator) and `forget_gl()` (a new
+  context: built again).
+- **Android:** the Presentation's content is a FrameLayout; while the
+  bottom preset runs (status 1 or 2, asked at each StatsView draw), a
+  BottomShaderView (GLSurfaceView, ES2 context, RGB888, on top, drawn when
+  dirty, touches through to StatsView) lies over StatsView. StatsView draws
+  its page at the canvas's own size (k 1, 248 wide) into its v-bitmap, as
+  Smooth/Stretch do a whole scale down, and hands it over; the surface
+  uploads it and runs the preset into the page's rectangle (Integer: a whole
+  multiple from the top left; Smooth/Stretch: the panel). vScale keeps the
+  touches. A preset that fails: the surface goes, StatsView draws as before.
+
+Checked: desktop and APK build; on the emulator with an overlay display
+(`settings put global overlay_display_devices 1240x1080/240`: a
+presentation display, id 5) the panel came up and the bottom preset was
+asked for; the first build failed to load it (GL lookup), fixed. Then on
+the Thor (the user, APK 15:26): gba-dot-matrix-white, gba-color,
+gb-palette-light/dmg, gameboy (5 passes, history) and crt-royale (12
+passes) loaded on the second screen; screenshots of Screen-2 (physical id)
+show the menu through gb-palette-dmg and crt-royale. gameboy's slow LCD
+froze half-blended (old rows faint after a scroll): the surface is drawn
+when dirty, so its history stopped moving; it now draws 8 frames more
+after each picture (APK 15:28). (The emulator attached beside the Thor
+stops the Thor's install task: shut it down before the user installs.)
+

@@ -168,6 +168,12 @@ void shader_choice_set(const std::string& key);
 // Its parameters as the player set them: "name=value;..." ("" the preset's own).
 const std::string& shader_params_choice();
 void shader_params_set(const std::string& values);
+// Options > Display > Bottom Shader (a second screen's own preset, 2026-11-24):
+// the same two, bottom_shader= and bottom_shader_params= in enhancements.cfg.
+const std::string& bottom_shader_choice();
+void bottom_shader_choice_set(const std::string& key);
+const std::string& bottom_shader_params_choice();
+void bottom_shader_params_set(const std::string& values);
 
 unsigned bottom_scaling_choice_current();
 void bottom_scaling_choice_set(unsigned i);

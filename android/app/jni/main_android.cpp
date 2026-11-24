@@ -31,6 +31,7 @@
 #include <fstream>
 #include <iterator>
 
+#include "shader_preset.h"   // Bottom Shader: gbarecomp shader::run_gl
 #include "kol_vs_cpu.h"
 #include "kol_vs_net.h"
 #include "kol_dev.h"
@@ -1238,6 +1239,22 @@ Java_com_koldecomp_game_SecondScreen_nativeBottomSize(JNIEnv*, jclass, jint w, j
 JNIEXPORT jint JNICALL
 Java_com_koldecomp_game_SecondScreen_nativeBottomScaling(JNIEnv*, jclass) {
     return kol::bottom_scaling_mode();
+}
+
+// Options > Display > Bottom Shader: the second screen's own preset, run by
+// its GL surface (BottomShaderView) on that surface's thread and context.
+JNIEXPORT jint JNICALL
+Java_com_koldecomp_game_SecondScreen_nativeBottomShader(JNIEnv*, jclass) {
+    return runtime_bottom_shader_status();
+}
+JNIEXPORT jboolean JNICALL
+Java_com_koldecomp_game_SecondScreen_nativeShadeBottom(JNIEnv*, jclass, jint tex, jint w, jint h, jint dx, jint dy,
+                                                         jint dw, jint dh, jint out_h) {
+    return gbarecomp::shader::run_gl(static_cast<unsigned>(tex), w, h, dx, dy, dw, dh, out_h) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL
+Java_com_koldecomp_game_SecondScreen_nativeBottomGlLost(JNIEnv*, jclass) {
+    gbarecomp::shader::forget_gl();
 }
 
 JNIEXPORT jint JNICALL

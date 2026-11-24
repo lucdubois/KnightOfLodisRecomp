@@ -70,10 +70,28 @@ std::vector<std::pair<std::string, float>> parse_params(const std::string& s) {
     return out;
 }
 
-void apply() {
+void apply(int screen) {
+    if (screen == 1) {
+        gbarecomp::shader::set_bottom_param_overrides(parse_params(bottom_shader_params_choice()));
+        const std::string path = path_of(bottom_shader_choice());
+        runtime_set_bottom_shader_preset(path.empty() ? nullptr : path.c_str());
+        return;
+    }
     gbarecomp::shader::set_param_overrides(parse_params(shader_params_choice()));
     const std::string path = path_of(shader_choice());
     runtime_set_shader_preset(path.empty() ? nullptr : path.c_str());
+}
+
+std::vector<gbarecomp::shader::Param> params_of(int screen) {
+    return screen == 1 ? gbarecomp::shader::bottom_params() : gbarecomp::shader::params();
+}
+void set_param_of(int screen, const std::string& name, float v) {
+    if (screen == 1) gbarecomp::shader::set_bottom_param(name, v);
+    else gbarecomp::shader::set_param(name, v);
+}
+void params_set_of(int screen, const std::string& values) {
+    if (screen == 1) bottom_shader_params_set(values);
+    else shader_params_set(values);
 }
 
 bool hidden(const std::string& name) { return name.empty() || name[0] == '.'; }   // ".", "._x" (macOS)
@@ -231,7 +249,8 @@ std::string shaders_dir() {
 
 void shaders_install() {
     gbarecomp::g_shader_image_loader = &load_image;
-    apply();
+    apply(0);
+    apply(1);
 }
 
 std::vector<ShaderEntry> shaders_list(const std::string& folder) {
@@ -288,52 +307,61 @@ std::vector<ShaderEntry> shaders_list(const std::string& folder) {
     return out;
 }
 
-void shaders_choose(const std::string& key) {
-    if (key != shader_choice()) shader_params_set("");   // another preset: its own values
-    shader_choice_set(key);
-    apply();
+const std::string& shaders_choice(int screen) {
+    return screen == 1 ? bottom_shader_choice() : shader_choice();
 }
 
-std::vector<ShaderParam> shaders_params() {
+void shaders_choose(const std::string& key, int screen) {
+    if (key != shaders_choice(screen)) params_set_of(screen, "");   // another preset: its own values
+    if (screen == 1) bottom_shader_choice_set(key);
+    else shader_choice_set(key);
+    apply(screen);
+}
+
+std::vector<ShaderParam> shaders_params(int screen) {
     std::vector<ShaderParam> out;
-    for (const auto& p : gbarecomp::shader::params())
+    for (const auto& p : params_of(screen))
         out.push_back({p.name, p.desc, p.value, p.def, p.min, p.max, p.step});
     return out;
 }
 
 namespace {
 // The values that differ from the preset's defaults, kept with the choice.
-void keep_params() {
+void keep_params(int screen) {
     std::string s;
     char buf[64];
-    for (const auto& p : gbarecomp::shader::params()) {
+    for (const auto& p : params_of(screen)) {
         if (std::abs(p.value - p.def) < 1e-6f) continue;
         std::snprintf(buf, sizeof buf, "%g", static_cast<double>(p.value));
         if (!s.empty()) s += ';';
         s += p.name + "=" + buf;
     }
-    shader_params_set(s);
+    params_set_of(screen, s);
 }
 }  // namespace
 
-void shaders_param_step(const std::string& name, int dir) {
-    for (const auto& p : gbarecomp::shader::params()) {
+void shaders_param_step(const std::string& name, int dir, int screen) {
+    for (const auto& p : params_of(screen)) {
         if (p.name != name) continue;
         float v = dir == 0 ? p.def : p.value + static_cast<float>(dir) * p.step;
         // Back onto the step grid from the minimum (float steps drift).
         if (dir != 0 && p.step > 0.0f) v = p.min + std::round((v - p.min) / p.step) * p.step;
-        gbarecomp::shader::set_param(name, v);
+        set_param_of(screen, name, v);
     }
-    keep_params();
+    keep_params(screen);
 }
 
-void shaders_params_reset() {
-    for (const auto& p : gbarecomp::shader::params()) gbarecomp::shader::set_param(p.name, p.def);
-    shader_params_set("");
+void shaders_params_reset(int screen) {
+    for (const auto& p : params_of(screen)) set_param_of(screen, p.name, p.def);
+    params_set_of(screen, "");
 }
 
-std::string shaders_label() { return label_of(shader_choice()); }
-int shaders_status() { return runtime_shader_status(); }
-std::string shaders_error() { return runtime_shader_error(); }
+std::string shaders_label(int screen) { return label_of(shaders_choice(screen)); }
+int shaders_status(int screen) {
+    return screen == 1 ? runtime_bottom_shader_status() : runtime_shader_status();
+}
+std::string shaders_error(int screen) {
+    return screen == 1 ? runtime_bottom_shader_error() : runtime_shader_error();
+}
 
 }  // namespace kol

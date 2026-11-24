@@ -627,6 +627,10 @@ const Row kDisplay[] = {
     {Kind::BottomScaling, 0, "Bottom Screen", nullptr},   // the same, for a second screen
 #endif
     {Kind::Page, 13, "Shader", "RetroArch GLSL presets (.glslp)\nover the picture."},
+#if defined(__ANDROID__)
+    // A second screen's own preset (2026-11-24, asked): page 13 for it.
+    {Kind::Page, 15, "Bottom Shader", "RetroArch GLSL presets (.glslp)\nover the second screen."},
+#endif
 };
 const Row kGraphics[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
@@ -807,6 +811,10 @@ std::vector<Row> g_sh_rows;
 std::vector<std::unique_ptr<std::string>> g_sh_text;
 std::vector<ShaderEntry> g_sh_entries;   // ShaderItem's id indexes it
 std::string g_sh_folder;                 // under the shaders folder, "" the top
+// The Shader page's screen: 0 the main picture's preset (Display > Shader),
+// 1 a second screen's own (Display > Bottom Shader, row id 15: the same
+// page, page 13, for it).
+int g_sh_screen = 0;
 bool g_sh_dirty = true;                  // rebuilt at the next render (nothing holds a row then)
 bool g_sh_has_import = false;            // (set with the platform: Android's Import Folder)
 int g_sh_built_status = 0;               // the shader's status when the rows were made
@@ -837,7 +845,7 @@ void sp_rebuild() {
     g_sp_text.clear();
     g_sp_names.clear();
     g_sp_rows.push_back({Kind::Back, 0, "Back", "Return to the shaders."});
-    const std::vector<ShaderParam> ps = shaders_params();
+    const std::vector<ShaderParam> ps = shaders_params(g_sh_screen);
     for (std::size_t i = 0; i < ps.size(); ++i) {
         const ShaderParam& p = ps[i];
         std::string label = p.desc.empty() ? p.name : p.desc;
@@ -859,7 +867,7 @@ const char* sh_keep(std::string s) {
 
 void sh_rebuild() {
     g_sh_dirty = false;
-    g_sh_built_status = shaders_status();
+    g_sh_built_status = shaders_status(g_sh_screen);
     g_sh_rows.clear();
     g_sh_text.clear();
     g_sh_entries = shaders_list(g_sh_folder);
@@ -877,16 +885,16 @@ void sh_rebuild() {
     // The top (2026-11-23, the user's order): the shader in use with its
     // Parameters and Reset (none of the three without one); the shaders;
     // then where more come from.
-    if (!shader_choice().empty()) {
-        std::string heading = shaders_label();
+    if (!shaders_choice(g_sh_screen).empty()) {
+        std::string heading = shaders_label(g_sh_screen);
         if (heading.size() > 22) heading = heading.substr(0, 21) + ".";
         g_sh_rows.push_back({Kind::Heading, 0, sh_keep("- " + heading + " -"), nullptr});
-        if (!shaders_params().empty())
+        if (!shaders_params(g_sh_screen).empty())
             g_sh_rows.push_back({Kind::Page, 14, "Parameters", "The running shader's settings:\nits own sliders."});
         for (std::size_t i = 0; i < g_sh_entries.size(); ++i)
             if (g_sh_entries[i].none) item(i);   // Reset
     }
-    g_sh_rows.push_back({Kind::Heading, 0, "- Shaders -", nullptr});
+    g_sh_rows.push_back({Kind::Heading, 0, g_sh_screen == 1 ? "- Bottom Screen Shaders -" : "- Shaders -", nullptr});
     for (std::size_t i = 0; i < g_sh_entries.size(); ++i)
         if (!g_sh_entries[i].none) item(i);
     if (g_sh_has_import)
@@ -1080,6 +1088,7 @@ bool row_off(const Row& r) {
 #if defined(__ANDROID__)
     if (r.kind == Kind::Scaling) return scaling_exact() > 0;
     if (r.kind == Kind::BottomScaling) return bottom_scaling_exact() != 0;
+    if (r.kind == Kind::Page && r.id == 15) return bottom_scaling_exact() < 0;   // no second screen
 #endif
     return false;
 }
@@ -1123,8 +1132,9 @@ void leave_page() {
     g_sel = 0;
     int n = 0;
     const Row* r = rows(&n);
+    const int opener = from == 13 && g_sh_screen == 1 ? 15 : from;
     for (int i = 0; i < n; ++i)
-        if (r[i].kind == Kind::Page && r[i].id == from) g_sel = i;
+        if (r[i].kind == Kind::Page && r[i].id == opener) g_sel = i;
     g_scroll = 0;
     follow_selection();
 }
@@ -1184,10 +1194,11 @@ Text value_text(const Art& a, const Row& r) {
             return encode(p < 0 ? "Custom" : preset_label(static_cast<unsigned>(p)));
         }
         case Kind::Page:
-            if (r.id == 13) {   // Display > Shader: the chosen preset
-                const int st = shaders_status();
+            if (r.id == 13 || r.id == 15) {   // Display > Shader / Bottom Shader: the chosen preset
+                const int screen = r.id == 15 ? 1 : 0;
+                const int st = shaders_status(screen);
                 if (st < 0) return encode("Failed");
-                std::string l = st == 2 ? std::string("...") : shaders_label();
+                std::string l = st == 2 ? std::string("...") : shaders_label(screen);
                 if (l.size() > 12) l = l.substr(0, 11) + ".";
                 return encode(l.c_str());
             }
@@ -1201,7 +1212,7 @@ Text value_text(const Art& a, const Row& r) {
         case Kind::ShaderParamReset: return encode(">");
         case Kind::ShaderParam: {
             if (r.id < 0 || r.id >= static_cast<int>(g_sp_names.size())) return encode("");
-            for (const ShaderParam& p : shaders_params())
+            for (const ShaderParam& p : shaders_params(g_sh_screen))
                 if (p.name == g_sp_names[static_cast<std::size_t>(r.id)]) return encode(param_number(p.value).c_str());
             return encode("");
         }
@@ -1209,8 +1220,8 @@ Text value_text(const Art& a, const Row& r) {
             if (r.id < 0 || r.id >= static_cast<int>(g_sh_entries.size())) return encode("");
             const ShaderEntry& e = g_sh_entries[static_cast<std::size_t>(r.id)];
             if (e.is_folder) return encode(">");
-            if (e.none || e.key != shader_choice()) return encode("");
-            const int st = shaders_status();
+            if (e.none || e.key != shaders_choice(g_sh_screen)) return encode("");
+            const int st = shaders_status(g_sh_screen);
             return encode(st < 0 ? "Failed" : st == 2 ? "..." : "On");
         }
         case Kind::Licenses: return encode(">");
@@ -1594,16 +1605,19 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             preset_apply(cur < 0 ? (dir > 0 ? 0u : n - 1u) : wrap(static_cast<unsigned>(cur), dir, n));
             break;
         }
-        case Kind::Page:
-            if (r.id == 13) { g_sh_folder.clear(); g_sh_dirty = true; }
-            if (r.id == 14) g_sp_dirty = true;
-            if (r.id == 7) g_states_parent = g_page;
-            g_page = r.id; g_sel = 1; g_scroll = 0;
-            if (r.id == 7) { g_st_sel = 0; states_scroll_to(0); g_st_armed = -1; }
+        case Kind::Page: {
+            if (row_off(r)) break;
+            const int to = r.id == 15 ? 13 : r.id;   // Bottom Shader: the Shader page for the second screen
+            if (r.id == 13 || r.id == 15) { g_sh_screen = r.id == 15 ? 1 : 0; g_sh_folder.clear(); g_sh_dirty = true; }
+            if (to == 14) g_sp_dirty = true;
+            if (to == 7) g_states_parent = g_page;
+            g_page = to; g_sel = 1; g_scroll = 0;
+            if (to == 7) { g_st_sel = 0; states_scroll_to(0); g_st_armed = -1; }
             // (r is the Display page's row, not one of these: rebuilt at once,
             // the hand off the heading under it)
-            if (r.id == 13) { sh_rebuild(); sel_selectable(g_sh_rows, g_sel); }
+            if (to == 13) { sh_rebuild(); sel_selectable(g_sh_rows, g_sel); }
             break;
+        }
         case Kind::Back: leave_page(); break;
         case Kind::DisplayMode: display_full_screen_set(!display_full_screen()); break;
         case Kind::WindowSize: window_size_step(dir); break;
@@ -1667,7 +1681,7 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
                 g_sel = 1;
                 g_scroll = 0;
             } else {
-                shaders_choose(e.none ? std::string() : e.key);
+                shaders_choose(e.none ? std::string() : e.key, g_sh_screen);
             }
             g_sh_dirty = true;
             break;
@@ -1677,10 +1691,10 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             break;
         case Kind::ShaderParam:
             if (r.id >= 0 && r.id < static_cast<int>(g_sp_names.size()))
-                shaders_param_step(g_sp_names[static_cast<std::size_t>(r.id)], dir > 0 ? 1 : -1);
+                shaders_param_step(g_sp_names[static_cast<std::size_t>(r.id)], dir > 0 ? 1 : -1, g_sh_screen);
             break;
         case Kind::ShaderParamReset:
-            if (dir > 0) shaders_params_reset();
+            if (dir > 0) shaders_params_reset(g_sh_screen);
             break;
         case Kind::ShaderDownload:
             if (dir < 0 || shaders_download_state() != 0) break;
@@ -2808,7 +2822,7 @@ bool menu_take_dirty() {
     const bool ra_changed = menu_is_open() && ra_seen.exchange(ra) != ra;
     // A shader preset loads (or fails) on the render thread: its row changes.
     static std::atomic<int> sh_seen{0};
-    const int sh = shaders_status() * 8 + shaders_download_state();
+    const int sh = (shaders_status() + 2) * 64 + (shaders_status(1) + 2) * 8 + shaders_download_state();
     const bool sh_changed = menu_is_open() && sh_seen.exchange(sh) != sh;
     return g_dirty.exchange(false, std::memory_order_acq_rel) || bob || ra_changed || sh_changed;
 }
@@ -2824,11 +2838,11 @@ bool menu_render(std::uint32_t* argb) {
         return true;
     }
     if (g_page == 8) ra_rebuild();   // before any row is held
-    if (g_page == 13 && (g_sh_dirty || g_sh_rows.empty() || g_sh_built_status != shaders_status())) {
+    if (g_page == 13 && (g_sh_dirty || g_sh_rows.empty() || g_sh_built_status != shaders_status(g_sh_screen))) {
         sh_rebuild();
         sel_selectable(g_sh_rows, g_sel);
     }
-    if (g_page == 14 && (g_sp_dirty || g_sp_rows.empty() || g_sp_names.size() != shaders_params().size())) {
+    if (g_page == 14 && (g_sp_dirty || g_sp_rows.empty() || g_sp_names.size() != shaders_params(g_sh_screen).size())) {
         sp_rebuild();
         g_sel = std::min(g_sel, static_cast<int>(g_sp_rows.size()) - 1);
     }
@@ -2935,10 +2949,10 @@ bool menu_render(std::uint32_t* argb) {
 #endif
         help = encode(scaling_choice_help(scaling_choice_current()));
     } else if (sel.kind == Kind::ShaderItem && sel.id >= 0 && sel.id < static_cast<int>(g_sh_entries.size()) &&
-               g_sh_entries[static_cast<std::size_t>(sel.id)].key == shader_choice() &&
-               !g_sh_entries[static_cast<std::size_t>(sel.id)].is_folder && shaders_status() < 0) {
+               g_sh_entries[static_cast<std::size_t>(sel.id)].key == shaders_choice(g_sh_screen) &&
+               !g_sh_entries[static_cast<std::size_t>(sel.id)].is_folder && shaders_status(g_sh_screen) < 0) {
         // Why it failed, cut to the box's two lines (the log has the rest).
-        std::string why = shaders_error();
+        std::string why = shaders_error(g_sh_screen);
         for (char& ch : why) if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
         if (why.size() > 62) why = why.substr(0, 59) + "...";
         const std::size_t cut = why.size() > 31 ? why.rfind(' ', 31) : std::string::npos;

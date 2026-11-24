@@ -1227,6 +1227,17 @@ public final class StatsView extends View {
         // The fill keeps the bar's least height under the sheet (BUTTON rows).
         final float kf = Math.min(W / MENU_W, H / (MENU_H + BUTTON));
         final int ki = Math.max(1, (int) Math.floor(kf));
+        if (bottomScreen) {
+            // Options > Display > Bottom Shader: the GL surface over the
+            // panel added or taken away as native's preset comes and goes.
+            final boolean want = SecondScreen.bottomShaderWanted();
+            final BottomShaderView shade = SecondScreen.bottomShading();
+            if (want != (shade != null)) post(() -> SecondScreen.setShaded(want));
+            if (want && shade != null) {
+                drawShaded(c, shade, mode, W, H, kf, ki);
+                return;
+            }
+        }
         if (mode == 0 || kf < 1f || kf - ki < 0.001f) {
             vScale = 1f;
             drawContent(c);
@@ -1245,6 +1256,40 @@ public final class StatsView extends View {
         drawMenu(vCanvas);
         drawBarHelp(vCanvas);
         c.drawBitmap(vBitmap, null, new RectF(0f, 0f, W, H), mode == 1 ? smooth : blit);
+    }
+
+    /**
+     * Bottom Shader: the page at the canvas's own size (k 1: 248 wide), as
+     * the Smooth and Stretch modes draw it a whole scale down, handed to the
+     * GL surface, which runs the preset from it into the rectangle the page
+     * fills: Integer, a whole multiple from the top left; Smooth and Stretch,
+     * the whole panel. Touches keep their mapping (vScale: the panel's pixels
+     * a page pixel). Nothing here shows: the surface is over it.
+     */
+    private void drawShaded(Canvas c, BottomShaderView shade, int mode, float W, float H, float kf, int ki) {
+        final int lw, lh, outW, outH;
+        if (mode == 0 || kf < 1f) {
+            lw = Math.max(1, Math.round(W / ki));
+            lh = Math.max(1, Math.round(H / ki));
+            outW = lw * ki;
+            outH = lh * ki;
+        } else {
+            lw = Math.max(1, Math.round(W / kf));
+            lh = Math.max(1, Math.round(H / kf));
+            outW = Math.round(W);
+            outH = Math.round(H);
+        }
+        if (vBitmap == null || vBitmap.getWidth() != lw || vBitmap.getHeight() != lh) {
+            vBitmap = Bitmap.createBitmap(lw, lh, Bitmap.Config.ARGB_8888);
+            vCanvas = new Canvas(vBitmap);
+        }
+        vW = lw; vH = lh; vScale = (float) outW / lw;
+        vBitmap.eraseColor(Color.BLACK);
+        drawContent(vCanvas);
+        drawMenu(vCanvas);
+        drawBarHelp(vCanvas);
+        shade.show(vBitmap, 0, 0, outW, outH);
+        c.drawColor(Color.BLACK);
     }
 
     // ── The editor page (native kol_edit_panel) ─────────────────────────

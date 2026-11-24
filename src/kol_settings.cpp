@@ -192,6 +192,7 @@ unsigned g_bottom_scaling = 0;
 // (under the player's shaders folder).
 std::string g_shader;
 std::string g_shader_params;   // shader_params=: the chosen preset's values, "name=value;..."
+std::string g_bottom_shader, g_bottom_shader_params;   // the same for a second screen
 std::atomic<int> g_bottom_size{0};   // the bottom screen's w << 16 | h, 0 none
 
 void apply_scaling() {
@@ -433,6 +434,8 @@ void save() {
     std::fprintf(f, "bottom_scaling=%s\n", kScalingKeys[g_bottom_scaling < kScalingCount ? g_bottom_scaling : 0u]);
     if (!g_shader.empty()) std::fprintf(f, "shader=%s\n", g_shader.c_str());
     if (!g_shader_params.empty()) std::fprintf(f, "shader_params=%s\n", g_shader_params.c_str());
+    if (!g_bottom_shader.empty()) std::fprintf(f, "bottom_shader=%s\n", g_bottom_shader.c_str());
+    if (!g_bottom_shader_params.empty()) std::fprintf(f, "bottom_shader_params=%s\n", g_bottom_shader_params.c_str());
     std::fprintf(f, "settings_version=%d\n", kSettingsVersion);
     std::fclose(f);
 }
@@ -501,6 +504,16 @@ void shader_params_set(const std::string& values) {
 }
 void shader_choice_set(const std::string& key) {
     g_shader = key;
+    save();
+}
+const std::string& bottom_shader_choice() { return g_bottom_shader; }
+const std::string& bottom_shader_params_choice() { return g_bottom_shader_params; }
+void bottom_shader_params_set(const std::string& values) {
+    g_bottom_shader_params = values;
+    save();
+}
+void bottom_shader_choice_set(const std::string& key) {
+    g_bottom_shader = key;
     save();
 }
 
@@ -1029,6 +1042,12 @@ void settings_init(const char* dir, unsigned widescreen_width,
                     char* v = eq + 1;
                     v[std::strcspn(v, "\r\n")] = '\0';
                     (line[6] == '_' ? g_shader_params : g_shader) = v;
+                    continue;
+                }
+                if (std::strcmp(line, "bottom_shader") == 0 || std::strcmp(line, "bottom_shader_params") == 0) {
+                    char* v = eq + 1;
+                    v[std::strcspn(v, "\r\n")] = '\0';
+                    (line[13] == '_' ? g_bottom_shader_params : g_bottom_shader) = v;
                     continue;
                 }
                 if (std::strcmp(line, "scaling") == 0 || std::strcmp(line, "bottom_scaling") == 0) {

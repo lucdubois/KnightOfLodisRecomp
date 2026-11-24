@@ -49,16 +49,20 @@ struct ShaderParam {
     std::string name, desc;
     float value = 0.0f, def = 0.0f, min = 0.0f, max = 0.0f, step = 0.0f;
 };
-std::vector<ShaderParam> shaders_params();
-void shaders_param_step(const std::string& name, int dir);
-void shaders_params_reset();
+// `screen` everywhere below: 0 the main picture's preset, 1 a second
+// screen's own (Options > Display > Bottom Shader; Android's lower panel,
+// drawn by its GL surface: gbarecomp shader::run_gl).
+std::vector<ShaderParam> shaders_params(int screen = 0);
+void shaders_param_step(const std::string& name, int dir, int screen = 0);
+void shaders_params_reset(int screen = 0);
 
 // Choose a preset (its key; "" none): kept and applied at once.
-void shaders_choose(const std::string& key);
-// The chosen preset's name for the menu ("None" when none).
-std::string shaders_label();
+void shaders_choose(const std::string& key, int screen = 0);
+// The chosen preset's key ("" none) and name for the menu ("None" when none).
+const std::string& shaders_choice(int screen = 0);
+std::string shaders_label(int screen = 0);
 // 0 none, 1 running, 2 loading, -1 failed (shaders_error says why).
-int shaders_status();
-std::string shaders_error();
+int shaders_status(int screen = 0);
+std::string shaders_error(int screen = 0);
 
 }  // namespace kol
