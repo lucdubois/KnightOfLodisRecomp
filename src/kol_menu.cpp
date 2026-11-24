@@ -54,6 +54,15 @@ constexpr std::uint32_t kBaseArchive = 0x086B75B4u;  // BG tiles from tile 0:
 constexpr std::uint32_t kOptionTab = 0x086BBB2Cu;    // "OPTION", 4 tiles
 constexpr std::uint32_t kHandTiles = 0x086D7F61u;    // hand cursor, 16x8 sprite
 constexpr std::uint32_t kArrowTile = 0x086D7FC2u;    // scroll arrow (points up)
+// The battle confirmation's arrow (the dots between the two units' boxes, a
+// ball rolling along them toward the chevron, "Attack?"): an A7 archive of
+// 64-byte entries, two 8x8 tiles each. Found by its tiles in
+// BV_attack_confirm's VRAM (OBJ 0x13C-0x14A, written by CpuSet as a scene
+// loads): the game copies the joined entries 8 bytes (two rows) off, so on
+// screen each dot carries the next tile's top row under it; drawn here from
+// the archive's own tiles. The busy box's icon (menu_busy).
+constexpr std::uint32_t kBusyArchive = 0x086DB348u;
+constexpr int kBusyDot = 38;   // tiles: small dot, medium dot, the ball (entries 19 and 20)
 constexpr std::uint32_t kIconArchive = 0x086DA2E4u;  // the R bar's icons, 16x16
 constexpr int kOptionIcon = 2;   // its Option icon (the world map's system menu has it too: DZ)
 constexpr int kSaveIcon = 17, kLoadIcon = 18;   // Save and Load, as that menu has them (EA)
@@ -117,6 +126,7 @@ struct Art {
     std::vector<std::uint8_t> tab;      // OPTION tab tiles
     std::vector<std::uint8_t> icons;    // R bar icons
     std::vector<std::uint8_t> roster_icons;   // the Organize grid's R menu icons
+    std::vector<std::uint8_t> busy;     // the confirmation arrow's tiles (kBusyArchive)
     std::uint32_t bg_pal[16][16] = {};
     std::uint32_t obj_pal[16] = {};
     std::uint32_t obj_pals[16][16] = {};   // every OBJ bank, for the R bar's icons
@@ -220,6 +230,8 @@ const Art& art() {
         }
     }
     a.ok = true;
+    // The busy box's dots: none drawn without them, nothing else needs them.
+    if (!archive(rom, size, kBusyArchive, &a.busy) || a.busy.size() < (kBusyDot + 3u) * 32u) a.busy.clear();
     if (std::getenv("KOL_MENU_DUMP_TEXT")) {
         auto ascii = [](const Text& t) {
             std::string s;
@@ -362,6 +374,20 @@ public:
     // brightness x 0.6 (the ROM's OBJ banks 12-15 are not the menu's dimmed
     // copies: those are halved at run time; read from ROM they drew Save red
     // and Load yellow).
+    // The busy box's icon, step `step` of six, its top left at (x, y): the
+    // confirmation arrow's three dots, 8 apart, and its ball rolling over
+    // them as the game rolls it toward the target: the first dot swells into
+    // the ball, the ball goes along, a medium dot left behind it, then the
+    // small dots alone. In the player's blue (OBJ bank 0; the enemy's is bank
+    // 1, red). 24 x 8.
+    void busy(int x, int y, int step) {
+        if (a_.busy.empty()) return;
+        static constexpr int kSteps[6][3] = {   // 0 small, 1 medium, 2 the ball
+            {1, 0, 0}, {2, 0, 0}, {1, 2, 0}, {0, 1, 2}, {0, 0, 1}, {0, 0, 0}};
+        for (int k = 0; k < 3; ++k)
+            tile4(x + 8 * k, y, &a_.busy[static_cast<std::size_t>(kBusyDot + kSteps[step % 6][k]) * 32u],
+                  a_.obj_pals[0]);
+    }
     // Icon k (Item, Spell, Class) of the Organize grid's R menu, in OBJ
     // bank 0 (greyed as icon() greys).
     void roster_icon(int k, int x, int y, bool dim = false) {
@@ -903,6 +929,7 @@ struct Dialog {
     int sel = 0;        // the pad's button
     int pressed = -1;   // the button a finger is on
     int cancel = -1;    // the button B presses (-1: B closes with -1)
+    bool busy = false;  // no buttons: the arrow's dots turn until it is replaced (menu_busy)
     std::function<void(int)> done;
 };
 Dialog g_dlg;   // under g_mu
@@ -2102,6 +2129,13 @@ void dialog_render(Canvas& c, std::uint32_t* argb, const Art& a, int bob) {
         const int off = pushed ? 1 : 0;   // the label goes in with the button, as the bar's icon does
         c.text(t, L.bx[i] + (L.bw[i] - c.width(t)) / 2 + off, L.by + 5 + off);
     }
+    // Busy: the dots where the buttons go, a step each time the hand's bob
+    // steps (133 ms; the picture is sent again then anyway).
+    if (g_dlg.busy) {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+        c.busy((kSheetW - 24) / 2, L.by + 8, static_cast<int>((ms / 133) % 6));
+    }
     // The hand points at the pad's choice, bobbing as the menu's does.
     if (g_dlg.sel >= 0 && g_dlg.sel < static_cast<int>(L.bx.size()))
         c.hand(L.bx[g_dlg.sel] - kHandW - 1 + bob, L.by + 8);
@@ -2587,6 +2621,7 @@ std::uint16_t menu_filter_keys(std::uint16_t keyinput) {
         return 0x03FFu;
     }
     if (g_dlg.up) {   // the dialog: left/right move the hand, A presses, B cancels
+        if (g_dlg.busy) return 0x03FFu;   // nothing to press until the work answers
         const int n = static_cast<int>(g_dlg.buttons.size());
         bool changed = false, close = false;
         int idx = -1;
@@ -3294,7 +3329,8 @@ void menu_debug_frame() {
             if (ch == ',') { if (!b.empty()) buttons.push_back(b); b.clear(); }
             else b += ch;
         }
-        menu_dialog(f[0].c_str(), f[1].c_str(), buttons, static_cast<int>(buttons.size()) - 1, nullptr);
+        if (f[2] == "busy") menu_busy(f[0].c_str(), f[1].c_str());   // the busy box, its dots
+        else menu_dialog(f[0].c_str(), f[1].c_str(), buttons, static_cast<int>(buttons.size()) - 1, nullptr);
         std::lock_guard<std::mutex> lock(g_mu);
         g_dlg.pressed = f[3].empty() ? -1 : std::atoi(f[3].c_str());
     }
@@ -3464,6 +3500,12 @@ void menu_dialog(const char* title, const char* text, const std::vector<std::str
                  int cancel_button, std::function<void(int)> done) {
     std::lock_guard<std::mutex> lock(g_mu);
     open_dialog(title, text, buttons, cancel_button, std::move(done));
+}
+
+void menu_busy(const char* title, const char* text) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    open_dialog(title, text, {}, -1, nullptr);
+    g_dlg.busy = true;
 }
 
 void menu_mod_picked(const char* name, const char* error) {

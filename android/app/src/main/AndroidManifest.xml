@@ -48,6 +48,14 @@
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             />
 
+        <!-- Sync Folder's folder picker over the game (FolderPickActivity.java):
+             invisible, so the game stays behind it. -->
+        <activity
+            android:name=".FolderPickActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true" />
+
         <!-- Restarts the app (RestartActivity.java): its own process, so the
              game's can end first. Invisible. -->
         <activity

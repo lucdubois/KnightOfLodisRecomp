@@ -1191,6 +1191,12 @@ extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeSyncState(J
     if (e) env->ReleaseStringUTFChars(error, e);
 }
 
+extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeSyncBusy(JNIEnv* env, jclass, jstring text) {
+    const char* t = text ? env->GetStringUTFChars(text, nullptr) : nullptr;
+    kol::menu_busy("Sync Folder", t ? t : "");
+    if (t) env->ReleaseStringUTFChars(text, t);
+}
+
 extern "C" JNIEXPORT void JNICALL Java_com_koldecomp_game_Mods_nativeSyncAsk(JNIEnv* env, jclass, jstring text) {
     const char* t = text ? env->GetStringUTFChars(text, nullptr) : nullptr;
     kol::menu_sync_ask(t ? t : "");

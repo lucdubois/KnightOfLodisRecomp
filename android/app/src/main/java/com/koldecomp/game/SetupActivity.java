@@ -54,11 +54,6 @@ public class SetupActivity extends Activity {
     private static final int REQ_BIOS = 2;
     private static final int REQ_MOD  = 3;
     private static final int REQ_SHADERS = 4;
-    private static final int REQ_SYNC = 5;
-    // Options > Technical > Sync Folder (Mods.syncPick): a folder picked, then
-    // SyncFolder.picked compares it with the game's saves (on a thread).
-    static final String EXTRA_SYNC_PICK = "sync_pick";
-    private boolean syncPickOnly;
     // Options > Display > Shader > Import Folder (Mods.pickShaders): a folder
     // picked, copied into files/shaders/<its name>, the count to the game.
     static final String EXTRA_PICK_SHADERS = "pick_shaders";
@@ -254,29 +249,6 @@ public class SetupActivity extends Activity {
             }
             return;
         }
-        syncPickOnly = getIntent().getBooleanExtra(EXTRA_SYNC_PICK, false);
-        if (syncPickOnly) {
-            if (savedInstanceState == null) {
-                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-                // Kept across restarts (SyncFolder takes the permission).
-                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                           | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-                // Opens in Documents, where "Use this folder" is allowed:
-                // Android 11 and later refuse the storage's top and Download
-                // itself as a picked folder.
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri(
-                            "com.android.externalstorage.documents", "primary:Documents"));
-                }
-                try {
-                    startActivityForResult(i, REQ_SYNC);
-                } catch (Exception e) {
-                    Mods.nativeSyncDone("This device has no folder picker.", false);
-                    finish();
-                }
-            }
-            return;
-        }
         pickBiosOnly = getIntent().getBooleanExtra(EXTRA_PICK_BIOS, false);
         if (pickBiosOnly) {
             if (savedInstanceState == null) pick(REQ_BIOS);
@@ -313,7 +285,7 @@ public class SetupActivity extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
-            if (pickModOnly || pickBiosOnly || pickShadersOnly || syncPickOnly) finish();
+            if (pickModOnly || pickBiosOnly || pickShadersOnly) finish();
             return;
         }
         if (request == REQ_MOD) {
@@ -326,15 +298,6 @@ public class SetupActivity extends Activity {
         }
         if (request == REQ_SHADERS) {
             importShaders(data.getData());
-            return;
-        }
-        if (request == REQ_SYNC) {
-            final Uri tree = data.getData();
-            status.setText("Looking in the folder...");
-            new Thread(() -> {
-                SyncFolder.picked(this, tree);
-                runOnUiThread(this::finish);
-            }, "sync-pick").start();
             return;
         }
         String name = (request == REQ_ROM) ? ROM_NAME : BIOS_NAME;

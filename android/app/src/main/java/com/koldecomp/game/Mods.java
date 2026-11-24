@@ -36,6 +36,9 @@ public final class Mods {
      *  set) and the last copy's error, if it failed (kol::menu_sync_state). */
     static native void nativeSyncState(String folder, String error);
 
+    /** The game's busy box, its dots turning, while SyncFolder works (kol::menu_busy). */
+    static native void nativeSyncBusy(String text);
+
     /** A picked folder already holds other saves: which to keep (kol::menu_sync_ask). */
     static native void nativeSyncAsk(String text);
 
@@ -81,12 +84,11 @@ public final class Mods {
     }
 
     /** From native (Options > Technical > Sync Folder > Choose): the folder
-     *  picker (SetupActivity's sync mode), then SyncFolder.picked. */
+     *  picker over the game (FolderPickActivity), then SyncFolder.picked. */
     public static void syncPick() {
         onUi(act -> {
-            Intent i = new Intent(act, SetupActivity.class);
-            i.putExtra(SetupActivity.EXTRA_SYNC_PICK, true);
-            act.startActivity(i);
+            act.startActivity(new Intent(act, FolderPickActivity.class));
+            act.overridePendingTransition(0, 0);
         });
     }
 

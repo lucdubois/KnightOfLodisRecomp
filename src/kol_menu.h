@@ -165,6 +165,11 @@ void menu_debug_frame();
 // thread that pressed it, after the dialog has closed.
 void menu_dialog(const char* title, const char* text, const std::vector<std::string>& buttons,
                  int cancel_button, std::function<void(int)> done);
+// A dialog with no buttons while something works (opening the menu if
+// closed): the title, the text and the battle confirmation's dots turning
+// under it. The pad cannot close it; the next menu_dialog (the answer)
+// replaces it. The menu itself still closes and opens over it.
+void menu_busy(const char* title, const char* text);
 
 // What the platform does for Options > Mod and Debug > Unlink ROM (Android:
 // Mods.java, SetupActivity, RestartActivity). Null members: not on this

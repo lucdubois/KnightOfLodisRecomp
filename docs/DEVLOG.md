@@ -24441,9 +24441,9 @@ settings, `menu_hold_state.tmp` or `.bak` files.
   Folder's / Game's / Cancel), `menu_sync_done` (a message, or "Restart
   now?" via ask_restart). The logs-save code is removed (save_logs,
   menu_logs_saved, Mods.saveLogs / nativeLogsSaved, EXTRA_SAVE_LOGS).
-- **SyncFolder.java** does everything else. SetupActivity's sync mode
-  (`EXTRA_SYNC_PICK`) opens ACTION_OPEN_DOCUMENT_TREE in Documents and hands
-  the tree to `SyncFolder.picked` on a thread: the permission is persisted,
+- **SyncFolder.java** does everything else. The picker (ACTION_OPEN_DOCUMENT_TREE,
+  opened in Documents) hands the tree to `SyncFolder.picked` on a thread
+  (at first from SetupActivity; then FolderPickActivity, below): the permission is persisted,
   every save in the folder is compared BYTE FOR BYTE with the game's file of
   the same path. All alike (or none there): linked at once. Otherwise the
   question, with each side's save date and state count.
@@ -24495,4 +24495,37 @@ permission gone, nothing copied after. Desktop: kol_menu.cpp compiles (the
 Logs row unchanged there). Not tried: the Thor, a real in-game save or
 L3+R state (the same files, written the same ways), a cloud folder
 provider (one that changes mtimes on its own would cause extra backups).
+
+### No launcher behind the picker; a busy box with the battle's dots (2026-11-24)
+
+Asked: do not go back to the launcher while the folder is looked at; show
+an icon from the game that looks like loading, maybe the blue or red dots
+that show in the middle before an attack.
+
+- **FolderPickActivity** (new, `Theme.Translucent.NoTitleBar`, no view)
+  opens the picker over the game; SetupActivity's sync mode is gone. On a
+  folder it says `Mods.nativeSyncBusy("Looking in the folder...")` and runs
+  `SyncFolder.picked` on a thread; the answers (Folder's / Game's) show
+  "Copying the folder's saves..." / "Moving the folder's saves to a backup
+  folder..." the same way. Emulator: the task held MainActivity,
+  FolderPickActivity and the picker, never SetupActivity.
+- **kol_menu `menu_busy(title, text)`**: a dialog with no buttons
+  (`Dialog::busy`: the pad cannot close it, the next menu_dialog replaces
+  it; the menu itself still closes and opens). Under the text, where the
+  buttons go, the dots turn a step each 133 ms (the hand's bob clock, which
+  already sends the picture again): `Canvas::busy`, six steps (the first
+  dot swells into the ball, the ball goes along leaving a medium dot, the
+  dots alone), in OBJ bank 0 = 0x0861E288, the player's blue (bank 1 at
+  0x0861E2A8 is the enemy's red). `KOL_MENU_DIALOG="t|text|busy|"` shows
+  it on a desktop.
+- **The dots** are the attack/spell confirmation's arrow (between the two
+  units' boxes). Found from BV_attack_confirm: OAM tiles 0x13C-0x14A, not
+  raw in the ROM nor in a GBA LZ77 block; a CpuSet (BIOS pc 0x0C1C) writes
+  them when a scene loads (GBARECOMP_WRITE_WATCH from EV + A); per-tile
+  search of every A7 archive: archive 0x086DB348, 91 entries of 64 bytes
+  (two 8x8 tiles each). The game copies the joined entries 8 bytes (two
+  rows) off, so on screen each dot carries a row of the next tile under it
+  (the dark marks below the dots in battle); the box draws the archive's own
+  tiles: 38 small dot, 39 medium, 40 the ball (entries 19, 20). The chevron
+  heads are 16x16 at 0x13C / 0x140 / 0x144 (two 16x8 each).
 

@@ -402,6 +402,14 @@ final class SyncFolder {
         }
     }
 
+    private static void busy(String text) {
+        try {
+            Mods.nativeSyncBusy(text);
+        } catch (UnsatisfiedLinkError e) {
+            Log.i(TAG, text);
+        }
+    }
+
     private static void done(String text, boolean restart) {
         try {
             Mods.nativeSyncDone(text, restart);
@@ -582,8 +590,9 @@ final class SyncFolder {
         }
     }
 
-    /** After the picker, on SetupActivity's thread: the folder kept, its saves
-     *  compared with the game's; linked at once, or the game asks. */
+    /** After the picker, on FolderPickActivity's thread (the game showing its
+     *  busy box): the folder kept, its saves compared with the game's; linked
+     *  at once, or the game asks. */
     static void picked(Context ctx, Uri tree) {
         app = ctx.getApplicationContext();
         final ContentResolver cr = app.getContentResolver();
@@ -673,6 +682,7 @@ final class SyncFolder {
             if (!p.tree.equals(linkedTree(app))) release(p.tree);
             return;
         }
+        busy(which == 1 ? "Moving the folder's saves to a backup folder..." : "Copying the folder's saves...");
         new Thread(() -> {
             synchronized (PASS) {
                 if (which == 1) keepGames(p);
