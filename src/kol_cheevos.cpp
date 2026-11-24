@@ -53,7 +53,7 @@ std::string g_os;
 std::string g_user_agent;
 CheevosState g_state = CheevosState::LoggedOut;
 std::string g_message;
-bool g_game_requested = false;   // a load was begun (guest thread)
+bool g_game_requested = false;   // the set was asked for (begin_game_load)
 bool g_game_loaded = false;
 std::atomic<bool> g_login_form{false};
 std::atomic<int> g_version{0};
@@ -264,6 +264,28 @@ void RC_CCONV on_game_loaded(int result, const char* error, rc_client_t* client,
     bump();
 }
 
+// The game's set, asked for once after a login; false if it was already
+// (or no one is logged in). Only with the bus up: once the set is loaded,
+// rc_client reads every address it uses (on the answer's thread) to disable
+// the unreadable ones. A mod (a patched ROM) loads none: RetroAchievements'
+// set is made for the stock game; the page says why.
+bool begin_game_load(rc_client_t* c) {
+    bool mod = false;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        if (g_state != CheevosState::LoggedIn || g_game_requested) return false;
+        g_game_requested = true;
+        if (rom_patch_name()) {
+            g_message = "Not available with a mod loaded.";
+            bump();
+            mod = true;
+        }
+    }
+    if (mod) welcome(c, "Achievements are off with a mod.");
+    else rc_client_begin_load_game(c, kRomMd5, &on_game_loaded, nullptr);
+    return true;
+}
+
 void RC_CCONV on_login(int result, const char* error, rc_client_t* client, void* userdata) {
     const bool with_password = userdata != nullptr;
     if (result == RC_OK) {
@@ -273,11 +295,17 @@ void RC_CCONV on_login(int result, const char* error, rc_client_t* client, void*
             std::lock_guard<std::mutex> lock(g_mu);
             g_state = CheevosState::LoggedIn;
             g_message.clear();
-            g_game_requested = false;   // the guest thread loads the game next frame
+            g_game_requested = false;
         }
         // The welcome comes when the game's set is loaded (on_game_loaded),
-        // with the count; a mod loads none (cheevos_frame says so).
+        // with the count; a mod loads none (begin_game_load says so).
         if (u) std::fprintf(stderr, "cheevos: logged in as %s\n", u->display_name);
+        // The game's set: at once if the game is running, else on its first
+        // frame (cheevos_frame). A login from the options menu (2026-11-24,
+        // the Thor): the menu holds the game, so no frame came and the
+        // Achievements page said "Loading the game's achievements..." until
+        // the menu was closed.
+        if (gbarecomp::active_bus()) begin_game_load(client);
     } else {
         {
             std::lock_guard<std::mutex> lock(g_mu);
@@ -403,32 +431,12 @@ void show_notices(unsigned long long frame_count) {
 void cheevos_frame(unsigned long long frame_count) {
     show_notices(frame_count);
     rc_client_t* c;
-    bool load = false, mod_welcome = false;
     {
         std::lock_guard<std::mutex> lock(g_mu);
         c = g_client;
         if (!c || g_state != CheevosState::LoggedIn) return;
-        if (!g_game_requested) {
-            g_game_requested = true;
-            // A mod (a patched ROM): RetroAchievements' set is made for the
-            // stock game, so none is loaded; the page says why.
-            if (rom_patch_name()) {
-                g_message = "Not available with a mod loaded.";
-                bump();
-                mod_welcome = true;
-            } else {
-                load = true;
-            }
-        }
     }
-    if (mod_welcome) {
-        welcome(c, "Achievements are off with a mod.");
-        return;
-    }
-    if (load) {
-        // Here, on the guest thread with the bus up: rc_client reads every
-        // address the set uses once it is loaded, to disable unreadable ones.
-        rc_client_begin_load_game(c, kRomMd5, &on_game_loaded, nullptr);
+    if (begin_game_load(c)) {
         g_last_frame = frame_count;
         return;
     }

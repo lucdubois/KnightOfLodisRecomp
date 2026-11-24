@@ -24370,3 +24370,22 @@ access using ACTION_OPEN_DOCUMENT"; checked on the emulator). What works:
 `adb logcat -d -s KoL` (the log's lines go to logcat as they are written,
 while the buffer holds them), `adb logcat -d -b crash` for a crash, or
 Save to Documents and then `adb pull /sdcard/Documents/last_run.log`.
+
+## Achievements page stuck on "Loading the game's achievements..." (2026-11-24)
+
+Seen on the Thor with 1.2.1: after logging in from Options > Achievements,
+the page stayed on "Loading the game's achievements..." until the menu was
+closed and opened again. Cause: the login's answer only marked the set as
+wanted, and `cheevos_frame` asked for it on the game's next frame. The open
+menu holds the game, so no frame came (logcat: the login at 11:46:07, the
+set's welcome at 11:47:34, right after the menu was closed).
+
+Fix (kol_cheevos.cpp): `begin_game_load` (the mod check and
+`rc_client_begin_load_game`, once per login) is called from `on_login` when
+`gbarecomp::active_bus()` is up, and from `cheevos_frame` as before
+otherwise (a saved token's login at start can answer before the bus
+exists). The load already finished on the answer's thread (`read_memory`
+from there), and rcheevos is built with threads; rc_client calls the
+login callback after releasing its lock. Builds on Mac and Android. Not
+run: a login, which needs an account (the Thor, debug app: log out and in
+from the menu, and the page should show the points without closing it).
