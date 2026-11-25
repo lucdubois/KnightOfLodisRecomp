@@ -24646,3 +24646,40 @@ MMJ cel ones: no ES), int/float mixed arithmetic (about 14: desktop GL
 converts, ES does not), HLSL-isms (`float2`), and one-offs. glslang is a
 stand-in for the Thor's compiler: counts are indicative.
 
+## The menu held the game unseen with a translation mod (2026-11-24, after 1.2.2)
+
+A player's AYN Odin 2 Portal (Android 13, one screen, Spanish): R3 and BACK
+paused the game and no menu came. The input-diagnostic build's logs (the
+user put them in koldecomp/logs): one display, no presentation display
+(SecondScreen one-screen mode, as it should be); BACK went to
+toggleOverlayMenu; but every toggle said "picture NOT MADE (the cartridge's
+art not ready?)", and R3 opened the native menu ("art NOT READY"), which
+holds the game, with nothing drawn. The player plays a mod: "Tactics Ogre -
+the Knight of Lodis - Beta 2 - 23-11-12.ips" (341,452 bytes changed, no code
+touched: a translation). kol_menu's art() reads the menu's windows, tab,
+icons, hand and the 12 game options' names and help at fixed places in the
+running (patched) ROM; the translation moved what it reads.
+
+Fix (kol_menu): read_art() returns why it failed; art() tries the running
+ROM, then the original totkol.gba beside the save (settings_dir: Android's
+files folder, a desktop's data folder), logging both ("menu: the cartridge's
+art is not where the menu reads it (...)", "... from the original ROM").
+With a mod that moved them, the game options' names are the cartridge's
+English ones. menu_toggle does not open a menu it cannot draw. Checked on
+the desktop with an IPS that overwrites the option names (0x0875F238, 0x300
+bytes): the fallback line, and the menu drawn. Then with the player's
+translation itself: the user had the patched ROM ("Tactics Ogre - The Knight
+of Lodis (español N).gba", sha1 28e1576c..., the player's rom_patched sha1,
+341,452 bytes changed; 686 of kNames' 768 bytes and 723 of kHelps' changed,
+the menu's archives untouched). As the ROM it would be refused (setup and
+runtime check the original's SHA-1 85a46320...); its difference with the
+original made an IPS (460 records), played as the mod on the desktop: the
+same patched sha1, 900 frames, "the game options' values: the mod moved
+it", the menu drawn from the original ROM (Game Options in English).
+
+Sent to the player as a one-off: `./gradlew assembleRelease
+-PversionSuffix=menufix` (build.gradle's new option: versionNameSuffix and
+-DKOL_VERSION for the log's line; empty otherwise, so CMake's cache never
+keeps it) -> com.totkol.game 1.2.2-menufix, versionCode 8, the release key,
+dev-string check clean; build/release/special/ (with its libmain.so, xz).
+

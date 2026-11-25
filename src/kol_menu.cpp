@@ -14,7 +14,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -180,24 +182,19 @@ bool next_string(const std::uint8_t* rom, std::uint32_t size, std::uint32_t* pos
     return true;
 }
 
-const Art& art() {
-    static Art a;
-    static bool tried = false;
-    if (tried) return a;
-    std::uint32_t size = 0;
-    const std::uint8_t* rom = unit_data_rom(&size);
-    if (!rom) return a;
-    tried = true;
+// The menu's art and the game options' texts read from `rom` into `a`.
+// False, with what was missing in *why, if they are not where they are read.
+bool read_art(Art& a, const std::uint8_t* rom, std::uint32_t size, const char** why) {
     a.rom = rom;
     a.rom_size = size;
-    if (!archive(rom, size, kBaseArchive, &a.bg) || a.bg.size() < 0xDAu * 32u) return a;
-    if (!archive(rom, size, kOptionTab, &a.tab) || a.tab.size() < 4u * 32u) return a;
+    if (!archive(rom, size, kBaseArchive, &a.bg) || a.bg.size() < 0xDAu * 32u) return *why = "the windows' tiles", false;
+    if (!archive(rom, size, kOptionTab, &a.tab) || a.tab.size() < 4u * 32u) return *why = "the OPTION tab", false;
     if (!archive(rom, size, kRosterIconArchive, &a.roster_icons) ||
-        a.roster_icons.size() < (kRosterIconTile + 12u) * 32u) return a;
+        a.roster_icons.size() < (kRosterIconTile + 12u) * 32u) return *why = "the roster icons", false;
     if (!archive(rom, size, kIconArchive, &a.icons) ||
-        a.icons.size() < (kTrainingIcon + 1u) * 128u) return a;
+        a.icons.size() < (kTrainingIcon + 1u) * 128u) return *why = "the bar's icons", false;
     for (std::uint32_t addr : {kHandTiles + 64u, kArrowTile + 32u, kGlyphs + 0x8Au * 64u})
-        if (addr - kRomBase > size) return a;
+        if (addr - kRomBase > size) return *why = "a short ROM", false;
     for (int b = 0; b < 16; ++b)
         for (int i = 0; i < 16; ++i) {
             const std::uint32_t o = kBgPalette - kRomBase + (b * 16 + i) * 2u;
@@ -219,14 +216,14 @@ const Art& art() {
     for (int k = 0; k < kGameOptions; ++k) {
         GameOption& g = a.opts[k];
         const int count = rom[kOptionDefs - kRomBase + k * 8u + 1u];
-        if (count < 1 || count > 8) return a;
-        if (!next_string(rom, size, &np, 0x11u, &g.name)) return a;
-        if (!next_string(rom, size, &hp, 0x21u, &g.help)) return a;
+        if (count < 1 || count > 8) return *why = "the game options' table", false;
+        if (!next_string(rom, size, &np, 0x11u, &g.name)) return *why = "the game options' names", false;
+        if (!next_string(rom, size, &hp, 0x21u, &g.help)) return *why = "the game options' help", false;
         g.values.resize(count);
         g.value_help.resize(count);
         for (int v = 0; v < count; ++v) {
-            if (!next_string(rom, size, &np, 0x11u, &g.values[v])) return a;
-            if (!next_string(rom, size, &hp, 0x21u, &g.value_help[v])) return a;
+            if (!next_string(rom, size, &np, 0x11u, &g.values[v])) return *why = "the game options' values", false;
+            if (!next_string(rom, size, &hp, 0x21u, &g.value_help[v])) return *why = "the game options' value help", false;
         }
     }
     a.ok = true;
@@ -253,6 +250,41 @@ const Art& art() {
             for (const Text& v : g.value_help) std::fprintf(stderr, "      value help: %s\n", ascii(v).c_str());
         }
     }
+    return true;
+}
+
+// The menu's art (2026-11-24, an Odin 2 Portal playing a Spanish translation
+// mod: R3 and BACK held the game and no menu came, "art NOT READY"): read
+// from the game as it runs, and where a mod moved what the menu reads (a
+// translation's texts), from the original ROM beside the save instead (the
+// game options' names then the cartridge's English ones). The menu does not
+// open without it (menu_toggle).
+const Art& art() {
+    static Art a;
+    static bool tried = false;
+    if (tried) return a;
+    std::uint32_t size = 0;
+    const std::uint8_t* rom = unit_data_rom(&size);
+    if (!rom) return a;
+    tried = true;
+    const char* why = "";
+    if (read_art(a, rom, size, &why)) return a;
+    std::fprintf(stderr, "menu: the cartridge's art is not where the menu reads it (%s)%s\n", why,
+                 rom_patch_name() ? ": the mod moved it" : "");
+    static std::vector<std::uint8_t> original;
+    const std::string dir = settings_dir();
+    if (dir.empty()) return a;
+    std::ifstream in(dir + "/totkol.gba", std::ios::binary);
+    if (in) original.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    Art b;
+    const char* why2 = "";
+    if (original.empty() ||
+        !read_art(b, original.data(), static_cast<std::uint32_t>(original.size()), &why2)) {
+        std::fprintf(stderr, "menu: nor in the original ROM (%s)\n", original.empty() ? "not read" : why2);
+        return a;
+    }
+    a = std::move(b);
+    std::fprintf(stderr, "menu: the art and the game options' texts from the original ROM\n");
     return a;
 }
 
@@ -2428,6 +2460,13 @@ void menu_cancel_sound() { g_sound_request.store(kSoundClose); }
 
 bool menu_toggle() {
     std::lock_guard<std::mutex> lock(g_mu);
+    // Nothing to draw it with: not opened (it held the game, unseen).
+    if (!g_open && !art().ok) {
+        static bool told = false;
+        if (!told) std::fprintf(stderr, "menu: not opened: the cartridge's art could not be read\n");
+        told = true;
+        return false;
+    }
     g_open = !g_open;
     if (!g_open && g_login.up) login_close();   // (the host stops taking typed text)
     g_sound_request.store(g_open ? kSoundOpen : kSoundClose);   // the game's confirm / cancel

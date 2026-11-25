@@ -132,8 +132,12 @@ target_include_directories(main PRIVATE
 # runtime's stdout/stderr onto logcat.
 target_link_libraries(main PRIVATE SDL2::SDL2 log kol_rcheevos)
 # The version in the session log's first line (kol_crash.cpp).
-file(STRINGS "${KOL_ROOT}/android/app/build.gradle" KOL_VERSION_LINE REGEX "versionName \"")
-string(REGEX REPLACE ".*versionName \"([^\"]*)\".*" "\\1" KOL_VERSION "${KOL_VERSION_LINE}")
+# -DKOL_VERSION (Gradle passes it: "1.2.2-name" for a -PversionSuffix build,
+# empty otherwise), else versionName.
+if(NOT KOL_VERSION)
+    file(STRINGS "${KOL_ROOT}/android/app/build.gradle" KOL_VERSION_LINE REGEX "versionName \"")
+    string(REGEX REPLACE ".*versionName \"([^\"]*)\".*" "\\1" KOL_VERSION "${KOL_VERSION_LINE}")
+endif()
 set_source_files_properties("${KOL_ROOT}/src/kol_crash.cpp" PROPERTIES COMPILE_DEFINITIONS "KOL_VERSION=\"${KOL_VERSION}\"")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KOL_ROOT}/android/app/build.gradle")
 target_link_gbarecomp_runtime_stack(main)
