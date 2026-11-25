@@ -6,6 +6,7 @@
 
 #include "kol_focus.h"
 #include "kol_focus_internal.h"
+#include "kol_region.h"
 
 namespace {
 // The field's cells (gi) a terrain rule takes, into out: each game cell's
@@ -418,7 +419,7 @@ void weather_reflections(int w, int h, int ox, int oy) {
         return px >= 0 && py >= 0 && px < w && py < h && g_ice[static_cast<std::size_t>(py) * w + px];
     };
     for (int i = 0; i < 10; ++i) {
-        const std::uint8_t* p = ew + (0x0202A0F8u - 0x02000000u) + i * 0x14u;
+        const std::uint8_t* p = ew + (usa(0x0202A0F8u) - 0x02000000u) + i * 0x14u;
         if (p[4] == 0) { live_before[i] = false; continue; }
         const int x = ((p[8] | (p[9] << 8)) >> 8) - 4;
         const int y = ((p[10] | (p[11] << 8)) >> 8) - 4;

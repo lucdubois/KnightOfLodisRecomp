@@ -68,6 +68,7 @@
 #include "runtime.h"
 #include "runtime_bus_bridge.h"
 #include "sio_link.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
@@ -94,7 +95,7 @@ constexpr std::uint32_t kYesNo = 0x376A0u;
 constexpr std::uint32_t kCursor = 0x0FA0u;        // IWRAM
 constexpr std::uint32_t kAttackMenu = 0x0EF0u;    // IWRAM: 2 while "attacks 1st" takes input
 constexpr std::uint32_t kWorldState = 0x29BD0u;   // the world map's state pointer
-constexpr std::uint32_t kWinCondition = 0x08246D50u;
+constexpr std::uint32_t kWinCondition = usa(0x08246D50u);
 
 std::atomic<std::uint16_t> g_out{0};              // keys pressed now (active high)
 std::uint16_t (*g_prev_filter)(std::uint16_t) = nullptr;

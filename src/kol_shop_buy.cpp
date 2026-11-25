@@ -34,17 +34,18 @@
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
-constexpr std::uint32_t kShopTask = 0x08132444u;
-constexpr std::uint32_t kShopTail = 0x081300E0u;
-constexpr std::uint32_t kBoxCancelled = 0x080197C0u;
-constexpr std::uint32_t kCancelledReturn = 0x08133A26u;
-constexpr std::uint32_t kRecount = 0x0813A6B0u;
-constexpr std::uint32_t kBuildList = 0x08131EF4u;
-constexpr std::uint32_t kBlockPtr = 0x02029CACu;
+constexpr std::uint32_t kShopTask = usa(0x08132444u);
+constexpr std::uint32_t kShopTail = usa(0x081300E0u);
+constexpr std::uint32_t kBoxCancelled = usa(0x080197C0u);
+constexpr std::uint32_t kCancelledReturn = usa(0x08133A26u);
+constexpr std::uint32_t kRecount = usa(0x0813A6B0u);
+constexpr std::uint32_t kBuildList = usa(0x08131EF4u);
+constexpr std::uint32_t kBlockPtr = usa(0x02029CACu);
 constexpr std::uint32_t kState = 0x49Cu, kReturnState = 0x49Du, kQuantity = 0x4BCu;
 constexpr std::uint8_t kStateList = 3, kStateBox = 0x0B, kStateAfter = 0x0C;
 constexpr std::uint32_t kRecordSlots = 0x64u, kRecordItems = 0x60u;
@@ -169,7 +170,7 @@ void shop_buy_request(std::uint32_t record, int slot, int id, bool is_item) {
 // go too. 6 ticks before the lost EOT would have. KOL_KEEP_SONG_TIE=1 keeps the game's.
 int on_song_goto(std::uint32_t, int, ArmCpuState* cpu) {
     const std::uint32_t track = cpu->R[1];
-    if (bus_read_u32(track + 0x40u) != 0x0823B27Fu) return 0;
+    if (bus_read_u32(track + 0x40u) != usa(0x0823B27Fu)) return 0;
     std::uint32_t chan = bus_read_u32(track + 0x20u);
     for (int guard = 0; chan && guard < 32; ++guard) {
         const std::uint8_t status = bus_read_u8(chan);
@@ -186,7 +187,7 @@ void song_tie_install() {
     done = true;
     const char* off = std::getenv("KOL_KEEP_SONG_TIE");
     if (off && off[0] && off[0] != '0') return;
-    if (!gba_mod_register_function_entry_plugin("kol.song-tie", 0x0815BC94u, 1, &on_song_goto) ||
+    if (!gba_mod_register_function_entry_plugin("kol.song-tie", usa(0x0815BC94u), 1, &on_song_goto) ||
         !gba_mod_set_function_hook_enabled("kol.song-tie", 1))
         std::fprintf(stderr, "song tie: hook NOT installed\n");
 }

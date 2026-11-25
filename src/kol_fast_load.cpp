@@ -20,6 +20,7 @@
 #include "gba_bus.h"
 #include "runtime_bus_bridge.h"   // gbarecomp::active_bus
 #include <algorithm>
+#include "kol_region.h"
 
 extern "C" void runtime_pc_watch_set(std::uint32_t pc, void (*cb)(void*), void* ctx);
 extern "C" void runtime_rw_record(int on, std::uint32_t depth);
@@ -38,8 +39,8 @@ namespace {
 // byte at [0x030029F4] + [0x030029F0] when [0x030029F0] + 1 < [0x030029F8]
 // (unsigned; the reader at 0x08004E2C sets the base, -1 and 0), then counts
 // it; returns 1, and the bytes decoded to *out_count when it is not null.
-constexpr std::uint32_t kA7Decode = 0x08004990u;
-constexpr std::uint32_t kA7Count = 0x030029F0u, kA7Base = 0x030029F4u, kA7Limit = 0x030029F8u;
+constexpr std::uint32_t kA7Decode = usa(0x08004990u);
+constexpr std::uint32_t kA7Count = usa(0x030029F0u), kA7Base = usa(0x030029F4u), kA7Limit = usa(0x030029F8u);
 constexpr char kA7HookId[] = "kol.fast-load-a7";
 // memset8(dst, count, value) at 0x08002F92: strb; r0++; r1--; while (r1 > 0)
 // (signed), so at least one byte. Leaves r0 past the bytes, r1 = count - n,
@@ -49,7 +50,7 @@ constexpr char kA7HookId[] = "kol.fast-load-a7";
 // game, so its timing within a frame, and so its pictures, stay the same
 // (sped up, one frame of FN showed a band of rows a game write reached
 // earlier).
-constexpr std::uint32_t kMemset = 0x08002F92u;
+constexpr std::uint32_t kMemset = usa(0x08002F92u);
 constexpr std::uint32_t kMemsetMin = 4096u;
 constexpr char kMemsetHookId[] = "kol.fast-load-memset";
 
@@ -76,17 +77,17 @@ constexpr char kMemsetHookId[] = "kol.fast-load-memset";
 // call from a site not listed runs as the game's.
 struct MemoFn { std::uint32_t entry; const char* name; const char* id; };
 constexpr MemoFn kMemoFns[] = {
-    {0x080221B4u, "composer", "kol.fast-load-memo-composer"},
-    {0x0802714Cu, "grid", "kol.fast-load-memo-grid"},
-    {0x0805D6E4u, "units", "kol.fast-load-memo-units"},
+    {usa(0x080221B4u), "composer", "kol.fast-load-memo-composer"},
+    {usa(0x0802714Cu), "grid", "kol.fast-load-memo-grid"},
+    {usa(0x0805D6E4u), "units", "kol.fast-load-memo-units"},
 };
 constexpr int kMemoFnCount = 3;
 struct MemoSite { int fn; std::uint32_t ret; const char* id; };
 constexpr MemoSite kMemoSites[] = {
-    {0, 0x0804862Cu, "kol.fast-load-memo-ret-0"}, {0, 0x08048198u, "kol.fast-load-memo-ret-1"},
-    {1, 0x08048552u, "kol.fast-load-memo-ret-2"}, {1, 0x08048152u, "kol.fast-load-memo-ret-3"},
-    {2, 0x08048658u, "kol.fast-load-memo-ret-4"}, {2, 0x08047D0Au, "kol.fast-load-memo-ret-5"},
-    {2, 0x08047D1Cu, "kol.fast-load-memo-ret-6"}, {2, 0x0805FE3Au, "kol.fast-load-memo-ret-7"},
+    {0, usa(0x0804862Cu), "kol.fast-load-memo-ret-0"}, {0, usa(0x08048198u), "kol.fast-load-memo-ret-1"},
+    {1, usa(0x08048552u), "kol.fast-load-memo-ret-2"}, {1, usa(0x08048152u), "kol.fast-load-memo-ret-3"},
+    {2, usa(0x08048658u), "kol.fast-load-memo-ret-4"}, {2, usa(0x08047D0Au), "kol.fast-load-memo-ret-5"},
+    {2, usa(0x08047D1Cu), "kol.fast-load-memo-ret-6"}, {2, usa(0x0805FE3Au), "kol.fast-load-memo-ret-7"},
 };
 constexpr int kMemoSiteCount = 8;
 constexpr std::size_t kMemoKeep = 64;

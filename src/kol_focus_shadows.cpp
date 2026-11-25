@@ -6,6 +6,7 @@
 
 #include "kol_focus.h"
 #include "kol_focus_internal.h"
+#include "kol_region.h"
 
 namespace {
 // Shadows cast by a sun at the screen's top right (the light the tiles are
@@ -86,7 +87,7 @@ const MapSun* map_sun() {
 // CO 5 in the same battle). KOL_SUN_DROP=<degrees a turn> overrides the 1
 // (0 off); KOL_SUN_TURN=<n> stands in for the game's turn.
 // (The 1 is 2.5 since 2026-10-12.)
-constexpr std::uint32_t kBattleTurn = 0x020021CCu;
+constexpr std::uint32_t kBattleTurn = kol::usa(0x020021CCu);
 }  // namespace
 
 namespace kol_focus_detail {

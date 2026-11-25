@@ -34,6 +34,7 @@
 
 #include "kol_crash.h"
 #include "kol_desktop.h"
+#include "kol_region.h"
 #include "kol_vs_cpu.h"
 #include "kol_vs_net.h"
 #include "kol_widescreen.h"
@@ -98,8 +99,8 @@ int main(int argc, char** argv) {
     argv = args_v.data();
 
     gbarecomp::RunOptions opts;
-    opts.builtin_game_name = "Tactics Ogre: The Knight of Lodis";
-    opts.builtin_rom_sha1 = "85a46320a31f16f5c6dda27fc094edd078dbe43d";
+    opts.builtin_game_name = kol::kCartName;   // the build's region: kol_region.h
+    opts.builtin_rom_sha1 = kol::kCartSha1;
     opts.show_fps_by_default = !kol::desktop_player_mode();
     // Rewind on L2 (gbarecomp's default binding): 20 s kept, a state every
     // 15 frames; each press goes back a second, held it repeats. Off while

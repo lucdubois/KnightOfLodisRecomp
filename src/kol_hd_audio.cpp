@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "hd_instruments.h"
+#include "kol_region.h"
 
 #if defined(__ANDROID__)
 #include <SDL.h>

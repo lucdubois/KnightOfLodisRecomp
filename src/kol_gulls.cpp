@@ -1,6 +1,7 @@
 #include "kol_gulls.h"
 #include "kol_perspective.h"
 #include "kol_settings.h"
+#include "kol_region.h"
 
 // The gulls crossing the harbour at the start of map 97's boat scene
 // (states/HJ) are scene actors moved along a path by the game's mover,
@@ -31,9 +32,9 @@
 namespace kol {
 namespace {
 
-constexpr std::uint32_t kMover = 0x08124B94u;
+constexpr std::uint32_t kMover = usa(0x08124B94u);
 constexpr char kMoverId[] = "kol.gull-mover";
-constexpr std::uint32_t kMapNumber = 0x02029D40u;    // u16: the map shown
+constexpr std::uint32_t kMapNumber = usa(0x02029D40u);    // u16: the map shown
 constexpr std::uint16_t kHarbourMap = 97;
 constexpr std::uint32_t kBaseX = 0x0Au, kBaseY = 0x0Cu, kBaseZ = 0x0Eu;   // mover: s16
 constexpr int kSkyY = 256;           // gulls fly 280-346 high; people and banners under 170
@@ -46,7 +47,7 @@ constexpr std::uint8_t kGullFlight1 = 0x12u, kGullFlight2 = 0x13u;   // the two 
 constexpr int kOffView = 44;         // its place this far past the edge: the sprite reaches 33 left of it
 // The game's sprite slots (kol_focus): world X/Y/Z at +0x08/+0x0A/+0x0C and
 // the screen X at +0x1C of an object's sprite, 8 left of its feet.
-constexpr std::uint32_t kSlotArray = 0x03004150u, kSlotStride = 0x20u;
+constexpr std::uint32_t kSlotArray = usa(0x03004150u), kSlotStride = 0x20u;
 constexpr int kSlots = 26;
 
 int g_extra_right = 0;
@@ -436,16 +437,16 @@ int on_mover(std::uint32_t, int, ArmCpuState* cpu) {
 // key; a child's context lacks what the main thread's has.) A state saved
 // mid-scene (states/HJ: the main thread already in its join) keeps the
 // game's order.
-constexpr std::uint32_t kStep = 0x0811A248u;
+constexpr std::uint32_t kStep = usa(0x0811A248u);
 constexpr char kStepId[] = "kol.quay-early";
-constexpr std::uint32_t kHarbourScript = 0x0876F78Cu;
+constexpr std::uint32_t kHarbourScript = usa(0x0876F78Cu);
 constexpr int kAfterSleep = 0x7E;      // 00 12 00: the first spawn
 constexpr int kAfterJoin = 0x90;       // 6d 26 00: the jump to the creations
 constexpr int kPeople = 0xB9;          // 06 05 0f 0a 0a, 06 75 0e 0a 02 ...
 constexpr int kSleepOne = 0x13D;       // the 50 01 after the last banner
 constexpr int kAfterPeople = 0x13F;    // 6e 12 11, 06 6f ...: the crew
 constexpr int kPennants = 0xC5;        // 06 76 12 12 0e, 06 77 0f 10 0e, 11 77 ...
-constexpr std::uint32_t kFlag112Byte = 0x020011CCu + (0x112u >> 3);   // game flags: bit (flag & 7)
+constexpr std::uint32_t kFlag112Byte = usa(0x020011CCu) + (0x112u >> 3);   // game flags: bit (flag & 7)
 constexpr std::uint8_t kFlag112Bit = 1u << (0x112u & 7u);
 // The soldier on the upper street (actor 0x31) walks route 9 of the scene's
 // route table ([[0x02029AC4] + 0x18], 36-byte records: 16 cells as x, z
@@ -472,22 +473,22 @@ constexpr std::uint8_t kFlag112Bit = 1u << (0x112u & 7u);
 // it only when that is not another sprite), and a solid shadow under a
 // fading man is wrong anyway. With Unit Shadows our cast shadow fades with
 // him instead (kol_focus: a semi-transparent unit's shadow at EVA / 16).
-constexpr std::uint32_t kSceneRoutesPtr = 0x02029AC4u;
+constexpr std::uint32_t kSceneRoutesPtr = usa(0x02029AC4u);
 constexpr int kWalkOp = 0x98;          // 16 31 2a
 constexpr int kWalkRoute = 9;
 constexpr std::uint8_t kWalkFrom[6][2] = {{5, 8}, {5, 7}, {5, 6}, {5, 5}, {5, 4}, {5, 3}};
 constexpr std::uint8_t kWalkMore[3][2] = {{5, 2}, {5, 1}, {5, 0}};
 constexpr std::uint8_t kWalkerActor = 0x31;
-constexpr std::uint32_t kBlob = 0x080598DCu;   // (node, object): a unit's shadow blob
+constexpr std::uint32_t kBlob = usa(0x080598DCu);   // (node, object): a unit's shadow blob
 constexpr char kBlobId[] = "kol.walker-blob";
-constexpr std::uint32_t kOcclusion = 0x03005DE0u;   // (sx, sy, X, Y, [sp] Z, ...): a unit's sprite priorities
+constexpr std::uint32_t kOcclusion = usa(0x03005DE0u);   // (sx, sy, X, Y, [sp] Z, ...): a unit's sprite priorities
 constexpr char kOcclusionId[] = "kol.walk-in-occlusion";
 constexpr int kFadeFrom = 64, kFadeTo = 16;   // his Z: fully drawn, gone (5,0's middle)
-constexpr std::uint32_t kObjectsPtr = 0x0202A238u;   // the map's objects: 26 of 0xD0
+constexpr std::uint32_t kObjectsPtr = usa(0x0202A238u);   // the map's objects: 26 of 0xD0
 constexpr std::uint32_t kObjFlags = 0x78u;           // object: u16 flags; 0x100 semi-transparent
 constexpr std::uint32_t kObjZ = 0x14u;               // object: s16 world Z
 constexpr std::uint16_t kSemi = 0x100u;
-constexpr std::uint32_t kBldcnt = 0x03000E1Au, kBldalpha = 0x03000E1Cu;   // the game's copies
+constexpr std::uint32_t kBldcnt = usa(0x03000E1Au), kBldalpha = usa(0x03000E1Cu);   // the game's copies
 constexpr std::uint16_t kSecondTargets = 0x2F00u;   // BG0-3 and the backdrop
 bool g_walk_longer = false;   // this scene's route 9 was lengthened (lengthen_walk)
 std::uint32_t g_fade_obj = 0;
@@ -543,7 +544,7 @@ constexpr int kAfterPrologue = 0x4C;  // the main thread's step after the creati
 constexpr int kWait8 = 0x196;         // 50 08
 constexpr int kAfterWait8 = 0x198;
 constexpr int kAlphonseWalk = 0x1C5;  // 2c 02 00 01, 16 02 26: the game's walk thread
-constexpr std::uint32_t kCameraY = 0x02026C7Au;   // u16: the scene camera's Y
+constexpr std::uint32_t kCameraY = usa(0x02026C7Au);   // u16: the scene camera's Y
 constexpr int kCameraGo = 805;        // the pan is 704 to 824; by 805 his 5,11 is above the view
 constexpr int kFadeEnd = 0x97;        // 02: the fade thread's end
 constexpr int kAlphonseEnd = 0x1CC;   // 02: the walk thread's end
@@ -557,7 +558,7 @@ int g_alph_state = 0;   // 0 not yet, 1 placed back and hidden, 2 waiting for th
 std::uint32_t g_alph_game_ctx = 0;   // the walk thread the main spawned, held
 
 std::uint32_t object_of(std::uint8_t actor) {
-    const std::uint32_t list = bus_read_u32(0x0202A238u);
+    const std::uint32_t list = bus_read_u32(usa(0x0202A238u));
     if (!in_ewram(list)) return 0;
     for (int i = 0; i < 26; ++i) {
         const std::uint32_t o = list + static_cast<std::uint32_t>(i) * 0xD0u;
@@ -920,7 +921,7 @@ bool town_walk_in(std::uint32_t ctx, int pc) {
 // [[0x02029AC4]+0x18], 36 bytes (16 cells x, z; u32 count).
 // KOL_SHIP_SOLDIER_WATER=1: the game's way.
 constexpr std::uint16_t kShipMap = 58;
-constexpr std::uint32_t kShipScript = 0x08772304u;
+constexpr std::uint32_t kShipScript = usa(0x08772304u);
 constexpr int kSoldierJump = 0x1BD, kSoldierMade = 0x1D3, kSoldierBack = 0x1D8, kSoldierWalk = 0x20B;
 constexpr std::uint32_t kSoldierBuf = kWalkInBuf + 0x400u;   // zero in all 288 saved states
 constexpr std::uint8_t kSoldierRoute0[] = {2, 0, 2, 1, 2, 2, 2, 3, 3, 3, 4, 3};
@@ -969,7 +970,7 @@ bool ship_soldier_back(std::uint32_t ctx) {
 void ship_soldier_walk(int pc) {
     if (pc != kSoldierWalk || !ship_soldier_on()) return;
     if (!script_has(kShipScript + kSoldierWalk, {0x17, 0x49, 0x01, 0x02})) return;
-    const std::uint32_t p = bus_read_u32(0x02029AC4u);
+    const std::uint32_t p = bus_read_u32(usa(0x02029AC4u));
     const std::uint32_t routes = in_ewram(p) ? bus_read_u32(p + 0x18) : 0;
     // Made at 2,0 by us, and the game's routes for him as its `15` ops left them.
     if (!in_ewram(routes) || bus_read_u8(routes) != 8 || bus_read_u8(routes + 1) != 3) return;
@@ -1009,8 +1010,8 @@ unsigned long long g_early_epoch = 0;
 // KOL_SCENE89_POPS=1: the game's way.
 constexpr std::uint16_t kTownSceneMap = 89;
 constexpr std::uint16_t kDockSceneMap = 2;          // and map 2's after the rainy battle (scene_dock)
-constexpr std::uint32_t kDockSceneScript = 0x08772662u;
-constexpr std::uint32_t kTownSceneScript = 0x0876FFA0u;
+constexpr std::uint32_t kDockSceneScript = usa(0x08772662u);
+constexpr std::uint32_t kTownSceneScript = usa(0x0876FFA0u);
 constexpr std::uint32_t kSceneBuf = 0x0203F600u, kSceneBufStride = 0x100u;   // 4 of ours; u16 back at +0xFE, u32 script at +0xF8
 constexpr int kSceneBufs = 4;
 constexpr std::uint32_t kSceneFade = 0x0203FE00u;   // per actor id: 0 none, else 1 + 254 x opacity
@@ -1031,7 +1032,7 @@ const bool g_scene89_on = [] {
     return !(v && v[0] && v[0] != '0');
 }();
 constexpr std::uint16_t kMarshMap = 16;              // Shiven's arrival (scene_shiven)
-constexpr std::uint32_t kMarshScript = 0x08774B75u;
+constexpr std::uint32_t kMarshScript = usa(0x08774B75u);
 const bool g_shiven_on = [] {
     const char* v = std::getenv("KOL_MAP16_SHIVEN_POPS");
     return !(v && v[0] && v[0] != '0');

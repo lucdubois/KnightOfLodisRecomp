@@ -51,20 +51,21 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
 constexpr std::uint32_t kRomBase = 0x08000000u;
-constexpr std::uint32_t kSheetArchive = 0x086B75B4u;
+constexpr std::uint32_t kSheetArchive = usa(0x086B75B4u);
 // The END plate: tiles 24-25 of this archive, 28-29 the same pre-mirrored.
-constexpr std::uint32_t kPlateArchive = 0x086D80C4u;
-constexpr std::uint32_t kBarArchive = 0x086BCA6Cu;
-constexpr std::uint32_t kBgPalette = 0x0861DF68u;
-constexpr std::uint32_t kObjectsPtr = 0x0202A238u;
-constexpr std::uint32_t kActingObject = 0x0202A5F0u;
-constexpr std::uint32_t kCursorMode = 0x03000FD5u;
-constexpr std::uint32_t kMoveTaskState = 0x0202A5B0u + 0x27Eu;
+constexpr std::uint32_t kPlateArchive = usa(0x086D80C4u);
+constexpr std::uint32_t kBarArchive = usa(0x086BCA6Cu);
+constexpr std::uint32_t kBgPalette = usa(0x0861DF68u);
+constexpr std::uint32_t kObjectsPtr = usa(0x0202A238u);
+constexpr std::uint32_t kActingObject = usa(0x0202A5F0u);
+constexpr std::uint32_t kCursorMode = usa(0x03000FD5u);
+constexpr std::uint32_t kMoveTaskState = usa(0x0202A5B0u) + 0x27Eu;
 constexpr int kObjects = 26;
 constexpr std::uint32_t kObjStride = 0xD0u;
 constexpr int kBankPlayer = 4, kBankOther = 7, kBankBar = 12;
@@ -148,7 +149,7 @@ std::mutex g_cells_mutex;
 std::vector<Cell> g_cells;
 
 // The world map's army list (see the header).
-constexpr std::uint32_t kArmy = 0x02000030u;
+constexpr std::uint32_t kArmy = usa(0x02000030u);
 constexpr int kArmySlots = 32;
 constexpr std::uint32_t kRecordSize = 0x68u;
 bool g_roster_mode = false;   // the last list composed was the army's
@@ -587,14 +588,14 @@ int compose_unit_list(std::uint32_t* argb, std::uint32_t* on_unit) {
         // as it (re)loads a unit's frames, so every unit the camera scrolled
         // out and back read as done (II, Left a few times) and the order
         // changed; it also blinked on one unit at a time (DG).
-        const std::uint32_t ri = (rec - 0x02001420u) / 0x68u;
-        const bool in_battle = rec >= 0x02001420u && (rec - 0x02001420u) % 0x68u == 0u && ri < 16u;
-        u.done = in_battle && ew[0x02001AA0u - 0x02000000u + ri * 0x1Cu + 0x0Cu] != 0u && u.other == turn_other;
+        const std::uint32_t ri = (rec - usa(0x02001420u)) / 0x68u;
+        const bool in_battle = rec >= usa(0x02001420u) && (rec - usa(0x02001420u)) % 0x68u == 0u && ri < 16u;
+        u.done = in_battle && ew[usa(0x02001AA0u) - 0x02000000u + ri * 0x1Cu + 0x0Cu] != 0u && u.other == turn_other;
         // The leader: the battle entry's +0x17 bit 0 (the status window's
         // "leader" No. help, 503), set on the player's NO. 1 (0x41) and on
         // the enemy's leader (0xC1: map 7's and map 2's NO. 1); none on a
         // Training or random battle's enemies (BL, FK). Bit 1 is a guest.
-        u.leader = in_battle ? (ew[0x02001AA0u - 0x02000000u + ri * 0x1Cu + 0x17u] & 1u) != 0u
+        u.leader = in_battle ? (ew[usa(0x02001AA0u) - 0x02000000u + ri * 0x1Cu + 0x17u] & 1u) != 0u
                              : !u.other && u.no == 1;
         if (cursor && on_unit && (rd16(ew, o + 0x10u) >> 5) == cx && (rd16(ew, o + 0x14u) >> 5) == cz)
             *on_unit = rec;

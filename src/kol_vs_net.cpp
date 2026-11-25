@@ -3,6 +3,7 @@
 #include "kol_vs_net.h"
 
 #include "net_compat.h"   // POSIX sockets, or Winsock (2026-11-23: Windows too)
+#include "kol_region.h"
 #if defined(_WIN32)
 #include <process.h>   // _getpid
 #else
@@ -504,8 +505,8 @@ void run(std::shared_ptr<Net> np) {
 // the view changes size.) The memory hash is taken there too, every 64th
 // read: the same instruction in both copies.
 
-constexpr std::uint32_t kBeforePad = 0x08000A04u;        // called right before the pad is read
-constexpr std::uint32_t kBeforePadReturn = 0x08000618u;  // ... by the main loop's bl at 0x08000614
+constexpr std::uint32_t kBeforePad = usa(0x08000A04u);        // called right before the pad is read
+constexpr std::uint32_t kBeforePadReturn = usa(0x08000618u);  // ... by the main loop's bl at 0x08000614
 constexpr char kPadHookId[] = "kol.vs-net-pad";
 std::atomic<void (*)()> g_pad_read_hook{nullptr};   // set_pad_read_hook
 

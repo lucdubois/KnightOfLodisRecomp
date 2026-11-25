@@ -11,12 +11,13 @@
 #include "runtime.h"
 #include "runtime_bus_bridge.h"   // gbarecomp::active_bus()
 #include "gba_bus.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
 // The game's highlighted unit (a unit record), the target in an attack.
-constexpr std::uint32_t kHighlightedUnitPtr = 0x02028960u;
+constexpr std::uint32_t kHighlightedUnitPtr = usa(0x02028960u);
 
 // Hardware pixels from the middle at which a sound is fully to one side,
 // and how far: the action sits near the middle (see kol_sound.h), so a

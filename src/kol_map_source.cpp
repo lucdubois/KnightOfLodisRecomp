@@ -15,6 +15,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "kol_region.h"
 
 // ── The composed map lives in EWRAM, and the tilemap is its lagging cache ──
 //
@@ -73,8 +74,8 @@ constexpr std::uint32_t kEwramSize = 256u * 1024u;
 //   0x02026CB4  02013440   a fourth
 //   0x02026CB8  06006000   BG0's blit destination in VRAM
 //   0x02026CBC  06007000   BG1's
-constexpr std::uint32_t kArrayPtrAddr = 0x02026CA8u;   // u32, BG0 array
-constexpr std::uint32_t kBg1PtrAddr = 0x02026CACu;     // u32, BG1 array
+constexpr std::uint32_t kArrayPtrAddr = usa(0x02026CA8u);   // u32, BG0 array
+constexpr std::uint32_t kBg1PtrAddr = usa(0x02026CACu);     // u32, BG1 array
 constexpr int kStrideBytes = 0x100;                    // 128 entries per row
 constexpr int kArrayCols = 128;
 // Rows are DERIVED from the gap between those two pointers rather than
@@ -111,7 +112,7 @@ int g_step_frames = 0;   // frames in a row served on the step grace (`stepped`)
 // known even when too little is drawn to verify it (a camera panned off the
 // map's edge): learned on verified frames as the map pixel of the window's
 // origin less the camera, per layer, and used when there is nothing to match.
-constexpr std::uint32_t kCameraXAddr = 0x02026C78u;
+constexpr std::uint32_t kCameraXAddr = usa(0x02026C78u);
 bool g_cam_known = false;
 int g_cam_dc[2] = {0, 0}, g_cam_dr[2] = {0, 0};
 constexpr int kGraceFrames = 2;
@@ -195,7 +196,7 @@ inline bool array_entry(int bg, int row, int col, std::uint16_t* out) {
 // highlight) the game's shows. Through the margins and, inside the native
 // screen, gbarecomp's g_ws_tilemap_override_provider. Map 6's bush at 6,8 is
 // half BG0 under the house's corner: moved onto BG1, it lifts whole.
-constexpr std::uint32_t kMapNumberAddr = 0x02029D40u;   // u16, the header parser's
+constexpr std::uint32_t kMapNumberAddr = usa(0x02029D40u);   // u16, the header parser's
 // Painted cells also reach left of the array's column 0 (map 94's art starts
 // at column 1 and the camera shows ten columns past it) and below its last
 // row (up to kMaxArrayRows): the margin sampler asks for those cells too and

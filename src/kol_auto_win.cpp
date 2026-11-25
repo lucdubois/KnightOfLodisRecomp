@@ -40,13 +40,14 @@
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
-constexpr std::uint32_t kEnemiesOut = 0x0801FBACu;   // 1 when the enemy side is out
-constexpr std::uint32_t kBattleTaskFn = 0x08060E54u;
-constexpr std::uint32_t kBattleTask = 0x0202A5B0u;
+constexpr std::uint32_t kEnemiesOut = usa(0x0801FBACu);   // 1 when the enemy side is out
+constexpr std::uint32_t kBattleTaskFn = usa(0x08060E54u);
+constexpr std::uint32_t kBattleTask = usa(0x0202A5B0u);
 constexpr std::uint32_t kSub = 0x26Cu, kSubSp = 0x26Du, kSubStack = 0x26Eu;
 constexpr std::uint32_t kState = 0x27Eu, kStateSp = 0x27Fu, kStateStack = 0x280u;
 constexpr std::uint8_t kTurnStart = 0x00u, kCheck = 0x2Fu, kEndAction = 0x3Bu;
@@ -100,7 +101,7 @@ int on_battle_task(std::uint32_t, int, ArmCpuState* cpu) {
             g_armed.store(false, std::memory_order_relaxed);
             bus_write_u8(kBattleTask + kState, kTurnStart);
             std::fprintf(stderr, "auto_win: this battle's outcome routine (%u) declared nothing; the turn goes on\n",
-                         static_cast<unsigned>(bus_read_u8(0x020012E0u)));
+                         static_cast<unsigned>(bus_read_u8(usa(0x020012E0u))));
         }
         return 0;
     }

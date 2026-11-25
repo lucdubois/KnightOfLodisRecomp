@@ -3,123 +3,123 @@
 // {wav, bank, prog, offset, gain_db, kit_key, roll_hz, accent, song (0: every song),
 //  intro_s, intro_db, intro_ramp}
 constexpr HdSampleRow kHdSamples[] = {
-    {0x0816987Cu, 0, 57, 3.97f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // lead (songs 4, 5, 10, 13): Trombone
-    {0x08168974u, 0, 70, -20.06f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // reed: Bassoon (matcher #1, unauditioned)
-    {0x0816987Cu, 0, 69, 3.97f, 0.0f, -1, 0.0f, 0.7f, 0x0823E048u, 0.0f, 0.0f, 0},   // song 19 only: the lead as English Horn (the user's pick V5 of six; Trombone elsewhere)
-    {0x08171D58u, 0, 47, 13.0f, 0.0f, -1, 0.0f, 0.7f, 0x08245BD0u, 0.0f, 0.0f, 0},   // song 29 only: the bass sample's low opening notes (23, 28) as Timpani 36 and 41 (the user heard big drums there in the original; 41 on the high notes, 36 on the low)
-    {0x08171D58u, 0, 47, 13.0f, 0.0f, -1, 0.0f, 0.7f, 0x08240150u, 0.0f, 0.0f, 0},   // song 24 only (the intro): the bass sample's low notes (28, 40) as Timpani 41 and 53, as song 29 (the user heard the same drums there in the original)
-    {0x08171D58u, 0, 47, 15.0f, 0.0f, -1, 0.0f, 0.7f, 0x0823AD90u, 0.0f, 0.0f, 0},   // song 8 only: the bass sample's very low notes (from 21) as Timpani, the lowest on 36 (found by a scan of all songs; the user approved the fix)
-    {0x08171D58u, 0, 47, 25.0f, 0.0f, -1, 0.0f, 0.7f, 0x08243918u, 0.0f, 0.0f, 0},   // song 27 only: the bass sample's very low notes (from 11) as Timpani, the lowest on 36 (found by a scan of all songs; the user approved the fix)
-    {0x08171D58u, 0, 47, 13.0f, 0.0f, -1, 0.0f, 0.7f, 0x08244584u, 7.2f, -40.0f, 1},   // song 28 only (the intro video and title): the opening roll fades in from silence over its 7.2 s (the user's pick); then the bass sample's very low notes (from 23) as Timpani, the lowest on 36 (found by a scan of all songs; the user approved the fix)
-    {0x0816B198u, 0, -1, 4.1f, 0.0f, -1, 0.0f, 0.7f, 0x08240150u, 0.0f, 0.0f, 0},   // song 24 only: the bell sample stays the game's own (it repeats one high note every 1/3-2/3 s; Tubular Bells rang on and piled up: the user's pick)
-    {0x0816B198u, 0, 14, 0.0f, -4.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // bell (songs 7, 11, 17, 21, 29): Tubular Bells (the user's pick of six bells over the matcher's Electric Piano); at the driver's key, not the matcher's +4.1 (the user, 2026-11-11, song 29 in Thor state 225: the bells sounded a little off key, picked 0 of +4.1 / +4 / 0 / -8), 4 dB down (asked for the bell a little quieter, then -4 dB on all of them)
-    {0x08171D58u, 0, 32, 0.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // bass: Acoustic Bass
-    {0x081753B4u, 0, 73, 20.3f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // near-sine, slow attack: Flute (unauditioned)
-    {0x08176318u, 0, 49, 20.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // high strings: String Ensemble 2
-    {0x081792FCu, 0, 48, 8.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // low strings: String Ensemble 1
-    {0x0817C848u, 0, 47, -12.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // timpani-like: Timpani (unauditioned)
-    {0x0818B914u, 0, 47, 0.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // pitched drum (kit keys 48-66): Timpani
-    {0x0817F87Cu, 128, 48, 0.0f, -1.94f, 57, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // gong-like cymbal: Orchestra Kit concert crash
-    {0x08192084u, 128, 48, 0.0f, -1.94f, 59, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // bright cymbal: Orchestra Kit concert crash
-    {0x08194994u, 128, 48, 0.0f, -1.94f, 57, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // ride-like cymbal (3 notes in the game): concert crash
-    {0x0818EF70u, 128, 48, 0.0f, -1.94f, 38, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // snare: Orchestra Kit concert snare
-    {0x08190C54u, 128, 48, 0.0f, -1.94f, 38, 16.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // looped snare roll (8 Hz accent pulse): the same snare rolled
+    {usa(0x0816987Cu), 0, 57, 3.97f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // lead (songs 4, 5, 10, 13): Trombone
+    {usa(0x08168974u), 0, 70, -20.06f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // reed: Bassoon (matcher #1, unauditioned)
+    {usa(0x0816987Cu), 0, 69, 3.97f, 0.0f, -1, 0.0f, 0.7f, usa(0x0823E048u), 0.0f, 0.0f, 0},   // song 19 only: the lead as English Horn (the user's pick V5 of six; Trombone elsewhere)
+    {usa(0x08171D58u), 0, 47, 13.0f, 0.0f, -1, 0.0f, 0.7f, usa(0x08245BD0u), 0.0f, 0.0f, 0},   // song 29 only: the bass sample's low opening notes (23, 28) as Timpani 36 and 41 (the user heard big drums there in the original; 41 on the high notes, 36 on the low)
+    {usa(0x08171D58u), 0, 47, 13.0f, 0.0f, -1, 0.0f, 0.7f, usa(0x08240150u), 0.0f, 0.0f, 0},   // song 24 only (the intro): the bass sample's low notes (28, 40) as Timpani 41 and 53, as song 29 (the user heard the same drums there in the original)
+    {usa(0x08171D58u), 0, 47, 15.0f, 0.0f, -1, 0.0f, 0.7f, usa(0x0823AD90u), 0.0f, 0.0f, 0},   // song 8 only: the bass sample's very low notes (from 21) as Timpani, the lowest on 36 (found by a scan of all songs; the user approved the fix)
+    {usa(0x08171D58u), 0, 47, 25.0f, 0.0f, -1, 0.0f, 0.7f, usa(0x08243918u), 0.0f, 0.0f, 0},   // song 27 only: the bass sample's very low notes (from 11) as Timpani, the lowest on 36 (found by a scan of all songs; the user approved the fix)
+    {usa(0x08171D58u), 0, 47, 13.0f, 0.0f, -1, 0.0f, 0.7f, usa(0x08244584u), 7.2f, -40.0f, 1},   // song 28 only (the intro video and title): the opening roll fades in from silence over its 7.2 s (the user's pick); then the bass sample's very low notes (from 23) as Timpani, the lowest on 36 (found by a scan of all songs; the user approved the fix)
+    {usa(0x0816B198u), 0, -1, 4.1f, 0.0f, -1, 0.0f, 0.7f, usa(0x08240150u), 0.0f, 0.0f, 0},   // song 24 only: the bell sample stays the game's own (it repeats one high note every 1/3-2/3 s; Tubular Bells rang on and piled up: the user's pick)
+    {usa(0x0816B198u), 0, 14, 0.0f, -4.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // bell (songs 7, 11, 17, 21, 29): Tubular Bells (the user's pick of six bells over the matcher's Electric Piano); at the driver's key, not the matcher's +4.1 (the user, 2026-11-11, song 29 in Thor state 225: the bells sounded a little off key, picked 0 of +4.1 / +4 / 0 / -8), 4 dB down (asked for the bell a little quieter, then -4 dB on all of them)
+    {usa(0x08171D58u), 0, 32, 0.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // bass: Acoustic Bass
+    {usa(0x081753B4u), 0, 73, 20.3f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // near-sine, slow attack: Flute (unauditioned)
+    {usa(0x08176318u), 0, 49, 20.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // high strings: String Ensemble 2
+    {usa(0x081792FCu), 0, 48, 8.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // low strings: String Ensemble 1
+    {usa(0x0817C848u), 0, 47, -12.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // timpani-like: Timpani (unauditioned)
+    {usa(0x0818B914u), 0, 47, 0.0f, 0.0f, -1, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // pitched drum (kit keys 48-66): Timpani
+    {usa(0x0817F87Cu), 128, 48, 0.0f, -1.94f, 57, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // gong-like cymbal: Orchestra Kit concert crash
+    {usa(0x08192084u), 128, 48, 0.0f, -1.94f, 59, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // bright cymbal: Orchestra Kit concert crash
+    {usa(0x08194994u), 128, 48, 0.0f, -1.94f, 57, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // ride-like cymbal (3 notes in the game): concert crash
+    {usa(0x0818EF70u), 128, 48, 0.0f, -1.94f, 38, 0.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // snare: Orchestra Kit concert snare
+    {usa(0x08190C54u), 128, 48, 0.0f, -1.94f, 38, 16.0f, 0.7f, 0x00000000u, 0.0f, 0.0f, 0},   // looped snare roll (8 Hz accent pulse): the same snare rolled
 };
 // {song, channel, bank, prog, transpose, gain_db}
 constexpr HdPsgRow kHdPsg[] = {
-    {0x08238980u, 0, 0, 48, 0.0f, 0.0f},   // battle: square 1 chords, String Ensemble 1
-    {0x08238980u, 1, 0, 48, 0.0f, 0.0f},   // battle: square 2 chords, String Ensemble 1
-    {0x08238980u, 2, 0, 45, -12.0f, 0.0f},   // battle: sawtooth bass, Pizzicato
-    {0x0823B288u, 0, 0, 73, 0.0f, 0.0f},   // world map: square 1 melody, Flute
-    {0x0823B288u, 1, 0, 68, 0.0f, 0.0f},   // world map: square 2 answer, Oboe (the user's pick over Clarinet)
-    {0x0823B288u, 2, 0, 48, -12.0f, 0.0f},   // world map: square-wave drone, String Ensemble 1
-    {0x08239904u, 0, 0, 60, 0.0f, 0.0f},   // song 6: square 1 harmony, French Horn
-    {0x08239904u, 1, 0, 60, 0.0f, 0.0f},   // song 6: square 2 harmony, French Horn
-    {0x08239904u, 2, 0, 45, -12.0f, 0.0f},   // song 6: sawtooth bass, Pizzicato
-    {0x08244584u, 0, 0, 60, 0.0f, 0.0f},   // title: square 1 long held notes, French Horn (the user's call: horns over Choir Aahs)
-    {0x08244584u, 1, 0, 60, 0.0f, 0.0f},   // title: square 2 harmony, French Horn
-    {0x08244584u, 2, 0, 48, -12.0f, 0.0f},   // title: pulse-wave low part, String Ensemble 1
-    {0x0823B05Cu, 0, 0, 69, 0.0f, 0.0f},   // battle preparation: square 1 melody, English Horn (the user's pick of nine winds)
-    {0x0823B05Cu, 1, 0, 48, 0.0f, 0.0f},   // battle preparation: square 2 middle line, String Ensemble 1
-    {0x0823B05Cu, 2, 0, 45, -12.0f, 0.0f},   // battle preparation: square-wave bass, Pizzicato
-    {0x08240150u, 0, 0, 73, 0.0f, 0.0f},   // opening (boat, archers' town): square 1 upper line, Flute (the user's pick C)
-    {0x08240150u, 1, 0, 68, 0.0f, 0.0f},   // opening: square 2, a fifth under, Oboe
-    {0x08240150u, 2, 0, 48, -12.0f, 0.0f},   // opening: wave drone, String Ensemble 1
-    {0x08236530u, 0, 0, 48, 0.0f, 0.0f},   // battle (song 1): square 1 high line, String Ensemble 1 (the user's pick B of six)
-    {0x08236530u, 1, 0, 48, 0.0f, 0.0f},   // battle (song 1): square 2 high line, String Ensemble 1
-    {0x08236530u, 2, 0, 45, -12.0f, 0.0f},   // battle (song 1): wave bass, Pizzicato
-    {0x0823746Cu, 0, 0, 48, 0.0f, 0.0f},   // battle (song 2): square 1 low/high line, String Ensemble 1 (the user's pick B of six)
-    {0x0823746Cu, 1, 0, 73, 0.0f, 0.0f},   // battle (song 2): square 2 fast high part, Flute
-    {0x0823746Cu, 2, 0, 45, -12.0f, 0.0f},   // battle (song 2): wave bass, Pizzicato
-    {0x08238034u, 0, 0, 48, 0.0f, 0.0f},   // battle (song 3): square 1 inner part, String Ensemble 1 (the user's pick D of six)
-    {0x08238034u, 1, 0, 46, 0.0f, 0.0f},   // battle (song 3): square 2, Orchestral Harp
-    {0x08238034u, 2, 0, 73, -12.0f, 0.0f},   // battle (song 3): wave high melody, Flute
-    {0x08238F78u, 0, 0, 73, 0.0f, 0.0f},   // battle (song 5): square 1 fast high notes, Flute (the user's pick B of six)
-    {0x08238F78u, 1, 0, 72, 0.0f, 0.0f},   // battle (song 5): square 2 fast high notes, Piccolo
-    {0x08238F78u, 2, 0, 48, -12.0f, 0.0f},   // battle (song 5): wave drone, String Ensemble 1
-    {0x08239FB8u, 0, 0, 60, 0.0f, 0.0f},   // castle battle (song 7): square 1 upper line, French Horn (the user's pick B of six)
-    {0x08239FB8u, 1, 0, 60, 0.0f, 0.0f},   // castle battle (song 7): square 2 middle line, French Horn
-    {0x08239FB8u, 2, 0, 42, -12.0f, 0.0f},   // castle battle (song 7): wave low part, Cello
-    {0x0823B7F4u, 0, 0, 69, 0.0f, 0.0f},   // ruins battle (song 13): square 1 melody, English Horn (the user's pick G, asked for English Horn)
-    {0x0823B7F4u, 1, 0, 48, 0.0f, 0.0f},   // ruins battle (song 13): square 2 low-middle part, String Ensemble 1
-    {0x0823B7F4u, 2, 0, 48, -12.0f, 0.0f},   // ruins battle (song 13): wave drone, String Ensemble 1
-    {0x0823F3CCu, 0, 0, 48, 0.0f, 0.0f},   // fortune teller (song 22): square 1 middle line, String Ensemble 1 (the user's pick D of six)
-    {0x0823F3CCu, 1, 0, 69, 0.0f, 0.0f},   // fortune teller (song 22): square 2, English Horn
-    {0x0823F3CCu, 2, 0, 46, -12.0f, 0.0f},   // fortune teller (song 22): wave quick high notes, Orchestral Harp
-    {0x0823AD90u, 0, 0, 45, 0.0f, 0.0f},   // song 8: square 1 fast runs, Pizzicato Strings (the user's pick C of six)
-    {0x0823AD90u, 1, 0, 45, 0.0f, 0.0f},   // song 8: square 2 fast runs, Pizzicato Strings
-    {0x0823AD90u, 2, 0, 48, -12.0f, 0.0f},   // song 8: wave held line, String Ensemble 1
-    {0x0823C020u, 0, 0, 69, 0.0f, 0.0f},   // song 14: square 1 held note and melody, English Horn (the user's pick E of six)
-    {0x0823C020u, 1, 0, 48, 0.0f, 0.0f},   // song 14: square 2 low held part, String Ensemble 1
-    {0x0823C020u, 2, 0, 48, -12.0f, 0.0f},   // song 14: wave, String Ensemble 1
-    {0x0823C560u, 0, 0, 48, 0.0f, 0.0f},   // song 15 (march): square 1 chords, String Ensemble 1 (the user's pick A of six)
-    {0x0823C560u, 1, 0, 48, 0.0f, 0.0f},   // song 15: square 2 chords, String Ensemble 1
-    {0x0823C560u, 2, 0, 42, -12.0f, 0.0f},   // song 15: wave middle line, Cello
-    {0x0823CD7Cu, 0, 0, 60, 0.0f, 0.0f},   // song 16: square 1 main line, French Horn (the user's pick D of six)
-    {0x0823CD7Cu, 1, 0, 73, 0.0f, 0.0f},   // song 16: square 2 higher line, Flute
-    {0x0823CD7Cu, 2, 0, 48, -12.0f, 0.0f},   // song 16: wave bass, String Ensemble 1
-    {0x0823D1BCu, 0, 0, 60, 0.0f, 0.0f},   // song 17: square 1 sparse notes, French Horn (the user's pick B of six, with Tubular Bells)
-    {0x0823D1BCu, 1, 0, 42, 0.0f, 0.0f},   // song 17: square 2 low repeated notes, Cello
-    {0x0823D1BCu, 2, 0, 45, -12.0f, 0.0f},   // song 17: wave low repeated notes, Pizzicato
-    {0x0823D7D0u, 0, 0, 52, 0.0f, 0.0f},   // song 18: square 1 long held notes, Choir Aahs (the user's pick: B's choir)
-    {0x0823D7D0u, 1, 0, 52, 0.0f, 0.0f},   // song 18: square 2 long held notes, Choir Aahs
-    {0x0823D7D0u, 2, 0, 43, -12.0f, 0.0f},   // song 18: wave quick low notes, Contrabass (B's Cello sounded like a burp; pick K of six)
-    {0x0823E048u, 0, 0, 45, 0.0f, 0.0f},   // song 19: square 1 rhythmic chords, Pizzicato Strings (the user's pick C of six)
-    {0x0823E048u, 1, 0, 45, 0.0f, 0.0f},   // song 19: square 2 rhythmic chords, Pizzicato Strings
-    {0x0823E048u, 2, 0, 43, -12.0f, 0.0f},   // song 19: wave long bass, Contrabass
-    {0x0823ECD4u, 0, 0, 46, 0.0f, 0.0f},   // song 20: square 1 melody, Orchestral Harp (the user's pick D of six)
-    {0x0823ECD4u, 1, 0, 46, 0.0f, 0.0f},   // song 20: square 2 the melody's echo, Orchestral Harp
-    {0x0823ECD4u, 2, 0, 42, -12.0f, 0.0f},   // song 20: wave counter-melody, Cello
-    {0x0823EEECu, 0, 0, 73, 0.0f, 0.0f},   // song 21: square 1 long high notes, Flute (the user's pick C of six)
-    {0x0823EEECu, 1, 0, 73, 0.0f, 0.0f},   // song 21: square 2 long high notes, Flute
-    {0x0823EEECu, 2, 0, 48, -12.0f, 0.0f},   // song 21: wave drone, String Ensemble 1
-    {0x0823F840u, 0, 0, 48, 0.0f, 0.0f},   // song 23: square 1 harmony, String Ensemble 1 (the user's pick A of six)
-    {0x0823F840u, 1, 0, 48, 0.0f, 0.0f},   // song 23: square 2 harmony, String Ensemble 1
-    {0x0823F840u, 2, 0, 45, -12.0f, 0.0f},   // song 23: wave bass, Pizzicato
-    {0x08242020u, 0, 0, 69, 0.0f, 0.0f},   // song 25: square 1 harmony, English Horn (the user's pick C of six)
-    {0x08242020u, 1, 0, 69, 0.0f, 0.0f},   // song 25: square 2 harmony, English Horn
-    {0x08242020u, 2, 0, 43, -12.0f, 0.0f},   // song 25: wave bass, Contrabass
-    {0x08242C08u, 0, 0, 68, 0.0f, 0.0f},   // song 26: square 1 high melody, Oboe (the user's pick B of six)
-    {0x08242C08u, 1, 0, 68, 0.0f, 0.0f},   // song 26: square 2 the melody's echo, Oboe
-    {0x08242C08u, 2, 0, 42, -12.0f, 0.0f},   // song 26: wave bass and middle, Cello
-    {0x08243918u, 0, 0, 45, 0.0f, 0.0f},   // song 27: square 1 fast notes, Pizzicato Strings (the user's pick A of six)
-    {0x08243918u, 1, 0, 45, 0.0f, 0.0f},   // song 27: square 2 fast notes, Pizzicato Strings
-    {0x08243918u, 2, 0, 48, -12.0f, 0.0f},   // song 27: wave, String Ensemble 1
-    {0x08245BD0u, 0, 0, 69, 0.0f, 0.0f},   // song 29: square 1, English Horn (the user's pick D of six)
-    {0x08245BD0u, 1, 0, 69, 0.0f, 0.0f},   // song 29: square 2, English Horn
-    {0x08245BD0u, 2, 0, 42, -12.0f, 0.0f},   // song 29: wave long bass, Cello
-    {0x082464F8u, 0, 0, 46, 0.0f, 0.0f},   // song 30: square 1 low rippling pattern, Orchestral Harp (the user's pick A of six; no wave part)
-    {0x082464F8u, 1, 0, 46, 0.0f, 0.0f},   // song 30: square 2 the pattern's echo, Orchestral Harp
-    {0x08246858u, 0, 0, 46, 0.0f, 0.0f},   // song 31: square 1 pattern, Orchestral Harp (the user's pick A of six)
-    {0x08246858u, 1, 0, 46, 0.0f, 0.0f},   // song 31: square 2 the pattern's echo, Orchestral Harp
-    {0x08246858u, 2, 0, 43, -12.0f, 0.0f},   // song 31: wave long drone, Contrabass
-    {0x08246B08u, 0, 0, 46, 0.0f, 0.0f},   // song 32 (song 31's calmer variation): square 1, Orchestral Harp (the user's pick A, as song 31)
-    {0x08246B08u, 1, 0, 46, 0.0f, 0.0f},   // song 32: square 2 echo, Orchestral Harp
-    {0x08246B08u, 2, 0, 43, -12.0f, 0.0f},   // song 32: wave long drone, Contrabass
-    {0x0823B444u, 0, 0, 8, 0.0f, 0.0f},   // jingle (song 11): square 1, Celesta (the user's pick F of six)
-    {0x0823B444u, 1, 0, 8, 0.0f, 0.0f},   // jingle (song 11): square 2, Celesta
-    {0x0823B444u, 2, 0, 48, -12.0f, 0.0f},   // jingle (song 11): wave slow bass, String Ensemble 1
-    {0x0823B584u, 0, 0, 56, 0.0f, 0.0f},   // fanfare (song 12): square 1 chords, Trumpet (the user's pick E of six)
-    {0x0823B584u, 1, 0, 60, 0.0f, 0.0f},   // fanfare (song 12): square 2 chords, French Horn
-    {0x0823B584u, 2, 0, 47, -12.0f, 0.0f},   // fanfare (song 12): wave short notes, Timpani
+    {usa(0x08238980u), 0, 0, 48, 0.0f, 0.0f},   // battle: square 1 chords, String Ensemble 1
+    {usa(0x08238980u), 1, 0, 48, 0.0f, 0.0f},   // battle: square 2 chords, String Ensemble 1
+    {usa(0x08238980u), 2, 0, 45, -12.0f, 0.0f},   // battle: sawtooth bass, Pizzicato
+    {usa(0x0823B288u), 0, 0, 73, 0.0f, 0.0f},   // world map: square 1 melody, Flute
+    {usa(0x0823B288u), 1, 0, 68, 0.0f, 0.0f},   // world map: square 2 answer, Oboe (the user's pick over Clarinet)
+    {usa(0x0823B288u), 2, 0, 48, -12.0f, 0.0f},   // world map: square-wave drone, String Ensemble 1
+    {usa(0x08239904u), 0, 0, 60, 0.0f, 0.0f},   // song 6: square 1 harmony, French Horn
+    {usa(0x08239904u), 1, 0, 60, 0.0f, 0.0f},   // song 6: square 2 harmony, French Horn
+    {usa(0x08239904u), 2, 0, 45, -12.0f, 0.0f},   // song 6: sawtooth bass, Pizzicato
+    {usa(0x08244584u), 0, 0, 60, 0.0f, 0.0f},   // title: square 1 long held notes, French Horn (the user's call: horns over Choir Aahs)
+    {usa(0x08244584u), 1, 0, 60, 0.0f, 0.0f},   // title: square 2 harmony, French Horn
+    {usa(0x08244584u), 2, 0, 48, -12.0f, 0.0f},   // title: pulse-wave low part, String Ensemble 1
+    {usa(0x0823B05Cu), 0, 0, 69, 0.0f, 0.0f},   // battle preparation: square 1 melody, English Horn (the user's pick of nine winds)
+    {usa(0x0823B05Cu), 1, 0, 48, 0.0f, 0.0f},   // battle preparation: square 2 middle line, String Ensemble 1
+    {usa(0x0823B05Cu), 2, 0, 45, -12.0f, 0.0f},   // battle preparation: square-wave bass, Pizzicato
+    {usa(0x08240150u), 0, 0, 73, 0.0f, 0.0f},   // opening (boat, archers' town): square 1 upper line, Flute (the user's pick C)
+    {usa(0x08240150u), 1, 0, 68, 0.0f, 0.0f},   // opening: square 2, a fifth under, Oboe
+    {usa(0x08240150u), 2, 0, 48, -12.0f, 0.0f},   // opening: wave drone, String Ensemble 1
+    {usa(0x08236530u), 0, 0, 48, 0.0f, 0.0f},   // battle (song 1): square 1 high line, String Ensemble 1 (the user's pick B of six)
+    {usa(0x08236530u), 1, 0, 48, 0.0f, 0.0f},   // battle (song 1): square 2 high line, String Ensemble 1
+    {usa(0x08236530u), 2, 0, 45, -12.0f, 0.0f},   // battle (song 1): wave bass, Pizzicato
+    {usa(0x0823746Cu), 0, 0, 48, 0.0f, 0.0f},   // battle (song 2): square 1 low/high line, String Ensemble 1 (the user's pick B of six)
+    {usa(0x0823746Cu), 1, 0, 73, 0.0f, 0.0f},   // battle (song 2): square 2 fast high part, Flute
+    {usa(0x0823746Cu), 2, 0, 45, -12.0f, 0.0f},   // battle (song 2): wave bass, Pizzicato
+    {usa(0x08238034u), 0, 0, 48, 0.0f, 0.0f},   // battle (song 3): square 1 inner part, String Ensemble 1 (the user's pick D of six)
+    {usa(0x08238034u), 1, 0, 46, 0.0f, 0.0f},   // battle (song 3): square 2, Orchestral Harp
+    {usa(0x08238034u), 2, 0, 73, -12.0f, 0.0f},   // battle (song 3): wave high melody, Flute
+    {usa(0x08238F78u), 0, 0, 73, 0.0f, 0.0f},   // battle (song 5): square 1 fast high notes, Flute (the user's pick B of six)
+    {usa(0x08238F78u), 1, 0, 72, 0.0f, 0.0f},   // battle (song 5): square 2 fast high notes, Piccolo
+    {usa(0x08238F78u), 2, 0, 48, -12.0f, 0.0f},   // battle (song 5): wave drone, String Ensemble 1
+    {usa(0x08239FB8u), 0, 0, 60, 0.0f, 0.0f},   // castle battle (song 7): square 1 upper line, French Horn (the user's pick B of six)
+    {usa(0x08239FB8u), 1, 0, 60, 0.0f, 0.0f},   // castle battle (song 7): square 2 middle line, French Horn
+    {usa(0x08239FB8u), 2, 0, 42, -12.0f, 0.0f},   // castle battle (song 7): wave low part, Cello
+    {usa(0x0823B7F4u), 0, 0, 69, 0.0f, 0.0f},   // ruins battle (song 13): square 1 melody, English Horn (the user's pick G, asked for English Horn)
+    {usa(0x0823B7F4u), 1, 0, 48, 0.0f, 0.0f},   // ruins battle (song 13): square 2 low-middle part, String Ensemble 1
+    {usa(0x0823B7F4u), 2, 0, 48, -12.0f, 0.0f},   // ruins battle (song 13): wave drone, String Ensemble 1
+    {usa(0x0823F3CCu), 0, 0, 48, 0.0f, 0.0f},   // fortune teller (song 22): square 1 middle line, String Ensemble 1 (the user's pick D of six)
+    {usa(0x0823F3CCu), 1, 0, 69, 0.0f, 0.0f},   // fortune teller (song 22): square 2, English Horn
+    {usa(0x0823F3CCu), 2, 0, 46, -12.0f, 0.0f},   // fortune teller (song 22): wave quick high notes, Orchestral Harp
+    {usa(0x0823AD90u), 0, 0, 45, 0.0f, 0.0f},   // song 8: square 1 fast runs, Pizzicato Strings (the user's pick C of six)
+    {usa(0x0823AD90u), 1, 0, 45, 0.0f, 0.0f},   // song 8: square 2 fast runs, Pizzicato Strings
+    {usa(0x0823AD90u), 2, 0, 48, -12.0f, 0.0f},   // song 8: wave held line, String Ensemble 1
+    {usa(0x0823C020u), 0, 0, 69, 0.0f, 0.0f},   // song 14: square 1 held note and melody, English Horn (the user's pick E of six)
+    {usa(0x0823C020u), 1, 0, 48, 0.0f, 0.0f},   // song 14: square 2 low held part, String Ensemble 1
+    {usa(0x0823C020u), 2, 0, 48, -12.0f, 0.0f},   // song 14: wave, String Ensemble 1
+    {usa(0x0823C560u), 0, 0, 48, 0.0f, 0.0f},   // song 15 (march): square 1 chords, String Ensemble 1 (the user's pick A of six)
+    {usa(0x0823C560u), 1, 0, 48, 0.0f, 0.0f},   // song 15: square 2 chords, String Ensemble 1
+    {usa(0x0823C560u), 2, 0, 42, -12.0f, 0.0f},   // song 15: wave middle line, Cello
+    {usa(0x0823CD7Cu), 0, 0, 60, 0.0f, 0.0f},   // song 16: square 1 main line, French Horn (the user's pick D of six)
+    {usa(0x0823CD7Cu), 1, 0, 73, 0.0f, 0.0f},   // song 16: square 2 higher line, Flute
+    {usa(0x0823CD7Cu), 2, 0, 48, -12.0f, 0.0f},   // song 16: wave bass, String Ensemble 1
+    {usa(0x0823D1BCu), 0, 0, 60, 0.0f, 0.0f},   // song 17: square 1 sparse notes, French Horn (the user's pick B of six, with Tubular Bells)
+    {usa(0x0823D1BCu), 1, 0, 42, 0.0f, 0.0f},   // song 17: square 2 low repeated notes, Cello
+    {usa(0x0823D1BCu), 2, 0, 45, -12.0f, 0.0f},   // song 17: wave low repeated notes, Pizzicato
+    {usa(0x0823D7D0u), 0, 0, 52, 0.0f, 0.0f},   // song 18: square 1 long held notes, Choir Aahs (the user's pick: B's choir)
+    {usa(0x0823D7D0u), 1, 0, 52, 0.0f, 0.0f},   // song 18: square 2 long held notes, Choir Aahs
+    {usa(0x0823D7D0u), 2, 0, 43, -12.0f, 0.0f},   // song 18: wave quick low notes, Contrabass (B's Cello sounded like a burp; pick K of six)
+    {usa(0x0823E048u), 0, 0, 45, 0.0f, 0.0f},   // song 19: square 1 rhythmic chords, Pizzicato Strings (the user's pick C of six)
+    {usa(0x0823E048u), 1, 0, 45, 0.0f, 0.0f},   // song 19: square 2 rhythmic chords, Pizzicato Strings
+    {usa(0x0823E048u), 2, 0, 43, -12.0f, 0.0f},   // song 19: wave long bass, Contrabass
+    {usa(0x0823ECD4u), 0, 0, 46, 0.0f, 0.0f},   // song 20: square 1 melody, Orchestral Harp (the user's pick D of six)
+    {usa(0x0823ECD4u), 1, 0, 46, 0.0f, 0.0f},   // song 20: square 2 the melody's echo, Orchestral Harp
+    {usa(0x0823ECD4u), 2, 0, 42, -12.0f, 0.0f},   // song 20: wave counter-melody, Cello
+    {usa(0x0823EEECu), 0, 0, 73, 0.0f, 0.0f},   // song 21: square 1 long high notes, Flute (the user's pick C of six)
+    {usa(0x0823EEECu), 1, 0, 73, 0.0f, 0.0f},   // song 21: square 2 long high notes, Flute
+    {usa(0x0823EEECu), 2, 0, 48, -12.0f, 0.0f},   // song 21: wave drone, String Ensemble 1
+    {usa(0x0823F840u), 0, 0, 48, 0.0f, 0.0f},   // song 23: square 1 harmony, String Ensemble 1 (the user's pick A of six)
+    {usa(0x0823F840u), 1, 0, 48, 0.0f, 0.0f},   // song 23: square 2 harmony, String Ensemble 1
+    {usa(0x0823F840u), 2, 0, 45, -12.0f, 0.0f},   // song 23: wave bass, Pizzicato
+    {usa(0x08242020u), 0, 0, 69, 0.0f, 0.0f},   // song 25: square 1 harmony, English Horn (the user's pick C of six)
+    {usa(0x08242020u), 1, 0, 69, 0.0f, 0.0f},   // song 25: square 2 harmony, English Horn
+    {usa(0x08242020u), 2, 0, 43, -12.0f, 0.0f},   // song 25: wave bass, Contrabass
+    {usa(0x08242C08u), 0, 0, 68, 0.0f, 0.0f},   // song 26: square 1 high melody, Oboe (the user's pick B of six)
+    {usa(0x08242C08u), 1, 0, 68, 0.0f, 0.0f},   // song 26: square 2 the melody's echo, Oboe
+    {usa(0x08242C08u), 2, 0, 42, -12.0f, 0.0f},   // song 26: wave bass and middle, Cello
+    {usa(0x08243918u), 0, 0, 45, 0.0f, 0.0f},   // song 27: square 1 fast notes, Pizzicato Strings (the user's pick A of six)
+    {usa(0x08243918u), 1, 0, 45, 0.0f, 0.0f},   // song 27: square 2 fast notes, Pizzicato Strings
+    {usa(0x08243918u), 2, 0, 48, -12.0f, 0.0f},   // song 27: wave, String Ensemble 1
+    {usa(0x08245BD0u), 0, 0, 69, 0.0f, 0.0f},   // song 29: square 1, English Horn (the user's pick D of six)
+    {usa(0x08245BD0u), 1, 0, 69, 0.0f, 0.0f},   // song 29: square 2, English Horn
+    {usa(0x08245BD0u), 2, 0, 42, -12.0f, 0.0f},   // song 29: wave long bass, Cello
+    {usa(0x082464F8u), 0, 0, 46, 0.0f, 0.0f},   // song 30: square 1 low rippling pattern, Orchestral Harp (the user's pick A of six; no wave part)
+    {usa(0x082464F8u), 1, 0, 46, 0.0f, 0.0f},   // song 30: square 2 the pattern's echo, Orchestral Harp
+    {usa(0x08246858u), 0, 0, 46, 0.0f, 0.0f},   // song 31: square 1 pattern, Orchestral Harp (the user's pick A of six)
+    {usa(0x08246858u), 1, 0, 46, 0.0f, 0.0f},   // song 31: square 2 the pattern's echo, Orchestral Harp
+    {usa(0x08246858u), 2, 0, 43, -12.0f, 0.0f},   // song 31: wave long drone, Contrabass
+    {usa(0x08246B08u), 0, 0, 46, 0.0f, 0.0f},   // song 32 (song 31's calmer variation): square 1, Orchestral Harp (the user's pick A, as song 31)
+    {usa(0x08246B08u), 1, 0, 46, 0.0f, 0.0f},   // song 32: square 2 echo, Orchestral Harp
+    {usa(0x08246B08u), 2, 0, 43, -12.0f, 0.0f},   // song 32: wave long drone, Contrabass
+    {usa(0x0823B444u), 0, 0, 8, 0.0f, 0.0f},   // jingle (song 11): square 1, Celesta (the user's pick F of six)
+    {usa(0x0823B444u), 1, 0, 8, 0.0f, 0.0f},   // jingle (song 11): square 2, Celesta
+    {usa(0x0823B444u), 2, 0, 48, -12.0f, 0.0f},   // jingle (song 11): wave slow bass, String Ensemble 1
+    {usa(0x0823B584u), 0, 0, 56, 0.0f, 0.0f},   // fanfare (song 12): square 1 chords, Trumpet (the user's pick E of six)
+    {usa(0x0823B584u), 1, 0, 60, 0.0f, 0.0f},   // fanfare (song 12): square 2 chords, French Horn
+    {usa(0x0823B584u), 2, 0, 47, -12.0f, 0.0f},   // fanfare (song 12): wave short notes, Timpani
 };

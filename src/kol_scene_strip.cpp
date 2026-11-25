@@ -48,6 +48,7 @@
 #include <cstring>
 #include <mutex>
 #include <vector>
+#include "kol_region.h"
 
 namespace kol {
 namespace {
@@ -65,8 +66,8 @@ std::uint16_t rd16(const std::uint8_t* m, std::uint32_t o) {
 }
 
 // ── The wave's parameters, as the game fills each table ────────────────
-constexpr std::uint32_t kFillTable = 0x0800CAECu;   // (params, table)
-constexpr std::uint32_t kSineLiteral = 0x08007F00u; // 0x08007EF0's table pointer
+constexpr std::uint32_t kFillTable = usa(0x0800CAECu);   // (params, table)
+constexpr std::uint32_t kSineLiteral = usa(0x08007F00u); // 0x08007EF0's table pointer
 constexpr char kHookId[] = "kol.raster-params-seen";
 struct Wave {
     std::uint32_t table = 0;

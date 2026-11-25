@@ -30,85 +30,86 @@
 #include "runtime.h"              // runtime_ewram_view
 #include "gba_bus.h"
 #include "gba_io.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
-constexpr std::uint32_t kTableBase = 0x0861CA5Cu;
+constexpr std::uint32_t kTableBase = usa(0x0861CA5Cu);
 constexpr std::uint32_t kStride    = 0x20u;
 constexpr std::uint32_t kModsOff   = 0x16u;
 constexpr int           kRecords   = 89;
 
 // Functions whose bodies reference the table base.
 const std::uint32_t kWatch[] = {
-    0x0804BFC8u,
-    0x0804C0D6u,
-    0x0804C432u,
-    0x0804C4FAu,
-    0x0804C59Au,
-    0x0804CC6Cu,
-    0x0804D58Cu,
-    0x0804DD3Au,
-    0x08058620u,
-    0x08058C4Cu,
-    0x08059AC2u,
-    0x08059BA2u,
-    0x08059D06u,
-    0x0805AFACu,
-    0x0805B436u,
-    0x0805BFC2u,
-    0x0805F8B2u,
-    0x0805F9D6u,
-    0x08064248u,
-    0x0806598Eu,
-    0x08065A74u,
-    0x0806C9EAu,
-    0x0806D3E6u,
-    0x0806DB42u,
-    0x0806F868u,
-    0x0807226Au,
-    0x0807595Au,
-    0x0807BA0Eu,
-    0x08084144u,
-    0x0808431Cu,
-    0x08084426u,
-    0x080846EAu,
-    0x08084D7Au,
-    0x08084DE2u,
-    0x080858E2u,
-    0x08085C50u,
-    0x08085E9Eu,
-    0x08089164u,
-    0x0808926Cu,
-    0x0808A5D8u,
-    0x0808A872u,
-    0x0808A932u,
-    0x0808CB12u,
-    0x0808CB9Au,
-    0x0808CBF0u,
-    0x0808D55Eu,
-    0x0808D756u,
-    0x0808E6C8u,
-    0x0808E712u,
-    0x0808F2F4u,
-    0x0809763Eu,
-    0x08099CC6u,
-    0x08099DF2u,
-    0x0809D278u,
-    0x0809F3FCu,
-    0x080A5BE0u,
-    0x080A71EAu,
-    0x080A7634u,
-    0x080AEA4Cu,
-    0x080B09A6u,
-    0x080B2AB8u,
-    0x0811E228u,
-    0x0813BA60u,
-    0x0813CA70u,
-    0x0813CBE0u,
-    0x0813D4BCu,
-    0x0813DBEEu,
-    0x0813DC92u
+    usa(0x0804BFC8u),
+    usa(0x0804C0D6u),
+    usa(0x0804C432u),
+    usa(0x0804C4FAu),
+    usa(0x0804C59Au),
+    usa(0x0804CC6Cu),
+    usa(0x0804D58Cu),
+    usa(0x0804DD3Au),
+    usa(0x08058620u),
+    usa(0x08058C4Cu),
+    usa(0x08059AC2u),
+    usa(0x08059BA2u),
+    usa(0x08059D06u),
+    usa(0x0805AFACu),
+    usa(0x0805B436u),
+    usa(0x0805BFC2u),
+    usa(0x0805F8B2u),
+    usa(0x0805F9D6u),
+    usa(0x08064248u),
+    usa(0x0806598Eu),
+    usa(0x08065A74u),
+    usa(0x0806C9EAu),
+    usa(0x0806D3E6u),
+    usa(0x0806DB42u),
+    usa(0x0806F868u),
+    usa(0x0807226Au),
+    usa(0x0807595Au),
+    usa(0x0807BA0Eu),
+    usa(0x08084144u),
+    usa(0x0808431Cu),
+    usa(0x08084426u),
+    usa(0x080846EAu),
+    usa(0x08084D7Au),
+    usa(0x08084DE2u),
+    usa(0x080858E2u),
+    usa(0x08085C50u),
+    usa(0x08085E9Eu),
+    usa(0x08089164u),
+    usa(0x0808926Cu),
+    usa_only(0x0808A5D8u),
+    usa(0x0808A872u),
+    usa(0x0808A932u),
+    usa(0x0808CB12u),
+    usa(0x0808CB9Au),
+    usa(0x0808CBF0u),
+    usa(0x0808D55Eu),
+    usa(0x0808D756u),
+    usa(0x0808E6C8u),
+    usa(0x0808E712u),
+    usa(0x0808F2F4u),
+    usa(0x0809763Eu),
+    usa(0x08099CC6u),
+    usa(0x08099DF2u),
+    usa(0x0809D278u),
+    usa(0x0809F3FCu),
+    usa(0x080A5BE0u),
+    usa(0x080A71EAu),
+    usa(0x080A7634u),
+    usa(0x080AEA4Cu),
+    usa(0x080B09A6u),
+    usa(0x080B2AB8u),
+    usa(0x0811E228u),
+    usa(0x0813BA60u),
+    usa(0x0813CA70u),
+    usa(0x0813CBE0u),
+    usa(0x0813D4BCu),
+    usa(0x0813DBEEu),
+    usa(0x0813DC92u)
 };
 constexpr std::size_t kWatchCount = sizeof(kWatch) / sizeof(kWatch[0]);
 
@@ -120,6 +121,13 @@ constexpr std::uint32_t kAmbiguous = 0xFFFFFFFFu;
 std::uint32_t g_slot[2048];
 
 bool watched_slow(std::uint32_t pc) {
+    // Another region's addresses are not in the USA ROM's order (and one of
+    // them is 0 there, usa_only): no binary search.
+    if (kRegion != Region::Usa) {
+        for (std::size_t i = 0; i < kWatchCount; ++i)
+            if (kWatch[i] == pc) return true;
+        return false;
+    }
     std::size_t lo = 0, hi = kWatchCount;
     while (lo < hi) {
         const std::size_t mid = (lo + hi) / 2;

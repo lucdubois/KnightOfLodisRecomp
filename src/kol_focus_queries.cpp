@@ -6,6 +6,7 @@
 
 #include "kol_focus.h"
 #include "kol_focus_internal.h"
+#include "kol_region.h"
 
 namespace kol {
 // While a unit takes its action and the cursor is out choosing its move or
@@ -27,9 +28,9 @@ namespace {
 // An EWRAM address as an offset into the EWRAM copy.
 constexpr std::uint32_t ew_off(std::uint32_t a) { return a - 0x02000000u; }
 // The acting unit's map object (see acting_record).
-constexpr std::uint32_t kActingObject = 0x0202A5F0u;
+constexpr std::uint32_t kActingObject = usa(0x0202A5F0u);
 // The move task's state byte (see move_choice_active, cursor_browsing).
-constexpr std::uint32_t kMoveTaskState = 0x0202A5B0u + 0x27Eu;
+constexpr std::uint32_t kMoveTaskState = usa(0x0202A5B0u) + 0x27Eu;
 // Whether o is an entry of the map objects' list (at list).
 bool is_map_object(std::uint32_t list, std::uint32_t o) {
     return in_ewram(list, kObjects * kObjStride) && o >= list && o < list + kObjects * kObjStride &&
@@ -73,7 +74,7 @@ std::uint32_t cursor_unit_record() {
 // where it is also seen at 4).
 bool cursor_on_map() {
     const std::uint8_t* iw = guest_iw();
-    return iw && iw[0x03000FD5u - 0x03000000u] == 1u;
+    return iw && iw[usa(0x03000FD5u) - 0x03000000u] == 1u;
 }
 
 // An attack or spell waits on its confirmation (Attack/Cancel, the forecast
@@ -82,7 +83,7 @@ bool cursor_on_map() {
 // in the weapon and command menus (CO, CN); it is 1 in BV and BW as saved.
 bool target_confirming() {
     const std::uint8_t* iw = guest_iw();
-    return iw && iw[0x03000FF1u - 0x03000000u] == 1u;
+    return iw && iw[usa(0x03000FF1u) - 0x03000000u] == 1u;
 }
 
 // A damage number is up over a sprite: EWRAM 0x0202AFCC points at its object
@@ -94,7 +95,7 @@ bool damage_number_shown() { return damage_number_object() != 0u; }
 
 std::uint32_t damage_number_object() {
     const std::uint8_t* ew = guest_ew();
-    return ew ? rd32(ew, 0x0202AFCCu - 0x02000000u) : 0u;
+    return ew ? rd32(ew, usa(0x0202AFCCu) - 0x02000000u) : 0u;
 }
 
 // The number's block (its sprite's, at [0x0202AFCC]) holds where it stands:
@@ -133,7 +134,7 @@ std::uint32_t damage_number_unit() {
 // Rictor's phase and the player's, when the sheet held on him too).
 bool unit_in_action() {
     const std::uint8_t* ew = guest_ew();
-    return ew && ew[0x0202B26Fu - 0x02000000u] != 0u && !battle_preparation() && !ai_phase() &&
+    return ew && ew[usa(0x0202B26Fu) - 0x02000000u] != 0u && !battle_preparation() && !ai_phase() &&
            acting_record() != 0u;
 }
 
@@ -145,7 +146,7 @@ bool unit_in_action() {
 // FF, HX, HZ, L, M, N), 0 in the 76 player's-phase battle states.
 bool ai_phase() {
     const std::uint8_t* ew = guest_ew();
-    return ew && (ew[0x0202A903u - 0x02000000u] & 0x80u) != 0u;
+    return ew && (ew[usa(0x0202A903u) - 0x02000000u] & 0x80u) != 0u;
 }
 
 bool object_decal_hidden(std::uint16_t attr2) {
@@ -168,7 +169,7 @@ bool object_decal_hidden(std::uint16_t attr2) {
 // battle turn among them.
 bool story_event() {
     const std::uint8_t* ew = guest_ew();
-    return ew && ew[0x020013D0u - 0x02000000u] == 1u;
+    return ew && ew[usa(0x020013D0u) - 0x02000000u] == 1u;
 }
 
 // Battle preparation (deployment, the roster list, its view mode): EWRAM
@@ -180,7 +181,7 @@ bool story_event() {
 // then checked on all 100.
 bool battle_preparation() {
     const std::uint8_t* ew = guest_ew();
-    return ew && ew[0x0202A81Au - 0x02000000u] == 0u;
+    return ew && ew[usa(0x0202A81Au) - 0x02000000u] == 0u;
 }
 
 // The move choice has just begun: a unit takes its action, the map cursor
@@ -277,7 +278,7 @@ std::uint32_t acting_target() {
     const std::uint32_t actor = rd32(ew, ew_off(kActingObject));
     auto is_obj = [&](std::uint32_t o) { return is_map_object(list, o); };
     if (!is_obj(actor)) return 0u;
-    for (const std::uint32_t pair : {0x0202B710u, 0x0203C734u}) {
+    for (const std::uint32_t pair : {usa(0x0202B710u), usa(0x0203C734u)}) {
         if (rd32(ew, ew_off(pair)) != actor) continue;
         const std::uint32_t t = rd32(ew, ew_off(pair + 4u));
         if (t == actor) continue;
@@ -323,7 +324,7 @@ std::uint32_t acting_target() {
 int talent_targets(std::uint32_t* objs, int max) {
     const std::uint8_t* ew = guest_ew();
     if (!ew) return 0;
-    constexpr std::uint32_t kBlock = 0x02029D80u;
+    constexpr std::uint32_t kBlock = usa(0x02029D80u);
     const std::uint32_t actor = rd32(ew, ew_off(kActingObject));
     if (!actor || rd32(ew, ew_off(kBlock + 4u)) != actor) return 0;
     const std::uint32_t n = rd32(ew, ew_off(kBlock + 0x20u));
@@ -338,7 +339,7 @@ int talent_results(TalentResult* results, int max) {
     if (!ew || max <= 0) return 0;
     std::uint32_t objs[8];
     if (talent_targets(objs, 8) == 0) return 0;
-    constexpr std::uint32_t kBlock = 0x02029D80u, kResult = 0x02029EC0u;
+    constexpr std::uint32_t kBlock = usa(0x02029D80u), kResult = usa(0x02029EC0u);
     // What the talent does to HP, from its record (the block's +0x00, a row
     // of the talent table 0x0861A8F0, stride 64): +0x1E's low nibble is 1
     // for every damage spell (Ice Javelin, Fireball, the breaths' row too)
@@ -346,7 +347,7 @@ int talent_results(TalentResult* results, int max) {
     // items: 0x82); status, MP and the rest have other values, and their
     // result's figure is not an HP change (KOL_TALENT_LIST=1 lists them).
     const std::uint32_t talent = rd32(ew, ew_off(kBlock));
-    constexpr std::uint32_t kTable = 0x0861A8F0u, kStride = 64u;
+    constexpr std::uint32_t kTable = usa(0x0861A8F0u), kStride = 64u;
     int effect = 0;
     if (talent >= kTable && talent < kTable + 127u * kStride && (talent - kTable) % kStride == 0) {
         gba::GbaBus* bus = gbarecomp::active_bus();

@@ -46,6 +46,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include "kol_region.h"
 
 // What the files share stays inside the program (hidden), as the anonymous
 // namespace it came from kept it: reached directly, with no GOT or PLT on the
@@ -57,7 +58,7 @@ namespace kol_focus_detail {}
 using namespace kol_focus_detail;
 
 namespace kol_focus_detail {
-constexpr std::uint32_t kGrid        = 0x02016440u;
+constexpr std::uint32_t kGrid        = kol::usa(0x02016440u);
 // The game's height grid is 32 x 32 cells (kGameSide); the field the
 // perspective, the light and the editor work over has kMargin more cells on
 // every side, -kMargin .. kGameSide + kMargin - 1 (kGridSide across), so
@@ -78,7 +79,7 @@ inline bool in_game(int cx, int cy) { return cx >= 0 && cy >= 0 && cx < kGameSid
 inline std::uint32_t game_cell(int cx, int cy) { return static_cast<std::uint32_t>((cy * kGameSide + cx) * 4); }
 // World units of the field's first place along X and Z (negative).
 constexpr int kFieldOrigin = -32 * kMargin;
-constexpr std::uint32_t kTerrainMapPtr = 0x020042E4u;   // map byte -> terrain record
+constexpr std::uint32_t kTerrainMapPtr = kol::usa(0x020042E4u);   // map byte -> terrain record
 // A/B switches read in more than one place (their notes are where they act).
 inline bool blob_join_on() {   // KOL_NO_BLOB_JOIN=1: off
     static const bool v = !kol::env_set("KOL_NO_BLOB_JOIN");
@@ -119,17 +120,17 @@ int current_map();
 bool placed_plant(int index);
 const DrawnCutout* drawn_cutout(int map, int record, int cx, int cz);
 bool middle_v_cell(int map, int x, int z);
-constexpr std::uint32_t kTerrainTable = 0x0861CA5Cu;   // 0x20 a record; +1 0x7F: no unit enters
+constexpr std::uint32_t kTerrainTable = kol::usa(0x0861CA5Cu);   // 0x20 a record; +1 0x7F: no unit enters
 // The battle's map number: the u16 the map header parser 0x08021B68 reads
 // (header = 0x085C55C4 + 2 + (number - 1) * 0x6A).
-constexpr std::uint32_t kMapNumber = 0x02029D40u;
-constexpr std::uint32_t kObjectsPtr  = 0x0202A238u;
+constexpr std::uint32_t kMapNumber = kol::usa(0x02029D40u);
+constexpr std::uint32_t kObjectsPtr  = kol::usa(0x0202A238u);
 constexpr int           kObjects     = 26;
 constexpr std::uint32_t kObjStride   = 0xD0u;
-constexpr std::uint32_t kSlotArray   = 0x03004150u;   // IWRAM, stride 0x20
+constexpr std::uint32_t kSlotArray   = kol::usa(0x03004150u);   // IWRAM, stride 0x20
 constexpr int           kSlots       = 128;
 constexpr std::uint32_t kSlotStride  = 0x20u;
-constexpr std::uint32_t kCursorSlotFn = 0x08057AD5u;
+constexpr std::uint32_t kCursorSlotFn = kol::usa(0x08057AD5u);
 constexpr int           kMaxProps    = 8;
 constexpr int           kRow         = 32;   // depth of one row of cells
 // Terrain ids whose height includes a prop standing on the ground. Seen on

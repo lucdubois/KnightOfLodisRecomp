@@ -195,7 +195,7 @@ void setup_mod_remove(const std::string& dir) {
 }
 
 namespace {
-const char* const kAskFile[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+const char* const kAskFile[3] = {kCartAsk,
                                  "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
 #if defined(__linux__)
 std::unique_ptr<SystemPick> g_game_pick;   // setup_file_dialog's, from the running game
@@ -539,7 +539,7 @@ struct Setup {
     void start_pick(int what) {
 #if defined(__APPLE__)
         // A Mac: the system's Open panel, not the screen's browser.
-        static const char* const kAsk[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+        static const char* const kAsk[3] = {kCartAsk,
                                             "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
         std::string file;
         const bool chosen = setup_mac_open_panel(kAsk[what], &file);
@@ -551,7 +551,7 @@ struct Setup {
         return;
 #elif defined(_WIN32)
         // Windows: the system's Open dialog, as the Mac's panel.
-        static const char* const kAskWin[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+        static const char* const kAskWin[3] = {kCartAsk,
                                                "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
         std::string file;
         const bool chosen = setup_win_open_dialog(window, what, kAskWin[what], &file);
@@ -562,7 +562,7 @@ struct Setup {
         if (picking == what) picking = -1;   // (refused: the message on the main page)
         return;
 #elif defined(__linux__)
-        static const char* const kAskLinux[3] = {"Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)",
+        static const char* const kAskLinux[3] = {kCartAsk,
                                                  "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
         const std::string cmd = system_dialog_command(kAskLinux[what]);
         if (!cmd.empty()) {
@@ -601,7 +601,7 @@ struct Setup {
         std::error_code ec;
         fs::create_directories(dir, ec);
         if (picking == 0) {
-            if (!same_hex(sha1_of(data), kRomSha1)) { status = "Wrong file: not this game's ROM (the USA version is needed)."; return; }
+            if (!same_hex(sha1_of(data), kRomSha1)) { status = kCartWrong; return; }
             if (!write_file(dir + "/totkol.gba", data)) { status = "Copy failed."; return; }
         } else if (picking == 1) {
             if (!same_hex(sha1_of(data), kBiosSha1)) { status = "Not the GBA BIOS: the HLE BIOS will be used."; return; }
@@ -628,7 +628,7 @@ struct Setup {
                        : (ext == ".ips" || ext == ".ups" || ext == ".bps") ? 2 : -1;
         if (kind < 0) {
             status = fs::path(file).filename().string() +
-                     " is not this game's ROM (the USA version), the GBA BIOS or a mod (.ips, .ups, .bps).";
+                     " is not this game's ROM (" + std::string(kCartVersion) + "), the GBA BIOS or a mod (.ips, .ups, .bps).";
             return;
         }
         const int was = picking;
@@ -650,7 +650,7 @@ struct Setup {
         // (The sizes, a window 800 high: larger than the first try, asked 2026-11-18.)
         const int title = u.px(48), name = u.px(40), small = u.px(26), button = u.px(36);
         int y = u.h / 18;
-        u.text_mid(u.regular, u.w / 2, y, "Tactics Ogre: The Knight of Lodis", title, kInk);
+        u.text_mid(u.regular, u.w / 2, y, kCartName, title, kInk);
         y += title + u.h / 22;
         const int margin = u.w / 20, gap = u.w / 50;
         const int bw = (u.w - 2 * margin - 2 * gap) / 3, bh = u.h * 34 / 100;

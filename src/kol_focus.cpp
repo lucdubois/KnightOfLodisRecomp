@@ -104,6 +104,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include "kol_region.h"
 
 namespace {
 bool cache_store_twice() {   // KOL_CACHE_STORE_TWICE=1 (PassCache)
@@ -165,11 +166,11 @@ namespace {
 // +2 and +4 of it, u16: the map's screen offset in tiles, which the sprite
 // projection adds (0x080769D0). And the game's camera, u16 x then y, which
 // it subtracts (0x08076A28; the scroll target lies at 0x02026C80).
-constexpr std::uint32_t kGameCamera = 0x02026C78u;
+constexpr std::uint32_t kGameCamera = kol::usa(0x02026C78u);
 // A bag left on the map (an item to pick up): its own sprite slot, with a
 // world place like a unit's but no map object (states/CP_spell_hand_merged:
 // slot 0, owner 0x0202A26C, world 496,40,304 between Radam and Elrik).
-constexpr std::uint32_t kBagSlotFn   = 0x0805AD9Du;
+constexpr std::uint32_t kBagSlotFn   = kol::usa(0x0805AD9Du);
 }  // namespace
 
 namespace kol_focus_detail {
@@ -790,7 +791,7 @@ namespace {
 int g_weather_hold = 0;
 float g_weather_amt = 0.0f;   // the weather look eased (weather_amount)
 bool g_overcast = false;
-constexpr std::uint32_t kWeatherBlock = 0x0202A1C0u;   // the drops' count and intensity (see above)
+constexpr std::uint32_t kWeatherBlock = kol::usa(0x0202A1C0u);   // the drops' count and intensity (see above)
 }  // namespace
 
 namespace kol_focus_detail {
@@ -1206,9 +1207,9 @@ namespace {
 // unit at the map's border to fade in before it walks to the
 // rider. KOL_NO_WAIT_FADE=1: as before.
 struct WaitFade { int map; std::uint32_t script; int wait_pc; std::uint8_t actor; };
-constexpr WaitFade kWaitFades[] = {{95, 0x08771A20u, 0x7B1, 0x27}};
+constexpr WaitFade kWaitFades[] = {{95, kol::usa(0x08771A20u), 0x7B1, 0x27}};
 constexpr int kWaitFadeFrames = 30;
-constexpr std::uint32_t kSceneCtx = 0x02028ED0u;
+constexpr std::uint32_t kSceneCtx = kol::usa(0x02028ED0u);
 float wait_fade(const std::uint8_t* ew, int map, std::uint8_t actor) {
     static const bool off = kol::env_set("KOL_NO_WAIT_FADE");
     if (off || !ew) return 1.0f;
@@ -1299,7 +1300,7 @@ bool SceneBuild::camera_and_units() {
         g_focus.pos_valid[i] = true;
         {
             // The actor pool: [0x02026F08] + 0x2020, 0x3C8 bytes an actor.
-            const std::uint32_t pool = rd32(ew, e(0x02026F08u)) + 0x2020u;
+            const std::uint32_t pool = rd32(ew, e(kol::usa(0x02026F08u))) + 0x2020u;
             const std::uint32_t actor = rd32(ew, o + 0x08);
             if (in_ewram(pool, 0x3C8) && actor >= pool && (actor - pool) % 0x3C8u == 0u &&
                 (actor - pool) / 0x3C8u < 16u)
@@ -3984,8 +3985,8 @@ void SceneBuild::debug_tile_info() {
     // frame while it moves, and a goal from each frame's sum shook the
     // camera (it chased a goal that moved with it).
     static int last_cam_x = 0, last_cam_y = 0;
-    const int cam_x = static_cast<std::int16_t>(rd16(ew, e(0x02026C78u)));
-    const int cam_y = static_cast<std::int16_t>(rd16(ew, e(0x02026C7Au)));
+    const int cam_x = static_cast<std::int16_t>(rd16(ew, e(kol::usa(0x02026C78u))));
+    const int cam_y = static_cast<std::int16_t>(rd16(ew, e(kol::usa(0x02026C7Au))));
     int ax = 0, ay = 0;
     if (viewer && !kol::debug_viewer_anchor(&ax, &ay) && cam_x == last_cam_x && cam_y == last_cam_y)
         kol::debug_viewer_anchor_set(kx + cam_x, ky + cam_y);
@@ -5137,14 +5138,14 @@ void present_capture() {
     seen_map = map_now;
     seen_frame = fr;
     {
-        constexpr std::uint32_t kWeatherParticles = 0x0202A0F8u;
+        constexpr std::uint32_t kWeatherParticles = usa(0x0202A0F8u);
         constexpr int kWeatherHold = 240;
         bool live = false;
         for (unsigned i = 0; i < 10u && !live; ++i)
             live = ew[kWeatherParticles - 0x02000000u + i * 0x14u + 4u] != 0;
         static const bool any_sky = std::getenv("KOL_WEATHER_ANY_SKY") != nullptr;
         {
-            constexpr std::uint32_t kPaletteBuffer = 0x02002400u;   // the game's BG palette, entry 0
+            constexpr std::uint32_t kPaletteBuffer = usa(0x02002400u);   // the game's BG palette, entry 0
             const unsigned v = ew[kPaletteBuffer - 0x02000000u] | (ew[kPaletteBuffer - 0x02000000u + 1u] << 8);
             const int r = v & 31, g = (v >> 5) & 31, b = (v >> 10) & 31;
             if (r + g + b >= 6)
@@ -5173,7 +5174,7 @@ void present_capture() {
     c.rain = rain_of(c.ew.data());
     c.rain_level = rain_level_of(c.ew.data());
     c.snow_level = snow_level_of(c.ew.data());
-    c.story = c.ew[0x020013D0u - 0x02000000u] == 1u;
+    c.story = c.ew[usa(0x020013D0u) - 0x02000000u] == 1u;
     c.map = rd16(c.ew.data(), kMapNumber - 0x02000000u);
     c.map_loads = kol::map_loads();
     {

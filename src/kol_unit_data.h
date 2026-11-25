@@ -14,6 +14,8 @@
 
 #include <cstdint>
 
+#include "kol_font.h"
+
 namespace kol {
 
 // One name as the game stores it. Most are literal text in the ROM string
@@ -27,7 +29,7 @@ struct UnitName {
     // As the ROM stores it, for drawing in the game's own lettering: the
     // character codes of a text name, or the strip id of a pre-rendered one
     // (-1 when the name is text). Set even when `text` holds a transcription.
-    std::uint8_t codes[40] = {};
+    font::Code codes[40] = {};   // (16 bits: the Japanese ROM's codes are)
     int ncodes = 0;
     int strip = -1;
 };
@@ -37,7 +39,7 @@ struct UnitInfo {
     std::uint32_t record = 0;
 
     char name[16] = {};
-    std::uint8_t name_codes[16] = {};   // record +0x30 as stored
+    font::Code name_codes[16] = {};   // record +0x30 as stored
     int name_ncodes = 0;
     int level = -1, exp = -1;
     int hp = -1, hp_max = -1, mp = -1, mp_max = -1;
@@ -131,7 +133,7 @@ struct UnitInfo {
     // 0x8D 0x8A the text. help_item is the item's id, 0x1000 + a talent's,
     // or 0x2000 + any other help id; help_len is 0 when there is none.
     int help_item = 0;
-    std::uint8_t help_codes[512] = {};
+    font::Code help_codes[512] = {};
     int help_len = 0;
 };
 

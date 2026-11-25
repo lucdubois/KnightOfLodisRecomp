@@ -27,13 +27,15 @@
 
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
+#include "kol_jtext.h"
 
 namespace kol {
 namespace {
 
 constexpr std::uint32_t kEwramBase = 0x02000000u;
 constexpr std::uint32_t kEwramEnd  = 0x02040000u;
-constexpr std::uint32_t kHighlightedUnitPtr = 0x02028960u;
+constexpr std::uint32_t kHighlightedUnitPtr = usa(0x02028960u);
 constexpr std::uint32_t kRomBase = 0x08000000u;
 
 constexpr std::uint32_t kRecSize = 0x68u;
@@ -49,11 +51,11 @@ constexpr std::uint32_t kOffEquip  = 0x60u;   // four item ids
 constexpr std::uint32_t kOffTalent = 0x64u;   // four talent ids, 0xFF empty
 
 // ROM tables. Each holds a u16 name-pool id at entry offset 0.
-constexpr std::uint32_t kEmblemClassOf = 0x086148A0u;   // 20 bytes per kind (+0x4E)
-constexpr std::uint32_t kClassTable  = 0x08615228u; constexpr std::uint32_t kClassStride  = 88u;
-constexpr std::uint32_t kItemTable   = 0x08616F60u; constexpr std::uint32_t kItemStride   = 36u;
-constexpr std::uint32_t kTalentTable = 0x0861A8F0u; constexpr std::uint32_t kTalentStride = 64u;
-constexpr std::uint32_t kNamePtrs    = 0x08623678u; constexpr std::uint32_t kNameCount    = 489u;
+constexpr std::uint32_t kEmblemClassOf = usa(0x086148A0u);   // 20 bytes per kind (+0x4E)
+constexpr std::uint32_t kClassTable  = usa(0x08615228u); constexpr std::uint32_t kClassStride  = 88u;
+constexpr std::uint32_t kItemTable   = usa(0x08616F60u); constexpr std::uint32_t kItemStride   = 36u;
+constexpr std::uint32_t kTalentTable = usa(0x0861A8F0u); constexpr std::uint32_t kTalentStride = 64u;
+constexpr std::uint32_t kNamePtrs    = usa(0x08623678u); constexpr std::uint32_t kNameCount    = 489u;
 
 // Class entry fields.
 constexpr std::uint32_t kClsBaseId   = 0x09u;  // female entries are sparse and name the male one here
@@ -75,8 +77,8 @@ constexpr std::uint32_t kItemAgi  = 0x15u;
 
 // The `0x81 NN` bitmap escape: a table of (u16 tile offset, u16 cell count),
 // and 4bpp pixels at 64 bytes per 8x16 character cell.
-constexpr std::uint32_t kEscTable = 0x0860D088u;
-constexpr std::uint32_t kEscPixels = 0x086A2AB0u;
+constexpr std::uint32_t kEscTable = usa_only(0x0860D088u);
+constexpr std::uint32_t kEscPixels = usa_only(0x086A2AB0u);
 constexpr int kMaxCells = 24;
 constexpr int kCellW = 8, kCellH = 16;
 
@@ -368,6 +370,17 @@ const char* strip_text(int id) {
 void read_name(std::uint16_t name_id, UnitName* out) {
     *out = UnitName{};
     if (name_id >= kNameCount) return;
+    // The Japanese ROM: where usa() puts kNamePtrs are its name records, 8
+    // codes each, zero padded, the same ids (kol_jtext.h). No strips.
+    if (kRegion == Region::Japan) {
+        const std::uint32_t rec = kNamePtrs + name_id * 16u;
+        if (!rom_ok(rec, 16)) return;
+        int len = 8;
+        while (len > 0 && rom16(rec + static_cast<std::uint32_t>(len - 1) * 2u) == 0u) --len;
+        for (int i = 0; i < len; ++i) out->codes[out->ncodes++] = rom16(rec + static_cast<std::uint32_t>(i) * 2u);
+        jtext::show(out->codes, out->ncodes, out->text, static_cast<int>(sizeof out->text));
+        return;
+    }
     const std::uint32_t ptr = rom32(kNamePtrs + name_id * 4u);
     if (!rom_ok(ptr, 1)) return;
     std::size_t n = 0;
@@ -386,7 +399,7 @@ void read_name(std::uint16_t name_id, UnitName* out) {
             }
             return;
         }
-        if (out->ncodes < static_cast<int>(sizeof out->codes))
+        if (out->ncodes < static_cast<int>(sizeof out->codes / sizeof out->codes[0]))
             out->codes[out->ncodes++] = b;
         char c = '?';
         if (b < 0x1Au) c = static_cast<char>('A' + b);
@@ -408,8 +421,8 @@ void table_name(std::uint32_t table, std::uint32_t stride, std::uint32_t idx,
 // its name (+0x00, codes up to 0xFF), STR/INT/AGI (u16 +0x10/+0x12/+0x14),
 // ROM +0x0B's field (+0x16), its support type (+0x17), and the item it was
 // made from (+0x18), which supplies every other field, its picture included.
-constexpr std::uint32_t kMadeItems = 0x02000D30u;
-constexpr std::uint32_t kMadeItemsOther = 0x02001C60u;   // accessor side 1 (0x081437E2)
+constexpr std::uint32_t kMadeItems = usa(0x02000D30u);
+constexpr std::uint32_t kMadeItemsOther = usa(0x02001C60u);   // accessor side 1 (0x081437E2)
 constexpr std::uint32_t kMadeStride = 28u;
 constexpr unsigned kMaxRomItem = 0xC7u;
 struct Item {
@@ -458,6 +471,14 @@ Item item_at(const std::uint8_t* ew, std::uint32_t esz, unsigned id, bool side1)
 // A made item's name, from its RAM record, in the same codes as a unit's.
 void made_name(const std::uint8_t* m, UnitName* out) {
     *out = UnitName{};
+    if (kRegion == Region::Japan) {   // as a unit's there: 8 codes, zero padded (not yet seen in a game)
+        int len = 8;
+        while (len > 0 && (m[(len - 1) * 2] | (m[(len - 1) * 2 + 1] << 8)) == 0) --len;
+        for (int i = 0; i < len; ++i)
+            out->codes[out->ncodes++] = static_cast<font::Code>(m[i * 2] | (m[i * 2 + 1] << 8));
+        jtext::show(out->codes, out->ncodes, out->text, static_cast<int>(sizeof out->text));
+        return;
+    }
     std::size_t n = 0;
     for (std::uint32_t i = 0; i < 16u; ++i) {
         const std::uint8_t b = m[i];
@@ -495,13 +516,13 @@ std::uint32_t highlighted_record(const std::uint8_t* ew, std::uint32_t esz) {
 // away through the "fear" type 0x1C; the sum is clamped to [-2, +2].
 namespace gauge {
 
-constexpr std::uint32_t kRoster = 0x02001420u;
+constexpr std::uint32_t kRoster = usa(0x02001420u);
 constexpr std::uint32_t kEntries = kRoster + 0x680u;   // battle entries
 constexpr std::uint32_t kEntryStride = 0x1Cu;          // one per record index
 constexpr std::uint32_t kSideRecords = 8u * 0x68u;     // 0x340
 constexpr std::uint32_t kSideEntries = 8u * 0x1Cu;     // 0xE0
 constexpr std::uint32_t kGaugeOff = kRoster + 0xDA4u;  // nonzero: no gauge
-constexpr std::uint32_t kStoryFlags = 0x020011CCu;     // bit 0: gauge applies (0x08142F50(0))
+constexpr std::uint32_t kStoryFlags = usa(0x020011CCu);     // bit 0: gauge applies (0x08142F50(0))
 constexpr std::uint8_t kFear = 0x1C;                   // enemy type: -1
 constexpr std::uint8_t kFearless = 0x21;               // unit type: immune
 
@@ -627,7 +648,7 @@ bool present(const Ctx& c, std::uint32_t rec) {
 // and the unit bar shows +2, which is the gauge at 13,10 (+1 at 15,11).
 // Falls back to the entry for a unit with no object.
 void cell(const Ctx& c, std::uint32_t rec, std::uint32_t entry, int* x, int* y) {
-    constexpr std::uint32_t kObjects = 0x0202A238u;
+    constexpr std::uint32_t kObjects = usa(0x0202A238u);
     const std::uint32_t list = c.u32(kObjects);
     for (int i = 0; list && i < 26; ++i) {
         const std::uint32_t o = list + static_cast<std::uint32_t>(i) * 0xD0u;
@@ -655,7 +676,7 @@ int persuade_chance(const Ctx& c, std::uint32_t actor, std::uint32_t target, std
     const unsigned t1 = c.u8(target + 0x4Fu), t2 = c.u8(target + 0x50u);
     const unsigned a1 = c.u8(actor + 0x4Fu), a2 = c.u8(actor + 0x50u);
     const unsigned kind = class_field(t1, t2, 0x1Du, false);
-    if (static_cast<std::uint8_t>(c.u8(0x020013BCu) - 0x30u) <= 1u) return 0;
+    if (static_cast<std::uint8_t>(c.u8(usa(0x020013BCu)) - 0x30u) <= 1u) return 0;
     if ((c.u8(target_entry + 0x17u) & 1u) || c.u8(target + 0x4Eu) > 1u) return 0;
     if (!(class_field(t1, t2, 0x18u, true) & 2u) || (c.u8(target_entry + 0x0Cu) & 0xF8u)) return 0;
     int chance = 5;
@@ -676,10 +697,10 @@ int persuade_chance(const Ctx& c, std::uint32_t actor, std::uint32_t target, std
 
 // ── Portraits (0x0814308C for the layers, 0x08143170 for the palettes) ──
 namespace portrait {
-constexpr std::uint32_t kMode = 0x020012E0u;        // == 4 enables a variant rule
-constexpr std::uint32_t kVariants = 0x0200122Cu;    // story variant per character
-constexpr std::uint32_t kCharTable = 0x086148A0u;   // 20 bytes per character
-constexpr std::uint32_t kPortraitRecs = 0x08613C5Cu;   // 20 bytes per portrait
+constexpr std::uint32_t kMode = usa(0x020012E0u);        // == 4 enables a variant rule
+constexpr std::uint32_t kVariants = usa(0x0200122Cu);    // story variant per character
+constexpr std::uint32_t kCharTable = usa(0x086148A0u);   // 20 bytes per character
+constexpr std::uint32_t kPortraitRecs = usa(0x08613C5Cu);   // 20 bytes per portrait
 }  // namespace portrait
 
 void unit_portrait(const gauge::Ctx& c, std::uint32_t rec, int tiles[2], int pal[2]) {
@@ -771,55 +792,61 @@ bool support_gauge(const std::uint8_t* ew, std::uint32_t esz, std::uint32_t unit
 // kind 1 or 3 holds talents, and a talent's help id is its record's +0x06.
 // The other kinds are transcribed below; kind 0, 3 and 4 rows are their own
 // help id. See README "Every HELP text on the second screen".
-constexpr std::uint32_t kWinCtl = 0x02002B1Cu;
-constexpr std::uint32_t kCtlUnit = 0x5854u;
-constexpr std::uint32_t kCtlList = 0x582Cu;
-constexpr std::uint32_t kCtlRows = 0x6188u;
-constexpr std::uint32_t kCtlEmblems = 0x6198u;  // the EMBLEM page's earned set
-constexpr std::uint32_t kCtlRow = 0x618Eu;
-constexpr std::uint32_t kCtlSub = 0x61A4u;
+constexpr std::uint32_t kWinCtl = usa(0x02002B1Cu);
+constexpr std::uint32_t kCtlUnit = usa_ctl(0x5854u);
+constexpr std::uint32_t kCtlList = usa_ctl(0x582Cu);
+constexpr std::uint32_t kCtlRows = usa_ctl(0x6188u);
+constexpr std::uint32_t kCtlEmblems = usa_ctl(0x6198u);  // the EMBLEM page's earned set
+constexpr std::uint32_t kCtlRow = usa_ctl(0x618Eu);
+constexpr std::uint32_t kCtlSub = usa_ctl(0x61A4u);
 constexpr unsigned kSubList = 0x1Du;       // the equipment list
 constexpr unsigned kSubTalentList = 0x1Fu; // the spellbook list
 constexpr unsigned kSubClassChange = 0x21u; // the class-change grid
 // Organize's R menu screens: the army's item stock, spellbook stock and
 // class list (0x080402E0(4 / 9 / 15, 4)), their lists the same list object.
 constexpr unsigned kSubItemStock = 0x04u, kSubSpellStock = 0x09u, kSubClassList = 0x0Fu;
-constexpr std::uint32_t kCtlClassCursor = 0x58C3u;  // its highlighted class
+constexpr std::uint32_t kCtlClassCursor = usa_ctl(0x58C3u);  // its highlighted class
 // The help text banks (0x08015D50 is handed one and an index): ids up to
 // 0x1FF in the first, the rest in the second, less 0x200 (0x08046DB8). An
 // entry is at bank + u16[bank + 2 * index]; two header bytes, then the text.
-constexpr std::uint32_t kHelpBank = 0x0874B6DCu;
-constexpr std::uint32_t kHelpBank2 = 0x0875976Cu;
+constexpr std::uint32_t kHelpBank = usa_only(0x0874B6DCu);
+constexpr std::uint32_t kHelpBank2 = usa_only(0x0875976Cu);
+// The Japanese ROM has them as one "m7" bank (kol_jtext.h) under the same
+// ids, 696 of them: 0x298 is "this emblem has not been earned" in both, and
+// the numbers, figures and character names of 629 entries agree outright
+// (regionmap/jhelp.py check; the rest word a number differently).
+constexpr std::uint32_t kHelpBankJapan = japan_only(0x08737B78u);
 // The NAVI prompts, same layout. Entry 0x22 is the move choice's "Choose where
 // you want to move this character." (fetched at 0x080662C4).
-constexpr std::uint32_t kNaviBank = 0x0875D99Au;
+constexpr std::uint32_t kNaviBank = usa(0x0875D99Au);
 constexpr unsigned kNaviMoveChoice = 0x22u;
 constexpr int kNaviHelpItem = 0x3000 + static_cast<int>(kNaviMoveChoice);
 // The prompt's card shows once per move choice, for at most this long; so
 // does a message the move choice put up.
 constexpr double kNaviShowSeconds = 4.0;
 constexpr int kMessageHelpItem = 0x4000;
-constexpr std::uint32_t kCharNames = 0x086254D8u;   // u32 per character
+// u32 per character; in the Japanese ROM a record of 8 codes, zero padded.
+constexpr std::uint32_t kCharNames = usa(0x086254D8u);
 
 // The unit field accessor 0x08143B70 reads plain record bytes for every field
 // used here: 0x10 +0x4E, 0x11 +0x4F (class), 0x12 +0x50 (second class), 0x16
 // +0x54 (element), 0x17 +0x55 (alignment), 0x18/0x19 +0x56/+0x57 (birth month
 // and day), 0x1A/0x1B +0x58/+0x59, 0x1C u16 +0x5A, 0x1D +0x5C, 0x1E +0x5D, 0x1F +0x5E (sex).
 // Field 0x28 is the battle entry's signed +3, 0 in the roster.
-constexpr std::uint32_t kCtlEntry = 0x5860u;   // battle entry, 0 in the roster
-constexpr std::uint32_t kCtlBattle = 0x6195u;  // 1 in battle
-constexpr std::uint32_t kCtlHelp = 0x61A6u;    // 1 SELECT's cursor, 3 a box up
+constexpr std::uint32_t kCtlEntry = usa_ctl(0x5860u);   // battle entry, 0 in the roster
+constexpr std::uint32_t kCtlBattle = usa_ctl(0x6195u);  // 1 in battle
+constexpr std::uint32_t kCtlHelp = usa_ctl(0x61A6u);    // 1 SELECT's cursor, 3 a box up
 constexpr unsigned kSubEquipSlots = 0x1Cu, kSubTalentSlots = 0x1Eu;
-constexpr std::uint32_t kStrTable = 0x08623678u;  // u32 string pointers
-constexpr std::uint32_t kMoveTable = 0x0861C8C4u; // movement types, 8 bytes
-constexpr std::uint32_t kMonthDays = 0x0861C8B4u;
-constexpr std::uint32_t kStoryFlags = 0x020011CCu;
+constexpr std::uint32_t kStrTable = usa(0x08623678u);  // u32 string pointers
+constexpr std::uint32_t kMoveTable = usa(0x0861C8C4u); // movement types, 8 bytes
+constexpr std::uint32_t kMonthDays = usa(0x0861C8B4u);
+constexpr std::uint32_t kStoryFlags = usa(0x020011CCu);
 
 // What the cursor is on: an item id, a talent id, another help id, or
 // nothing (all 0). `fig` are the figures a `0x80 NN` code names.
 struct CursorThing {
     unsigned item = 0, talent = 0, help = 0;
-    std::uint8_t fig[3][24] = {};
+    font::Code fig[3][24] = {};
     int fig_len[3] = {0, 0, 0};
 };
 
@@ -833,7 +860,7 @@ bool story_flag(const gauge::Ctx& c, unsigned n) {
 unsigned item_field_1d(const gauge::Ctx& c, unsigned id, bool side1) {
     unsigned base = id;
     if (id > kMaxRomItem)
-        base = c.u8((side1 ? 0x02001C60u : kMadeItems) +
+        base = c.u8((side1 ? usa(0x02001C60u) : kMadeItems) +
                     ((id + 0x38u) & 0xFFu) * kMadeStride + 0x18u);
     return base <= kMaxRomItem ? rom8(kItemTable + base * kItemStride + 0x20u) : 0u;
 }
@@ -865,7 +892,7 @@ std::uint32_t move_record(const gauge::Ctx& c, std::uint32_t unit, std::uint32_t
     }
     const unsigned kind = c.u8(unit + 0x4Eu);
     if (story_flag(c, 0x122u) && !story_flag(c, 0x119u) &&
-        static_cast<std::uint8_t>(kind - 13u) > 1u && bus_read_u8(0x03001029u) == 0u) {
+        static_cast<std::uint8_t>(kind - 13u) > 1u && bus_read_u8(usa(0x03001029u)) == 0u) {
         if (mt <= 10) mt += 20;
         else if (mt <= 20) mt += 10;
     }
@@ -890,8 +917,8 @@ int persuade_on(std::uint32_t target) {
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&esz);
     if (!ew) return -1;
     const gauge::Ctx c{ew, esz};
-    if (c.u8(0x0202A5B0u + 0x27Eu) != 0x2Eu) return -1;
-    const std::uint32_t block = c.u32(0x0202A5B0u + 0x1A0u);
+    if (c.u8(usa(0x0202A5B0u) + 0x27Eu) != 0x2Eu) return -1;
+    const std::uint32_t block = c.u32(usa(0x0202A5B0u) + 0x1A0u);
     const std::uint32_t actor = c.u32(c.u32(block));
     const std::uint32_t entry = battle_entry(target);
     if (!battle_entry(actor) || !entry || actor == target) return -1;
@@ -904,7 +931,7 @@ int persuade_on(std::uint32_t target) {
 // (side 1 reads made items from 0x02001C60).
 int item_field_8(const gauge::Ctx& c, unsigned id, bool side1) {
     if (id <= kMaxRomItem) return static_cast<std::int8_t>(rom8(kItemTable + id * kItemStride + 0x0Bu));
-    return c.u8((side1 ? 0x02001C60u : kMadeItems) + ((id + 0x38u) & 0xFFu) * kMadeStride + 0x16u);
+    return c.u8((side1 ? usa(0x02001C60u) : kMadeItems) + ((id + 0x38u) & 0xFFu) * kMadeStride + 0x16u);
 }
 
 // The unit's speed x10, as the status window prints it after MOVE
@@ -924,7 +951,7 @@ int unit_speed(const gauge::Ctx& c, std::uint32_t unit, std::uint32_t entry) {
         gauge::class_field(c.u8(unit + 0x4Fu), c.u8(unit + 0x50u), 0x2Cu, false) << 16);
     unsigned f = c.u16(unit + 0x4Cu);
     if (entry && c.ok(entry, 0x10u) && c.u8(entry + 0x0Eu) != 0u) f += 50u;
-    const std::int32_t ln = static_cast<std::int32_t>(rom32(0x085F5EC4u + ((f + 80u) & 0xFFFFu) * 4u));
+    const std::int32_t ln = static_cast<std::int32_t>(rom32(usa(0x085F5EC4u) + ((f + 80u) & 0xFFFFu) * 4u));
     v += ln * 2 + static_cast<std::int32_t>(0xFFF6E667u);
     int weight = 0;
     unsigned set = 0;
@@ -949,7 +976,7 @@ int unit_speed(const gauge::Ctx& c, std::uint32_t unit, std::uint32_t entry) {
 // The campaign's day count (0x0813AEB4), from the month and day at
 // 0x0200118B/C and the month lengths at 0x0861C8B4.
 int day_count(const gauge::Ctx& c) {
-    const int m = c.u8(0x0200118Bu), d = c.u8(0x0200118Cu);
+    const int m = c.u8(usa(0x0200118Bu)), d = c.u8(usa(0x0200118Cu));
     auto len = [](int i) { return static_cast<int>(rom8(kMonthDays + static_cast<std::uint32_t>(i))); };
     int s10 = 0;
     for (int i = 5; i <= 14; ++i) s10 += len(i);
@@ -977,22 +1004,41 @@ unsigned fortune(const gauge::Ctx& c, std::uint32_t unit) {
 }
 
 // An ASCII string in the text codes, for the strips kStripText names.
-int codes_from_ascii(const char* s, std::uint8_t* out, int cap) {
+int codes_from_ascii(const char* s, font::Code* out, int cap) {
     int n = 0;
+    if (kRegion != Region::Usa) {   // that font's own codes
+        for (; *s && n < cap; ++s)
+            if (const font::Code c = font::ascii(*s); c != font::kNone) out[n++] = c;
+        return n;
+    }
     for (; *s && n < cap; ++s) {
         const char ch = *s;
-        if (ch >= 'A' && ch <= 'Z') out[n++] = static_cast<std::uint8_t>(ch - 'A');
-        else if (ch >= 'a' && ch <= 'z') out[n++] = static_cast<std::uint8_t>(0x1A + ch - 'a');
-        else if (ch >= '0' && ch <= '9') out[n++] = static_cast<std::uint8_t>(0x34 + ch - '0');
+        if (ch >= 'A' && ch <= 'Z') out[n++] = static_cast<font::Code>(ch - 'A');
+        else if (ch >= 'a' && ch <= 'z') out[n++] = static_cast<font::Code>(0x1A + ch - 'a');
+        else if (ch >= '0' && ch <= '9') out[n++] = static_cast<font::Code>(0x34 + ch - '0');
         else if (ch == '\'') out[n++] = 0x46u;
         else if (ch == ' ') out[n++] = 0x89u;
     }
     return n;
 }
 
+// A record of 8 codes, zero padded, as the Japanese ROM keeps its names
+// (kol_jtext.h): the codes it holds.
+int japan_record(std::uint32_t rec, font::Code* out, int cap) {
+    if (!rom_ok(rec, 16)) return 0;
+    int len = 8;
+    while (len > 0 && rom16(rec + static_cast<std::uint32_t>(len - 1) * 2u) == 0u) --len;
+    int n = 0;
+    for (int i = 0; i < len && n < cap; ++i) out[n++] = rom16(rec + static_cast<std::uint32_t>(i) * 2u);
+    return n;
+}
+
 // String `i` of the table at 0x08623678, as codes; a `0x81 NN` strip becomes
 // its transcription.
-int table_string(unsigned i, std::uint8_t* out, int cap) {
+int table_string(unsigned i, font::Code* out, int cap) {
+    // The Japanese ROM: the name records, under the same ids (0x19E on the
+    // months, 0x1AE and 0x1AF the sexes: read off the font).
+    if (kRegion == Region::Japan) return japan_record(kStrTable + i * 16u, out, cap);
     std::uint32_t a = rom32(kStrTable + i * 4u);
     int n = 0;
     for (int k = 0; k < 24 && n < cap && rom_ok(a, 1); ++k) {
@@ -1020,7 +1066,9 @@ void birthday(const gauge::Ctx& c, std::uint32_t unit, CursorThing* t) {
     std::snprintf(num, sizeof num, "%u", day);
     t->fig_len[1] = codes_from_ascii(num, t->fig[1], 24);
     if (sex == 0u) {
-        t->fig[2][0] = t->fig[2][1] = 0x4Cu;   // "--" (0x0860D045)
+        // "--" (0x0860D045). The Japanese ROM has no such string where the
+        // USA one does: two of its dashes (not seen in that game yet).
+        t->fig[2][0] = t->fig[2][1] = kRegion == Region::Usa ? font::Code{0x4Cu} : font::ascii('-');
         t->fig_len[2] = 2;
     } else {
         t->fig_len[2] = table_string(0x1ADu + sex, t->fig[2], 24);
@@ -1103,9 +1151,9 @@ CursorThing cursor_thing(const gauge::Ctx& c, std::uint32_t unit) {
         case 13: {                               // class (0x0802ACF6)
             const unsigned who = c.u8(unit + 0x4Eu);
             if ((who == 4u || who == 5u || who == 10u || who == 11u) && battle &&
-                c.u8(0x020012E0u) != 4u && (entry_flags & 1u)) {
+                c.u8(usa(0x020012E0u)) != 4u && (entry_flags & 1u)) {
                 t.help = who == 4u ? 364u
-                       : who == 5u ? (c.u8(0x020013BCu) == 0x24u ? 365u : 366u)
+                       : who == 5u ? (c.u8(usa(0x020013BCu)) == 0x24u ? 365u : 366u)
                        : who == 10u ? 368u : 370u;
             } else {
                 t.help = gauge::class_field(c.u8(unit + 0x4Fu), c.u8(unit + 0x50u), 0x30u, true);
@@ -1182,19 +1230,24 @@ struct BattleRow {
 
 BattleRow battle_list_row(const gauge::Ctx& c) {
     BattleRow r;
-    const std::uint32_t b = c.u32(0x0202B26Cu);
-    if (!c.ok(b, 0x2090u) || c.u8(b + 0x2047u) != 3u) return r;
-    const std::uint32_t m = b + 0x206Cu;
+    const std::uint32_t b = c.u32(usa(0x0202B26Cu));
+    // (usa_ctl: the Japanese build has each of the four 0x54 lower, as the
+    // rest of the block; checked in both games' memory with either list
+    // open, regionmap/battle_list_evidence.py.)
+    constexpr std::uint32_t kMode = usa_ctl(0x2047u), kActor = usa_ctl(0x203Cu);
+    constexpr std::uint32_t kIds = usa_ctl(0x1E94u), kWindow = usa_ctl(0x206Cu);
+    if (!c.ok(b, 0x2090u) || c.u8(b + kMode) != 3u) return r;
+    const std::uint32_t m = b + kWindow;
     const unsigned row = c.u16(m + 0x16u) + c.u16(m + 0x1Au);
     if (row >= 16u) return r;
-    const unsigned id = c.u8(b + 0x1E94u + row);
+    const unsigned id = c.u8(b + kIds + row);
     if (id == 0u || id == 0xFFu) return r;
     switch (c.u16(m + 0x0Eu)) {
         case 0x22Fu: r.item = id; break;     // ARMS
         case 0x255u: r.talent = id; break;   // TALENT
         default: return r;
     }
-    r.actor = c.u32(b + 0x203Cu);
+    r.actor = c.u32(b + kActor);
     return r;
 }
 
@@ -1205,15 +1258,56 @@ void help_text_at(std::uint32_t bank, unsigned index, UnitInfo* out,
                   const CursorThing* t = nullptr);
 
 void help_text(unsigned h, UnitInfo* out, const CursorThing* t = nullptr) {
-    if (h <= 0x1FFu) help_text_at(kHelpBank, h, out, t);
+    if (kRegion == Region::Japan) help_text_at(kHelpBankJapan, h, out, t);
+    else if (h <= 0x1FFu) help_text_at(kHelpBank, h, out, t);
     else help_text_at(kHelpBank2, h - 0x200u, out, t);
+}
+
+// The same from the Japanese ROM: entry `index` of an "m7" bank, as the game
+// lays it out. The lines stay the game's own (font::kNewline between them,
+// their padding blanks dropped), two to a page; colours stay as their
+// controls (font::is_colour) for the card to draw; a figure (0xF4nn) comes
+// from `t` and a character's name (0xFEnn) from its record.
+void help_text_japan(std::uint32_t bank, unsigned index, UnitInfo* out, const CursorThing* t) {
+    std::vector<std::uint16_t> codes;
+    if (!g_rom || !jtext::entry(g_rom, g_rom_size, bank, index, &codes, false)) return;
+    const int cap = static_cast<int>(sizeof out->help_codes / sizeof out->help_codes[0]);
+    int n = 0;
+    auto trim = [&] {   // the blanks a line was padded with
+        while (n > 0 && out->help_codes[n - 1] == font::kSpace) --n;
+    };
+    for (const std::uint16_t c : codes) {
+        if (n >= cap) break;
+        if (c == font::kNewline) {
+            trim();
+            out->help_codes[n++] = c;
+        } else if (font::is_figure(c)) {
+            const unsigned k = c & 0xFFu;
+            for (int i = 0; t && k < 3u && i < t->fig_len[k] && n < cap; ++i)
+                out->help_codes[n++] = t->fig[k][i];
+        } else if (font::is_character(c)) {
+            n += japan_record(kCharNames + (c & 0xFFu) * 16u, out->help_codes + n, cap - n);
+        } else if (font::is_colour(c) || c < 0xF000u) {
+            out->help_codes[n++] = c;
+        }
+    }
+    // No blank lines at the end (a text that ends its last line, and the
+    // second line of a one-line page).
+    for (trim(); n > 0 && out->help_codes[n - 1] == font::kNewline; trim()) --n;
+    out->help_len = n;
 }
 
 // Entry `index` of a text bank laid out as the HELP banks are (a u16 offset
 // table, two header bytes, the text): the HELP banks and the NAVI bank.
 void help_text_at(std::uint32_t bank, unsigned index, UnitInfo* out, const CursorThing* t) {
+    // The USA ROM's layout and one-byte codes below; the Japanese ROM keeps
+    // these texts in "m7" banks of 16-bit codes (kol_jtext.h).
+    if (kRegion != Region::Usa) {
+        help_text_japan(bank, index, out, t);
+        return;
+    }
     std::uint32_t a = bank + rom16(bank + 2u * index) + 2u;
-    const int cap = static_cast<int>(sizeof out->help_codes);
+    const int cap = static_cast<int>(sizeof out->help_codes / sizeof out->help_codes[0]);
     int n = 0;
     for (int guard = 0; guard < 1024 && n < cap; ++guard) {
         const std::uint8_t b = rom8(a++);
@@ -1296,7 +1390,7 @@ bool stock_help(UnitInfo* out) {
 }
 
 bool help_text_for(unsigned id, UnitInfo* out) {
-    if (!out || !rom_ok(kHelpBank, 2)) return false;
+    if (!out || !rom_ok(kRegion == Region::Japan ? kHelpBankJapan : kHelpBank, 2)) return false;
     help_text(id, out);
     return out->help_len > 0;
 }
@@ -1451,7 +1545,7 @@ namespace {
 // by the action: the attack's target, if its HP waits; else the acting unit
 // (a counterattack); else every unit whose HP waits (an area technique).
 // The 16 battle units' records, 0x02001420 on, stride 0x68 (8 a side).
-constexpr std::uint32_t kBattleRecs = 0x02001420u;
+constexpr std::uint32_t kBattleRecs = usa(0x02001420u);
 constexpr int kBattleUnits = 16;
 constexpr long kHpHoldMax = 12 * 60;   // frames a change waits for its number
 constexpr long kHpPause = 15;          // the lost part held, white for kHpFlash
@@ -1951,6 +2045,17 @@ bool unit_for_record(std::uint32_t rec_addr, UnitInfo* out) {
     out->record = rec_addr;
 
     std::size_t n = 0;
+    if (kRegion == Region::Japan) {
+        // 8 codes, zero padded (a unit hired and named in the Japanese shop,
+        // 2026-11-25: "あいう" is 0E 00 0F 00 10 00 and ten zero bytes).
+        int len = 8;
+        while (len > 0 && (r[kOffName + (len - 1) * 2] | (r[kOffName + (len - 1) * 2 + 1] << 8)) == 0) --len;
+        for (int i = 0; i < len; ++i)
+            out->name_codes[out->name_ncodes++] =
+                static_cast<font::Code>(r[kOffName + i * 2] | (r[kOffName + i * 2 + 1] << 8));
+        jtext::show(out->name_codes, out->name_ncodes, out->name, static_cast<int>(sizeof out->name));
+        n = std::strlen(out->name);
+    } else
     for (std::uint32_t i = 0; i < 15u; ++i) {
         const std::uint8_t b = r[kOffName + i];
         if (b == 0xFFu) break;
@@ -2079,7 +2184,7 @@ bool unit_for_record(std::uint32_t rec_addr, UnitInfo* out) {
     const bool beast = (rom16(ce + kClsFlags) & 0x100u) != 0u;
     bool shaher_bonus = false;
     if (!beast && r[0x4Eu] == 0x18u) {
-        const std::uint32_t v = 0x0200122Cu + 0x18u - kEwramBase;
+        const std::uint32_t v = usa(0x0200122Cu) + 0x18u - kEwramBase;
         shaher_bonus = v < esz && ew[v] != 0u;
     }
     if (!odd_class) {
@@ -2237,12 +2342,12 @@ void unit_dump_tick() {
                       battle_preparation() ? 1 : 0, highlighted_record(ew, esz),
                       status_window_unit(), acting_record(), cursor_on_map() ? 1 : 0,
                       unit_in_action() ? 1 : 0, ai_phase() ? 1 : 0, acting_target(), two ? bottom.record : 0u, target_hp,
-                      acting_object(), ew32(0x0202B710u), ew32(0x0202B714u), ew32(0x0203C734u),
-                      ew32(0x0203C738u), perspective_combat_camera() ? 1 : 0,
-                      damage_number_object(), ew32(0x02029D80u), ew32(0x02029D84u),
-                      static_cast<int>(ew32(0x02029DA0u)), ew32(0x02029DA8u),
-                      static_cast<int>(ew32(0x02029EC0u)), ew32(0x02029EC4u), ew32(0x02029EC8u),
-                      static_cast<int>(ew32(0x02029ECCu)), static_cast<int>(ew32(0x020013D0u) & 0xFFu));
+                      acting_object(), ew32(usa(0x0202B710u)), ew32(usa(0x0202B714u)), ew32(usa(0x0203C734u)),
+                      ew32(usa(0x0203C738u)), perspective_combat_camera() ? 1 : 0,
+                      damage_number_object(), ew32(usa(0x02029D80u)), ew32(usa(0x02029D84u)),
+                      static_cast<int>(ew32(usa(0x02029DA0u))), ew32(usa(0x02029DA8u)),
+                      static_cast<int>(ew32(usa(0x02029EC0u))), ew32(usa(0x02029EC4u)), ew32(usa(0x02029EC8u)),
+                      static_cast<int>(ew32(usa(0x02029ECCu))), static_cast<int>(ew32(usa(0x020013D0u)) & 0xFFu));
         static std::string last;
         static long frame = 0;
         ++frame;
@@ -2329,8 +2434,16 @@ void unit_dump_tick() {
         // The HELP text in ASCII, near enough to read: '/' ends a line, '|'
         // a page; codes with no letter show as <NN>.
         std::printf("     help (item %d) ", u.help_item);
-        for (int i = 0; i < u.help_len; ++i) {
-            const std::uint8_t b = u.help_codes[i];
+        for (int i = 0; kRegion != Region::Usa && i < u.help_len; ++i) {
+            // (Japan: Latin and digits as themselves, the rest as <code>.)
+            const font::Code b = u.help_codes[i];
+            char one[12];
+            if (b == font::kNewline) std::putchar('/');
+            else if (font::is_colour(b)) std::printf("{%u}", b & 0xFFu);
+            else { jtext::show(&b, 1, one, sizeof one); std::fputs(one, stdout); }
+        }
+        for (int i = 0; kRegion == Region::Usa && i < u.help_len; ++i) {
+            const font::Code b = u.help_codes[i];
             if (b < 0x1Au) std::putchar('A' + b);
             else if (b < 0x34u) std::putchar('a' + (b - 0x1Au));
             else if (b < 0x3Eu) std::putchar('0' + (b - 0x34u));
@@ -2365,12 +2478,12 @@ int name_bitmap_max_pixels() { return kMaxCells * kCellW * kCellH; }
 // palette and comparing it against the frame the game draws.
 namespace {
 
-constexpr std::uint32_t kSheetPal = 0x0861DFE8u;   // BG palette bank 4
+constexpr std::uint32_t kSheetPal = usa(0x0861DFE8u);   // BG palette bank 4
 // Order: corner TL/TR/BL/BR, edge top/bottom/left/right, field a/b/c/d.
 const std::uint32_t kSheetTileRom[12] = {
-    0x086FCD51u, 0x086FCD71u, 0x086FCD92u, 0x086FCDB2u,
-    0x086FCDD3u, 0x086FCDF3u, 0x086FCE14u, 0x086FCE34u,
-    0x086B7834u, 0x086B7855u, 0x086B7875u, 0x086B7896u,
+    usa(0x086FCD51u), usa(0x086FCD71u), usa(0x086FCD92u), usa(0x086FCDB2u),
+    usa(0x086FCDD3u), usa(0x086FCDF3u), usa(0x086FCE14u), usa(0x086FCE34u),
+    usa(0x086B7834u), usa(0x086B7855u), usa(0x086B7875u), usa(0x086B7896u),
 };
 constexpr int kSheetTiles = 12;
 
@@ -2480,7 +2593,7 @@ constexpr unsigned kShopListGrace = 3u;
 void shop_list_frame() {
     std::uint32_t esz = 0;
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&esz);
-    constexpr std::uint32_t kShopPtr = 0x02029CACu - kEwramBase;
+    constexpr std::uint32_t kShopPtr = usa(0x02029CACu) - kEwramBase;
     if (!ew || kShopPtr + 4u > esz) return;
     const std::uint32_t p = static_cast<std::uint32_t>(ew[kShopPtr]) | (ew[kShopPtr + 1] << 8) |
                             (ew[kShopPtr + 2] << 16) | (static_cast<std::uint32_t>(ew[kShopPtr + 3]) << 24);
@@ -2497,7 +2610,7 @@ namespace {
 bool shop_list(const std::uint8_t** ew_out, std::uint32_t* o_out, unsigned* tab_out, unsigned* count_out) {
     std::uint32_t esz = 0;
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&esz);
-    constexpr std::uint32_t kShopPtr = 0x02029CACu - kEwramBase;
+    constexpr std::uint32_t kShopPtr = usa(0x02029CACu) - kEwramBase;
     if (!ew || kShopPtr + 4u > esz) return false;
     const std::uint32_t p = static_cast<std::uint32_t>(ew[kShopPtr]) | (ew[kShopPtr + 1] << 8) |
                             (ew[kShopPtr + 2] << 16) | (static_cast<std::uint32_t>(ew[kShopPtr + 3]) << 24);

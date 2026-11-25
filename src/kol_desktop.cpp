@@ -576,15 +576,15 @@ void display_poll() {
 std::string default_data_dir() {
 #if defined(__APPLE__)
     if (const char* home = std::getenv("HOME"); home && *home)
-        return std::string(home) + "/Library/Application Support/KnightOfLodisRecomp";
+        return std::string(home) + "/Library/Application Support/" + kDataDirName;
 #elif defined(_WIN32)
     if (const char* app = std::getenv("APPDATA"); app && *app)
-        return std::string(app) + "\\KnightOfLodisRecomp";
+        return std::string(app) + "\\" + kDataDirName;
 #else
     if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg)
-        return std::string(xdg) + "/KnightOfLodisRecomp";
+        return std::string(xdg) + "/" + kDataDirName;
     if (const char* home = std::getenv("HOME"); home && *home)
-        return std::string(home) + "/.local/share/KnightOfLodisRecomp";
+        return std::string(home) + "/.local/share/" + kDataDirName;
 #endif
     return {};
 }

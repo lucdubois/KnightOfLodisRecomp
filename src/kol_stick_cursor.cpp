@@ -63,20 +63,21 @@
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
-constexpr std::uint32_t kTask = 0x08056E90u;       // the cursor's task, once a frame
-constexpr std::uint32_t kHandDraw = 0x08002394u;   // draws a sprite at (r1, r2)
-constexpr std::uint32_t kPieceDraw = 0x0807696Cu;  // emits a sprite slot (r2 X, r3 Y, [sp] Z)
-constexpr std::uint32_t kHandReturn = 0x08057875u;   // LR of cursor_draw's hand call
-constexpr std::uint32_t kPieceReturn = 0x08057901u;  // ... and of its corner pieces'
-constexpr std::uint32_t kPieceFn = 0x08057AD5u;      // the corner pieces' slot routine
+constexpr std::uint32_t kTask = usa(0x08056E90u);       // the cursor's task, once a frame
+constexpr std::uint32_t kHandDraw = usa(0x08002394u);   // draws a sprite at (r1, r2)
+constexpr std::uint32_t kPieceDraw = usa(0x0807696Cu);  // emits a sprite slot (r2 X, r3 Y, [sp] Z)
+constexpr std::uint32_t kHandReturn = usa(0x08057875u);   // LR of cursor_draw's hand call
+constexpr std::uint32_t kPieceReturn = usa(0x08057901u);  // ... and of its corner pieces'
+constexpr std::uint32_t kPieceFn = usa(0x08057AD5u);      // the corner pieces' slot routine
 constexpr std::uint32_t kDrawArgX = 0x88u;          // cursor_draw's x, z on its stack
 constexpr std::uint32_t kDrawArgZ = 0x8Cu;
 
-constexpr std::uint32_t kCursor = 0x03000FA0u;
+constexpr std::uint32_t kCursor = usa(0x03000FA0u);
 constexpr std::uint32_t kHeld = 0x30u;              // u16 keys held
 constexpr std::uint32_t kMode = 0x35u;              // 1 out under the pad, 4 gliding
 constexpr std::uint32_t kLock = 0x36u;              // 0xFF: the step refuses
@@ -85,8 +86,8 @@ constexpr std::uint32_t kPrevX = 0x44u, kPrevZ = 0x48u;
 constexpr std::uint32_t kViewMode = 0x51u;          // 1 in preparation's view mode (L)
 constexpr std::uint32_t kPanning = 0x95u;           // 1 while the camera pans to the cursor
 constexpr std::uint8_t kModeFree = 1;
-constexpr std::uint32_t kCellsPtr = 0x02029CCCu;    // u32 -> 32 x 32 cells of 4 bytes
-constexpr std::uint32_t kMapPtr = 0x02029CC0u;      // u32 -> map header (+6 width, +8 depth)
+constexpr std::uint32_t kCellsPtr = usa(0x02029CCCu);    // u32 -> 32 x 32 cells of 4 bytes
+constexpr std::uint32_t kMapPtr = usa(0x02029CC0u);      // u32 -> map header (+6 width, +8 depth)
 constexpr std::uint8_t kCursorMay = 0x20u;          // cell flag the step requires
 
 constexpr char kTaskId[] = "kol.stick-cursor-task";
@@ -94,11 +95,11 @@ constexpr char kHandId[] = "kol.stick-cursor-hand";
 constexpr char kPieceId[] = "kol.stick-cursor-pieces";
 constexpr char kWorldId[] = "kol.stick-cursor-world";
 
-constexpr std::uint32_t kRoamTask = 0x08128D9Cu;    // the world map's roaming task
+constexpr std::uint32_t kRoamTask = usa(0x08128D9Cu);    // the world map's roaming task
 constexpr std::uint8_t kRoamPad = 4;                // its state that reads the pad
-constexpr std::uint32_t kWorldMap = 0x02029C5Cu;    // u32 -> the world map's control
+constexpr std::uint32_t kWorldMap = usa(0x02029C5Cu);    // u32 -> the world map's control
 constexpr std::uint32_t kSwordX = 0x1Eu, kSwordY = 0x1Fu;   // u8 screen pixels
-constexpr std::uint32_t kWorldKeys = 0x03000820u;   // u16 keys held, as the task reads them
+constexpr std::uint32_t kWorldKeys = usa(0x03000820u);   // u16 keys held, as the task reads them
 constexpr float kSwordTop = 4.0f;                   // px a frame at full tilt (the pad: 3)
 
 // The stick: no push inside kDead, full speed from kFull; the speed grows as

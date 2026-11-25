@@ -33,20 +33,21 @@
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
 
-constexpr std::uint32_t kFlip = 0x080676ECu;       // flips the unit's draw bit
-constexpr std::uint32_t kDrawList = 0x0805A77Cu;   // the map's unit draw list
+constexpr std::uint32_t kFlip = usa(0x080676ECu);       // flips the unit's draw bit
+constexpr std::uint32_t kDrawList = usa(0x0805A77Cu);   // the map's unit draw list
 constexpr std::uint32_t kCtxObject = 0x40u;        // ctx: u32 -> map object
 constexpr std::uint32_t kObjRecord = 0x04u;        // object: u32 -> unit record
 constexpr std::uint32_t kObjFlags = 0x78u;         // object: u16 flags
 constexpr std::uint16_t kSemi = 0x100u;            // ... drawn semi-transparent
 constexpr std::uint32_t kRecDraw = 0x17u;          // record: u8, bit 0x40 = drawn
 constexpr std::uint8_t kDrawBit = 0x40u;
-constexpr std::uint32_t kBldcnt = 0x03000E1Au;     // the game's copy of BLDCNT
-constexpr std::uint32_t kBldalpha = 0x03000E1Cu;   // ... and of BLDALPHA
+constexpr std::uint32_t kBldcnt = usa(0x03000E1Au);     // the game's copy of BLDCNT
+constexpr std::uint32_t kBldalpha = usa(0x03000E1Cu);   // ... and of BLDALPHA
 constexpr std::uint16_t kSecondTargets = 0x2F00u;  // BG0-3 and the backdrop
 constexpr std::uint16_t kHalf = 0x0808u;           // EVA 8, EVB 8
 constexpr char kFlipId[] = "kol.ghost-flip";

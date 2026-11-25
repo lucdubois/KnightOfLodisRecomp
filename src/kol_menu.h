@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "kol_sheet.h"
+#include "kol_font.h"
 
 namespace gbarecomp { struct PresentOverlay; }
 
@@ -132,7 +133,7 @@ bool menu_window_render(std::uint32_t* argb, int cols, int rows, int style = 0);
 // The game's cancel sound (0xB0).
 void menu_cancel_sound();
 // Text in the game's character codes. Returns the count.
-int menu_encode(const char* text, std::uint8_t* out, int max);
+int menu_encode(const char* text, font::Code* out, int max);
 // The menu's scroll arrow, 8 x 8.
 bool menu_arrow_render(std::uint32_t* argb, bool down);
 // Button b's left edge: Option at the right, Save and Load to its left;

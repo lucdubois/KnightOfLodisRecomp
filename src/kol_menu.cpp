@@ -39,6 +39,9 @@
 #include "runtime.h"
 #include "runtime_arm.h"
 #include "runtime_bus_bridge.h"
+#include "kol_region.h"
+#include "kol_font.h"
+#include "kol_jtext.h"
 
 namespace kol {
 namespace {
@@ -48,12 +51,12 @@ constexpr std::uint32_t kRomBase = 0x08000000u;
 // ── The cartridge art (each piece matched byte for byte against VRAM with
 // the game's OPTION menu open, states/B_rictor_highlighted_map + R, System,
 // Option; README "The options menu on the second screen") ────────────────
-constexpr std::uint32_t kBaseArchive = 0x086B75B4u;  // BG tiles from tile 0:
+constexpr std::uint32_t kBaseArchive = usa(0x086B75B4u);  // BG tiles from tile 0:
                                                      // frame 0x11-0x18, weave
                                                      // 0x05-0x08, HELP 0xD6-0xD9
-constexpr std::uint32_t kOptionTab = 0x086BBB2Cu;    // "OPTION", 4 tiles
-constexpr std::uint32_t kHandTiles = 0x086D7F61u;    // hand cursor, 16x8 sprite
-constexpr std::uint32_t kArrowTile = 0x086D7FC2u;    // scroll arrow (points up)
+constexpr std::uint32_t kOptionTab = usa(0x086BBB2Cu);    // "OPTION", 4 tiles
+constexpr std::uint32_t kHandTiles = usa(0x086D7F61u);    // hand cursor, 16x8 sprite
+constexpr std::uint32_t kArrowTile = usa(0x086D7FC2u);    // scroll arrow (points up)
 // The battle confirmation's arrow (the dots between the two units' boxes, a
 // ball rolling along them toward the chevron, "Attack?"): an A7 archive of
 // 64-byte entries, two 8x8 tiles each. Found by its tiles in
@@ -61,9 +64,9 @@ constexpr std::uint32_t kArrowTile = 0x086D7FC2u;    // scroll arrow (points up)
 // loads): the game copies the joined entries 8 bytes (two rows) off, so on
 // screen each dot carries the next tile's top row under it; drawn here from
 // the archive's own tiles. The busy box's icon (menu_busy).
-constexpr std::uint32_t kBusyArchive = 0x086DB348u;
+constexpr std::uint32_t kBusyArchive = usa(0x086DB348u);
 constexpr int kBusyDot = 38;   // tiles: small dot, medium dot, the ball (entries 19 and 20)
-constexpr std::uint32_t kIconArchive = 0x086DA2E4u;  // the R bar's icons, 16x16
+constexpr std::uint32_t kIconArchive = usa(0x086DA2E4u);  // the R bar's icons, 16x16
 constexpr int kOptionIcon = 2;   // its Option icon (the world map's system menu has it too: DZ)
 constexpr int kSaveIcon = 17, kLoadIcon = 18;   // Save and Load, as that menu has them (EA)
 // The main menu's Training and Shop (EB); its table of icons is 0x08613544
@@ -73,45 +76,51 @@ constexpr int kTrainingIcon = 20, kShopIcon = 15;
 // The Organize grid's R menu (EC): Item, Spell, Class, ... in their own
 // archive, 16x16 each from tile 11 (Item 11, Spell 15, Class 19; found by
 // their OAM tiles), OBJ bank 0.
-constexpr std::uint32_t kRosterIconArchive = 0x086DCE04u;
+constexpr std::uint32_t kRosterIconArchive = usa(0x086DCE04u);
 constexpr int kRosterIconTile = 11;
 // In front of the archive: a header word, then each icon tile's OBJ bank, a
 // nibble a tile, low first (the menu's draw, 0x08127F7C, reads them from
 // 0x086DA294 + 4).
-constexpr std::uint32_t kIconBanks = 0x086DA298u;
-constexpr std::uint32_t kBgPalette = 0x0861DF68u;
-constexpr std::uint32_t kObjPalette = 0x0861E288u;
+constexpr std::uint32_t kIconBanks = usa(0x086DA298u);
+constexpr std::uint32_t kBgPalette = usa(0x0861DF68u);
+constexpr std::uint32_t kObjPalette = usa(0x0861E288u);
 constexpr int kFrameBank = 4;     // frame, weave, HELP tab and the text
 constexpr int kTabBank = 12;      // the OPTION tab
-constexpr std::uint32_t kGlyphs = 0x0815DEC4u;       // font: 64 bytes a glyph
-constexpr std::uint32_t kGlyphWidths = 0x0815DE6Cu;
-constexpr std::uint8_t kSpace = 0x89u, kNewline = 0x88u;
+// The font and its character codes: kol_font.h (they differ by cartridge).
+using font::Code;
+using font::kGlyphs;
+using font::kNewline;
+using font::kSpace;
 
 // ── The game's options ───────────────────────────────────────────────────
 // Names and values from 0x0875F238 (each "11 00 text 8D 8A FF"), HELP texts
 // from 0x0875F4B6 ("21 00 text 8D 8A FF", lines split by 0x88), both in the
 // order of the definition table at 0x0860D3D4 (8 bytes an option, byte 1 the
 // value count): the option, then each value.
-constexpr std::uint32_t kNames = 0x0875F238u;
-constexpr std::uint32_t kHelps = 0x0875F4B6u;
-constexpr std::uint32_t kOptionDefs = 0x0860D3D4u;
+constexpr std::uint32_t kNames = usa_only(0x0875F238u);
+constexpr std::uint32_t kHelps = usa_only(0x0875F4B6u);
+// The Japanese ROM keeps the same 45 texts (each option, then its values) as
+// the entries of two text banks (kol_jtext.h).
+constexpr std::uint32_t kNamesBank = japan_only(0x08754A4Cu);
+constexpr std::uint32_t kHelpsBank = japan_only(0x087535E4u);
+constexpr std::uint32_t kOptionDefs = usa(0x0860D3D4u);
 constexpr int kGameOptions = 12;
 constexpr int kDefaultOption = 11;   // "Default": an action, restores these
 // Where the game keeps them: EWRAM 0x0200132C, the eight bytes its OPTION
 // menu copies to its work area at open (0x0801C9FA) and reads through the
 // getter 0x0801CE80. Options 0-2 are bytes 0-2; 3-7 are bits 0-4 of byte 3
 // (set = ON, the first value); 8-10 are bytes 4-6.
-constexpr std::uint32_t kSettings = 0x0200132Cu;
-constexpr std::uint32_t kMenuWork = 0x02028950u;   // -> the open menu's work area
+constexpr std::uint32_t kSettings = usa(0x0200132Cu);
+constexpr std::uint32_t kMenuWork = usa(0x02028950u);   // -> the open menu's work area
 constexpr std::uint32_t kMenuCopy = 0x1194u;       // its copy of the eight bytes
 // The defaults, as every save state here holds them before any change.
 constexpr std::uint8_t kDefaults[7] = {0x00, 0x01, 0x00, 0xFF, 0x00, 0x01, 0x00};
 
-constexpr std::uint32_t kSoundMain = 0x0815B838u;  // MP2K SoundMain, every frame
+constexpr std::uint32_t kSoundMain = usa(0x0815B838u);  // MP2K SoundMain, every frame
 constexpr char kHookId[] = "kol.options";
 
 struct Text {
-    std::vector<std::uint8_t> codes;
+    std::vector<Code> codes;
     int strip = -1;   // a pre-rendered name (0x81 NN), drawn from its bitmap
 };
 
@@ -216,18 +225,28 @@ const Art& art() {
         std::memcpy(a.icon_banks, rom + (kIconBanks - kRomBase), sizeof a.icon_banks);
     }
     std::uint32_t np = kNames, hp = kHelps;
+    unsigned entry = 0;   // Japan: the text's place in the two banks
+    // One text and its HELP: the next strings of the USA ROM's two lists, or
+    // the next entry of the Japanese ROM's two banks.
+    const auto next_pair = [&](Text* name, Text* help) {
+        if (kRegion == Region::Japan) {
+            name->strip = help->strip = -1;
+            const bool ok = jtext::entry(rom, size, kNamesBank, entry, &name->codes) &&
+                            jtext::entry(rom, size, kHelpsBank, entry, &help->codes);
+            ++entry;
+            return ok;
+        }
+        return next_string(rom, size, &np, 0x11u, name) && next_string(rom, size, &hp, 0x21u, help);
+    };
     for (int k = 0; k < kGameOptions; ++k) {
         GameOption& g = a.opts[k];
         const int count = rom[kOptionDefs - kRomBase + k * 8u + 1u];
         if (count < 1 || count > 8) return a;
-        if (!next_string(rom, size, &np, 0x11u, &g.name)) return a;
-        if (!next_string(rom, size, &hp, 0x21u, &g.help)) return a;
+        if (!next_pair(&g.name, &g.help)) return a;
         g.values.resize(count);
         g.value_help.resize(count);
-        for (int v = 0; v < count; ++v) {
-            if (!next_string(rom, size, &np, 0x11u, &g.values[v])) return a;
-            if (!next_string(rom, size, &hp, 0x21u, &g.value_help[v])) return a;
-        }
+        for (int v = 0; v < count; ++v)
+            if (!next_pair(&g.values[v], &g.value_help[v])) return a;
     }
     a.ok = true;
     // The busy box's dots: none drawn without them, nothing else needs them.
@@ -235,8 +254,9 @@ const Art& art() {
     if (std::getenv("KOL_MENU_DUMP_TEXT")) {
         auto ascii = [](const Text& t) {
             std::string s;
-            for (std::uint8_t c : t.codes) {
-                if (c < 26) s += static_cast<char>('A' + c);
+            for (Code c : t.codes) {
+                if (kRegion == Region::Japan) { char b[8]; std::snprintf(b, sizeof b, "<%X>", c); s += b; }
+                else if (c < 26) s += static_cast<char>('A' + c);
                 else if (c < 52) s += static_cast<char>('a' + c - 26);
                 else if (c >= 0x34 && c <= 0x3D) s += static_cast<char>('0' + c - 0x34);
                 else if (c == kSpace) s += ' ';
@@ -267,7 +287,7 @@ struct StandIn {
     std::uint8_t advance;
     const char* rows[16];
 };
-constexpr std::uint8_t kStandIn = 0xE0u;
+using font::kStandIn;
 const StandIn kStandIns[] = {
     {'#', 6, {"", "", "", "", "", ".#.#.", ".#.#.", "#####", ".#.#.", ".#.#.", "#####", ".#.#.", ".#.#.", "", "", ""}},
     {'$', 6, {"", "", "", "..#..", ".####", "#.#..", "#.#..", "#.#..", ".###.", "..#.#", "..#.#", "..#.#", "####.",
@@ -284,9 +304,18 @@ const StandIn kStandIns[] = {
     {'}', 5, {"", "", "##..", "..#.", "..#.", "..#.", "..#.", "..#.", "...#", "..#.", "..#.", "..#.", "..#.", "..#.",
               "##..", ""}},
     {'~', 6, {"", "", "", "", "", "", "", ".##.#", "#.##.", "", "", "", "", "", "", ""}},
+    // What the USA font has and the Japanese one lacks (2026-11-25); the USA
+    // build never reaches these, its font answers first.
+    {'>', 6, {"", "", "", "", "", "#....", ".#...", "..#..", "...#.", "..#..", ".#...", "#....", "", "", "", ""}},
+    {'<', 6, {"", "", "", "", "", "...#.", "..#..", ".#...", "#....", ".#...", "..#..", "...#.", "", "", "", ""}},
+    {'&', 7, {"", "", "", "", ".##...", "#..#..", "#..#..", ".##...", "#.#.#.", "#..#..", "#..#..", ".##.#.", "", "",
+              "", ""}},
+    {'\'', 3, {"", "", "", ".#", ".#", "#.", "", "", "", "", "", "", "", "", "", ""}},
+    {'*', 6, {"", "", "", "", "", "", "#.#.#", ".###.", "#####", ".###.", "#.#.#", "", "", "", "", ""}},
+    {'"', 5, {"", "", "", "#.#.", "#.#.", "#.#.", "", "", "", "", "", "", "", "", "", ""}},
 };
 constexpr int kStandIns_n = static_cast<int>(sizeof kStandIns / sizeof kStandIns[0]);
-bool is_stand_in(std::uint8_t c) { return c >= kStandIn && c < kStandIn + kStandIns_n; }
+bool is_stand_in(Code c) { return c >= kStandIn && c < kStandIn + kStandIns_n; }
 
 // Plain ASCII in the game's character codes (the font's glyph order); what the
 // font lacks in stand-in codes (kStandIns), anything else a space.
@@ -294,23 +323,11 @@ Text encode(const char* s) {
     Text t;
     for (; *s; ++s) {
         const char ch = *s;
-        std::uint8_t c = kSpace;
-        if (ch >= 'A' && ch <= 'Z') c = static_cast<std::uint8_t>(ch - 'A');
-        else if (ch >= 'a' && ch <= 'z') c = static_cast<std::uint8_t>(0x1A + ch - 'a');
-        else if (ch >= '0' && ch <= '9') c = static_cast<std::uint8_t>(0x34 + ch - '0');
-        else if (ch == '\n') c = kNewline;
-        else {
-            static const char kPunct[] = "!?.,:&_%'()<>+-*/=";
-            const char* p = std::strchr(kPunct, ch);
-            if (p && ch) c = static_cast<std::uint8_t>(0x3E + (p - kPunct));
-            // The font's own quote and brackets (0x52 was here for '"': that
-            // glyph is an ellipsis at the foot of the line).
-            else if (ch == '"') c = 0x51;
-            else if (ch == '[') c = 0x53;
-            else if (ch == ']') c = 0x54;
-            else
-                for (int k = 0; k < kStandIns_n; ++k)
-                    if (kStandIns[k].ch == ch) c = static_cast<std::uint8_t>(kStandIn + k);
+        Code c = ch == '\n' ? kNewline : font::ascii(ch);
+        if (c == font::kNone) {
+            c = font::kAsciiSpace;
+            for (int k = 0; k < kStandIns_n; ++k)
+                if (kStandIns[k].ch == ch) c = static_cast<Code>(kStandIn + k);
         }
         t.codes.push_back(c);
     }
@@ -422,11 +439,9 @@ public:
             tile4(x + col * 8, y + row * 8, t + q * 32, dim ? grey : a_.obj_pals[bank]);
         }
     }
-    int advance(std::uint8_t c) const {
-        if (c == kSpace) return 4;
+    int advance(Code c) const {
         if (is_stand_in(c)) return kStandIns[c - kStandIn].advance;
-        const std::uint32_t o = kGlyphWidths - kRomBase + c;
-        return o < a_.rom_size ? a_.rom[o] : 6;
+        return font::advance(a_.rom, a_.rom_size, c);
     }
     int width(const Text& t) const {
         if (t.strip >= 0) {
@@ -434,7 +449,7 @@ public:
             return name_strip_raw(t.strip, &addr) * 8;
         }
         int w = 0;
-        for (std::uint8_t c : t.codes) {
+        for (Code c : t.codes) {
             if (c == kNewline) break;
             w += advance(c);
         }
@@ -475,10 +490,10 @@ public:
             return cells * 8;
         }
         const int x0 = x;
-        for (std::uint8_t c : t.codes) {
+        for (Code c : t.codes) {
             if (c == kNewline) break;
             if (is_stand_in(c)) stand_in(kStandIns[c - kStandIn], x, y);
-            else if (c != kSpace) glyph(kGlyphs + c * 64u, x, y);
+            else if (font::is_glyph(c)) glyph(kGlyphs + c * 64u, x - font::left(a_.rom, a_.rom_size, c), y);
             x += advance(c);
         }
         return x - x0;
@@ -1919,9 +1934,9 @@ void states_touch(int action, float x, float y) {
 // (called at 0x080005F4) only flips the byte 0x030032B8. With a sound
 // pending, the hook flips it itself and runs the sound routine in its place,
 // which returns to the handler as 0x080020B8 would have.
-constexpr std::uint32_t kPlaySound = 0x0814506Cu;
-constexpr std::uint32_t kAfterTasks = 0x080020B8u;
-constexpr std::uint32_t kAfterTasksFlag = 0x030032B8u;   // what it flips
+constexpr std::uint32_t kPlaySound = usa(0x0814506Cu);
+constexpr std::uint32_t kAfterTasks = usa(0x080020B8u);
+constexpr std::uint32_t kAfterTasksFlag = usa(0x030032B8u);   // what it flips
 constexpr char kSoundHookId[] = "kol.menu-sound";
 constexpr int kSoundOpen = 0xAD, kSoundClose = 0xB0;
 std::atomic<int> g_sound_request{-1};
@@ -1935,7 +1950,7 @@ std::atomic<int> g_sound_request{-1};
 // asked. KOL_MP2K_DUMP=path appends, every call, what tools/mockup/sound's
 // capture.py reads over TCP: SoundInfo (from [0x03007FF0]) with its channels,
 // the CGB channels and IO 0x04000060..8F, one record a frame.
-constexpr std::uint32_t kSongStart = 0x0815C4E8u;
+constexpr std::uint32_t kSongStart = usa(0x0815C4E8u);
 int song_test_take() {
     static int left = [] {
         const char* e = std::getenv("KOL_PLAY_SONG");
@@ -2968,7 +2983,7 @@ bool menu_render(std::uint32_t* argb) {
     }
     // Split on 0x88 and centre each line, as the game's HELP box does.
     std::vector<Text> lines(1);
-    for (std::uint8_t ch : help.codes) {
+    for (Code ch : help.codes) {
         if (ch == kNewline) { lines.emplace_back(); continue; }
         lines.back().codes.push_back(ch);
     }
@@ -3067,10 +3082,9 @@ int menu_zone_help_render(int button, std::uint32_t* argb) {
     if (button < 0 || button >= kZoneButtons || !argb) return 0;
     UnitInfo text;
     if (!help_text_for(kHelp[button].id, &text)) return 0;
-    std::uint8_t title[16];
+    font::Code title[16];
     int n = 0;
-    for (const char* p = kHelp[button].name; *p && n < 16; ++p)
-        title[n++] = static_cast<std::uint8_t>(*p >= 'a' ? 0x1A + (*p - 'a') : *p - 'A');
+    for (const char* p = kHelp[button].name; *p && n < 16; ++p) title[n++] = font::ascii(*p);
     return render_help_card(title, n, text, argb);
 }
 
@@ -3196,11 +3210,11 @@ std::vector<std::uint32_t> menu_notice_popup(const char* heading, const char* co
     return argb;
 }
 
-int menu_encode(const char* text, std::uint8_t* out, int max) {
+int menu_encode(const char* text, font::Code* out, int max) {
     const Text e = encode(text);
     int n = 0;
     for (const auto b : e.codes)   // (the stand-ins are this file's canvas's alone)
-        if (n < max) out[n++] = is_stand_in(b) ? kSpace : static_cast<std::uint8_t>(b);
+        if (n < max) out[n++] = is_stand_in(b) ? font::kAsciiSpace : b;
     return n;
 }
 
@@ -3594,7 +3608,7 @@ void menu_bios_picked(const char* error) {
 // the menu alone.
 constexpr char kOptionInitHookId[] = "kol.game-option-init";
 constexpr char kOptionPollHookId[] = "kol.game-option-poll";
-constexpr std::uint32_t kGameOptionInit = 0x0801C970u, kGameOptionPoll = 0x0801D9C0u;
+constexpr std::uint32_t kGameOptionInit = usa(0x0801C970u), kGameOptionPoll = usa(0x0801D9C0u);
 int on_game_option_init(std::uint32_t, int, ArmCpuState* cpu) {
     if (!gbarecomp::runtime_excursion_active()) {
         {

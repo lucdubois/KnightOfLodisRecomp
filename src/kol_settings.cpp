@@ -1,5 +1,6 @@
 #include "kol_dev.h"
 #include "kol_settings.h"
+#include "kol_region.h"
 #include "kol_shaders.h"
 
 #include <algorithm>
@@ -637,8 +638,10 @@ bool bios_file_present() {
 
 const char* rom_patch_name() { return g_runtime_rom_patch_name; }
 std::string rom_file_tag() {
-    if (!g_runtime_rom_patch_name || !g_runtime_rom_sha1) return {};
-    return "-" + std::string(g_runtime_rom_sha1).substr(0, 8);
+    // (kRegionTag: another region's build keeps its own files too; "" for
+    // the USA build, whose names stay as they were.)
+    if (!g_runtime_rom_patch_name || !g_runtime_rom_sha1) return kRegionTag;
+    return kRegionTag + ("-" + std::string(g_runtime_rom_sha1).substr(0, 8));
 }
 
 unsigned debug_map_count() { return kMapCount; }

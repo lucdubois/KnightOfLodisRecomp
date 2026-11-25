@@ -27,6 +27,12 @@ def note(row):
     return "   // " + " ".join(n.split()) if n else ""
 
 
+def adr(v):
+    """A ROM address as the source writes one: the USA ROM's, in usa()
+    (src/kol_region.h), so another region's build translates it. 0 = none."""
+    return "usa(0x%08Xu)" % v if v else "0x00000000u"
+
+
 def main():
     if len(sys.argv) != 1:
         sys.exit(__doc__)
@@ -41,17 +47,17 @@ def main():
                 "//  intro_s, intro_db, intro_ramp}\n")
         o.write("constexpr HdSampleRow kHdSamples[] = {\n")
         for r in m["samples"]:
-            o.write("    {0x%08Xu, %d, %d, %s, %s, %d, %s, %s, 0x%08Xu, %s, %s, %d},%s\n" % (
-                num(r["wav"]), num(r["bank"]), num(r["prog"]), flt(r.get("offset", 0)),
+            o.write("    {%s, %d, %d, %s, %s, %d, %s, %s, %s, %s, %s, %d},%s\n" % (
+                adr(num(r["wav"])), num(r["bank"]), num(r["prog"]), flt(r.get("offset", 0)),
                 flt(r.get("gain_db", 0)), num(r.get("kit_key", -1)), flt(r.get("roll_hz", 0)),
-                flt(r.get("accent", 0.7)), num(r.get("song", 0)), flt(r.get("intro_s", 0)),
+                flt(r.get("accent", 0.7)), adr(num(r.get("song", 0))), flt(r.get("intro_s", 0)),
                 flt(r.get("intro_db", 0)), 1 if r.get("intro_ramp") else 0, note(r)))
         o.write("};\n")
         o.write("// {song, channel, bank, prog, transpose, gain_db}\n")
         o.write("constexpr HdPsgRow kHdPsg[] = {\n")
         for r in m["psg"]:
-            o.write("    {0x%08Xu, %d, %d, %d, %s, %s},%s\n" % (
-                num(r["song"]), num(r["channel"]), num(r["bank"]), num(r["prog"]),
+            o.write("    {%s, %d, %d, %d, %s, %s},%s\n" % (
+                adr(num(r["song"])), num(r["channel"]), num(r["bank"]), num(r["prog"]),
                 flt(r.get("transpose", 0)), flt(r.get("gain_db", 0)), note(r)))
         o.write("};\n")
     print("%d samples, %d psg -> %s" % (len(m["samples"]), len(m["psg"]), os.path.normpath(out)))

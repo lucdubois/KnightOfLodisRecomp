@@ -42,6 +42,7 @@
 #include "runtime_bus_bridge.h"   // gbarecomp::active_bus()
 #include "runtime_arm.h"          // g_runtime_state_epoch
 #include <cstdlib>
+#include "kol_region.h"
 
 // Declared here rather than included: only gbarecomp/src/runtime is on this
 // target's include path, and this lives in gbarecomp/src/armv4t.
@@ -103,7 +104,7 @@ unsigned g_view_left = 0, g_view_right = 0;
 // `(scrX - 8, scrY - 32)` and `(scrX - 8, scrY - 16)`. Matching on the PAIR is
 // what makes this exact rather than a heuristic — two sprites 256 rows apart
 // would share a Y byte, but not an X as well.
-constexpr std::uint32_t kSlotArray = 0x03004150u;   // IWRAM, stride 0x20
+constexpr std::uint32_t kSlotArray = usa(0x03004150u);   // IWRAM, stride 0x20
 constexpr unsigned kSlotStride = 0x20u;
 constexpr unsigned kSlotCount  = 128u;
 
@@ -155,7 +156,7 @@ bool g_table_dirty = true;
 // and the OAM drawn comes from one of the two. Absent (false) when no cursor
 // slot is live; with a menu up the slot sits at (-24, -300), off every
 // sprite. See grid_cursor_sprite().
-constexpr std::uint32_t kCursorSlotFn = 0x08057AD5u;
+constexpr std::uint32_t kCursorSlotFn = usa(0x08057AD5u);
 bool g_cursor_now = false, g_cursor_prev = false;
 int g_cursor_x = 0, g_cursor_y = 0, g_cursor_px = 0, g_cursor_py = 0;
 
@@ -711,7 +712,7 @@ namespace {
 // it matches a live particle's position, so nothing else is ever repeated.
 // The renderer draws repeats only outside the native 240x160. Sampled once
 // per frame with the unit table, for the same reason (see g_table_dirty).
-constexpr std::uint32_t kWeatherParticles = 0x0202A0F8u;
+constexpr std::uint32_t kWeatherParticles = usa(0x0202A0F8u);
 constexpr unsigned kWeatherCount = 10u;
 constexpr unsigned kWeatherStride = 0x14u;
 int g_weather_x[kWeatherCount];
@@ -736,7 +737,7 @@ void rebuild_weather() {
     if (!bus) return;
     const std::uint8_t* ew = bus->ewram_ptr();
     if (!ew) return;
-    const std::uint8_t* block = ew + (0x0202A1C0u - 0x02000000u);
+    const std::uint8_t* block = ew + (usa(0x0202A1C0u) - 0x02000000u);
     g_rain_now = block[4] != 0 && block[7] != 3;
     g_snow_now = block[4] != 0 && block[7] == 3;
     for (unsigned i = 0; i < kWeatherCount; ++i) {
@@ -857,10 +858,10 @@ int on_immediate(std::uint32_t pc, std::uint32_t original,
                  std::uint32_t* out) {
     if (!g_widened) return 0;
     switch (pc) {
-        case 0x08076874u: *out = g_left_slack;   return 1;
-        case 0x08076878u: *out = g_limit_half;   return 1;
-        case 0x08076884u: *out = g_top_slack;    return 1;
-        case 0x0807688Cu: *out = g_bottom_limit; return 1;
+        case usa(0x08076874u): *out = g_left_slack;   return 1;
+        case usa(0x08076878u): *out = g_limit_half;   return 1;
+        case usa(0x08076884u): *out = g_top_slack;    return 1;
+        case usa(0x0807688Cu): *out = g_bottom_limit; return 1;
         default: break;
     }
     (void)original;

@@ -70,7 +70,7 @@ void sheet_clear_selection();
 // its own, then `text`'s help_codes reflowed, at the top of a kSheetW x
 // kSheetH canvas, transparent below. Returns the card's height, 0 for none.
 // With `fixed_h` the card is at least that tall, its text from the top.
-int render_help_card(const std::uint8_t* title, int title_len, const UnitInfo& text,
+int render_help_card(const font::Code* title, int title_len, const UnitInfo& text,
                      std::uint32_t* argb, int fixed_h = 0);
 
 // The army on the world map (kol_unit_list): a card a unit, two to a row,

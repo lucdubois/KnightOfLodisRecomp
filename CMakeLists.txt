@@ -28,17 +28,31 @@ endif()
 
 add_subdirectory("${GBARECOMP_ROOT}" gbarecomp-build)
 
+# Which ROM this build is for (src/kol_region.h): ATOE, the USA cartridge
+# (the default), or ATOJ, the Japanese one (Tactics Ogre Gaiden). Each has its
+# own recompiled code: generated/ and generated_atoj/ (its game.toml is the
+# USA one translated by koldecomp/regionmap).
+set(KOL_REGION "ATOE" CACHE STRING "The ROM this build is for: ATOE (USA) or ATOJ (Japan)")
+set_property(CACHE KOL_REGION PROPERTY STRINGS ATOE ATOJ)
+if(KOL_REGION STREQUAL "ATOJ")
+    set(KOL_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated_atoj")
+elseif(KOL_REGION STREQUAL "ATOE")
+    set(KOL_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+else()
+    message(FATAL_ERROR "KOL_REGION is ATOE or ATOJ, not '${KOL_REGION}'.")
+endif()
+
 # gba_recompile writes a variable number of recompiled_NNN.cpp shards
 # (currently 16) plus dispatch_table.cpp and symbol_map.cpp. Glob so the
 # project regenerating with a different shard count doesn't need editing.
 file(GLOB KOL_GENERATED_SHARDS CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/generated/recompiled_*.cpp")
+    "${KOL_GENERATED_DIR}/recompiled_*.cpp")
 set(KOL_GENERATED_SOURCES
     ${KOL_GENERATED_SHARDS}
-    "${CMAKE_CURRENT_SOURCE_DIR}/generated/dispatch_table.cpp")
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/symbol_map.cpp")
+    "${KOL_GENERATED_DIR}/dispatch_table.cpp")
+if(EXISTS "${KOL_GENERATED_DIR}/symbol_map.cpp")
     list(APPEND KOL_GENERATED_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/generated/symbol_map.cpp")
+        "${KOL_GENERATED_DIR}/symbol_map.cpp")
 endif()
 if(KOL_GENERATED_SHARDS STREQUAL "")
     message(WARNING
@@ -153,9 +167,12 @@ add_executable(KnightOfLodisRecomp
 # Developer tools (src/kol_dev.h): OFF for a public build.
 option(KOL_DEV_TOOLS "Build the developer tools (Debug page, height editor, dev logs)" ON)
 target_compile_definitions(KnightOfLodisRecomp PRIVATE KOL_DEV_TOOLS=$<IF:$<BOOL:${KOL_DEV_TOOLS}>,1,0>)
+if(KOL_REGION STREQUAL "ATOJ")
+    target_compile_definitions(KnightOfLodisRecomp PRIVATE KOL_REGION_ATOJ=1)
+endif()
 target_include_directories(KnightOfLodisRecomp PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
-    "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+    "${KOL_GENERATED_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb")
 

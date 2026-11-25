@@ -1079,8 +1079,8 @@ void box_anim_update() {
     if (!bus || !g_io || !kol::setting_on(kol::Setting::SmoothBoxes)) { b.phase = BoxPhase::Idle; return; }
     const std::uint8_t* ew = bus->ewram_ptr();
     const std::uint32_t blk = ew[0x283C] | (ew[0x283D] << 8) | (ew[0x283E] << 16) | (static_cast<std::uint32_t>(ew[0x283F]) << 24);
-    if (blk < 0x02000000u || blk + 0x1B97u >= 0x02040000u) { b.phase = BoxPhase::Idle; return; }
-    const std::uint8_t* d = ew + (blk - 0x02000000u) + 0x1B93u;
+    if (blk < 0x02000000u || blk + kol::usa_ctl(0x1B93u) + 4u >= 0x02040000u) { b.phase = BoxPhase::Idle; return; }
+    const std::uint8_t* d = ew + (blk - 0x02000000u) + kol::usa_ctl(0x1B93u);
     const int left = d[0], inner_w = d[1], mid = d[2], inner_h = d[3];
     b.c0 = left; b.c1 = left + inner_w + 1;
     if (inner_w < 2 || inner_h < 2 || mid - inner_h / 2 < 0 || b.c1 >= 32) { b.phase = BoxPhase::Idle; return; }

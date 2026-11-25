@@ -1,0 +1,13 @@
+Addresses in usa(): 379. In the table: 379. {'exact': 329, 'derived': 28, 'checked': 1, 'near': 8, 'aligned': 13}
+
+NOT PLACED (0): every use is a compile error in the Japanese build.
+
+WEAK (4): in the table, but on evidence that has not been confirmed.
+  02029D84 -> 0202A754  near / unverified  02029D80+0x4 (+9D0); next 02029D90 +9A0
+      kol_unit_data.cpp:2347
+  02029DA0 -> 0202A740  near / unverified  02029D98+0x8 (+9A0); next 02029DA8 +9D0
+      kol_unit_data.cpp:2348
+  0203C734 -> 0203D07C  near / unverified  02039FF0+0x2744 (+948); next none
+      kol_focus_queries.cpp:281, kol_unit_data.cpp:2345
+  0203C738 -> 0203D080  near / unverified  02039FF0+0x2748 (+948); next none
+      kol_unit_data.cpp:2346

@@ -15,6 +15,7 @@
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
 
 namespace kol {
 namespace {
@@ -71,7 +72,7 @@ bool death_scene() {
     return map == kDeathMap && scene == kDeathScene && ew[0x13D0] == 1u;
 }
 
-constexpr std::uint32_t kSongStart = 0x0815C4E8u;   // m4aSongNumStart(song)
+constexpr std::uint32_t kSongStart = usa(0x0815C4E8u);   // m4aSongNumStart(song)
 constexpr char kSongStartId[] = "kol.rumble-song-start";
 
 RumbleBackend g_backend = nullptr;

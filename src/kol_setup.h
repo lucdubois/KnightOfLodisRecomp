@@ -19,10 +19,13 @@
 #include <cstdint>
 #include <string>
 
+#include "kol_region.h"
+
 namespace kol {
 
-// The ROM's and the GBA BIOS's SHA-1 (as android SetupActivity's).
-inline constexpr char kRomSha1[] = "85a46320a31f16f5c6dda27fc094edd078dbe43d";
+// The ROM's (this build's cartridge, kol_region.h) and the GBA BIOS's SHA-1
+// (as android SetupActivity's).
+inline constexpr const char* kRomSha1 = kCartSha1;
 inline constexpr char kBiosSha1[] = "300c20df6731a33952ded8c436f7f186d25d3492";
 
 // Whether `path` is a file with that SHA-1.

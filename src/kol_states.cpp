@@ -23,6 +23,8 @@
 #include "runtime.h"
 #include "runtime_arm.h"
 #include "runtime_bus_bridge.h"
+#include "kol_region.h"
+#include "kol_jtext.h"
 
 namespace kol {
 namespace {
@@ -33,9 +35,9 @@ constexpr int kPickSlot = 90;
 // The pad's combos (gbarecomp: L3 + R1 saves slot 1, L3 + L1 loads it).
 constexpr int kComboSlot = 1;
 
-constexpr std::uint32_t kRoster = 0x02001420u;   // unit record 0: Alphonse
+constexpr std::uint32_t kRoster = usa(0x02001420u);   // unit record 0: Alphonse
 constexpr std::uint32_t kLevel = 0x52u, kName = 0x30u;
-constexpr std::uint32_t kMapNumber = 0x02029D40u;
+constexpr std::uint32_t kMapNumber = usa(0x02029D40u);
 
 std::mutex g_mu;
 std::vector<StateEntry> g_list;
@@ -238,6 +240,18 @@ bool read_png(const std::string& path, std::vector<std::uint8_t>* rgb, int* w, i
 
 std::string ascii_name(const std::uint8_t* ew) {
     std::string s;
+    // The Japanese game keeps a name as 8 codes of 16 bits, zero padded
+    // (kol_font.h): written as UTF-8, this note being for a person.
+    if (kRegion == Region::Japan) {
+        std::uint16_t codes[8];
+        int n = 0;
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            const std::uint32_t at = kRoster - 0x02000000u + kName + i * 2u;
+            codes[i] = static_cast<std::uint16_t>(ew[at] | (ew[at + 1] << 8));
+            if (codes[i]) n = static_cast<int>(i) + 1;
+        }
+        return jtext::utf8(codes, n);
+    }
     for (std::uint32_t i = 0; i < 16; ++i) {
         const std::uint8_t c = ew[kRoster - 0x02000000u + kName + i];
         if (c == 0xFF) break;
@@ -413,7 +427,7 @@ bool g_turn_logged = false;   // sub-state 2's answer logged since the last fork
 // roster (+0x00 = 0x80 | index) and not the other game's (+0x17 bit 5), or
 // the ones ai_army_tick took in a story battle.
 constexpr char kForkHookId[] = "kol.ai-army-fork";
-constexpr std::uint32_t kTurnFork = 0x0806D924u;
+constexpr std::uint32_t kTurnFork = usa(0x0806D924u);
 
 int on_turn_fork(std::uint32_t, int, ArmCpuState* cpu) {
     gba::GbaBus* bus = gbarecomp::active_bus();
@@ -435,17 +449,17 @@ int on_turn_fork(std::uint32_t, int, ArmCpuState* cpu) {
     // The units on the map: slot:HP@cell, for the log.
     char units[160] = {};
     {
-        const std::uint32_t list = rd32(0x0202A238u);
+        const std::uint32_t list = rd32(usa(0x0202A238u));
         std::size_t at = 0;
         if (list >= 0x02000000u && list + 26u * 0xD0u <= 0x02040000u)
             for (int n = 0; n < 26 && at + 24 < sizeof units; ++n) {
                 const std::uint32_t obj = list + n * 0xD0u;
                 const std::uint32_t rec = rd32(obj);
-                if (rec < 0x02001420u || (rec - 0x02001420u) % 0x68u != 0u || (rec - 0x02001420u) / 0x68u >= 16u) continue;
+                if (rec < usa(0x02001420u) || (rec - usa(0x02001420u)) % 0x68u != 0u || (rec - usa(0x02001420u)) / 0x68u >= 16u) continue;
                 const std::uint8_t* r = ew + (rec - 0x02000000u);
                 if (r[0x4E] == 0u) continue;
                 const std::uint8_t* o = ew + (obj - 0x02000000u);
-                at += std::snprintf(units + at, sizeof units - at, " %u:%u@%u,%u", (rec - 0x02001420u) / 0x68u,
+                at += std::snprintf(units + at, sizeof units - at, " %u:%u@%u,%u", (rec - usa(0x02001420u)) / 0x68u,
                                     r[0x40] | r[0x41] << 8, (o[0x10] | o[0x11] << 8) >> 5, (o[0x14] | o[0x15] << 8) >> 5);
             }
     }
@@ -462,7 +476,7 @@ int on_turn_fork(std::uint32_t, int, ArmCpuState* cpu) {
 // Own side: the side whose phase it is when the phase is this game's own
 // (flag 7 XOR flag 20, see the fork), which is the side the picker asks about.
 constexpr char kSideHookId[] = "kol.ai-army-side";
-constexpr std::uint32_t kStoryVar = 0x08142FACu;
+constexpr std::uint32_t kStoryVar = usa(0x08142FACu);
 
 int on_story_var(std::uint32_t, int, ArmCpuState* cpu) {
     const std::uint32_t ret = cpu->R[14] & ~1u;
@@ -473,8 +487,8 @@ int on_story_var(std::uint32_t, int, ArmCpuState* cpu) {
     // variable 0, 0x0806AE80 for variable 1) are answered yes on this game's
     // own phase, whichever side it is. Without this the picker chose the unit
     // but no plan was made: the move went to cell 0,0.
-    const bool sub2 = ret == 0x0806AE6Cu || ret == 0x0806AE84u;
-    if (!sub2 && ret != 0x08097122u && ret != 0x08097234u && ret != 0x08097246u) return 0;
+    const bool sub2 = ret == usa(0x0806AE6Cu) || ret == usa(0x0806AE84u);
+    if (!sub2 && ret != usa(0x08097122u) && ret != usa(0x08097234u) && ret != usa(0x08097246u)) return 0;
     if (!g_ai_army_active.load(std::memory_order_relaxed)) return 0;
     gba::GbaBus* bus = gbarecomp::active_bus();
     const std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;

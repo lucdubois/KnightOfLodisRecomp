@@ -45,6 +45,7 @@
 
 
 #include "net_compat.h"   // POSIX sockets, or Winsock (2026-11-23: Windows too)
+#include "kol_region.h"
 #if defined(_WIN32)
 #include <process.h>
 #include <windows.h>
@@ -90,13 +91,13 @@ namespace {
 constexpr int kSlot = 0x5653;                       // "VS": the snapshot's slot (its path is ours)
 constexpr std::uint32_t kWorld = 0x29BD0;           // EWRAM: the world state's pointer (VS's NAVI pages on: logs only)
 constexpr std::uint32_t kScreen = 0x29B80;          // EWRAM: the Quest/VS/Exchange menu's screen
-constexpr std::uint32_t kConnecting = 0x08246C18u;  // ... "Connecting..." (0x08246CA8 the menu itself)
+constexpr std::uint32_t kConnecting = usa(0x08246C18u);  // ... "Connecting..." (0x08246CA8 the menu itself)
 constexpr std::uint32_t kCursor = 0xED1;            // IWRAM: the menu's cursor, kept on Connecting: 0 Quest, 1 VS, 2 Exchange
 constexpr std::uint32_t kMode = 0x12E0;             // EWRAM: 4 from the battle's preparation on
 constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 and +6 0x1A on Connecting, 0x46 VS's NAVI pages
                                                     // (the screen pointer is 0x08246C18 from the menu's A on)
-constexpr std::uint32_t kLinkInit = 0x0800601Cu;     // the game's link routines set up (struct 0x03002A10 cleared,
-constexpr std::uint32_t kLinkInitFromConnecting = 0x0814FB2Cu;   // the port to Multi-Player) by Connecting's code
+constexpr std::uint32_t kLinkInit = usa(0x0800601Cu);     // the game's link routines set up (struct 0x03002A10 cleared,
+constexpr std::uint32_t kLinkInitFromConnecting = usa(0x0814FB2Cu);   // the port to Multi-Player) by Connecting's code
 constexpr std::uint32_t kLinkState = 0x2A11;       // IWRAM: the game's link routines' state byte (0 until their
                                                     // first call, which decides parent or child once: 0x08006210)
 constexpr int kOffTicks = 180;                      // the port out of Multi-Player mode this long: link closed

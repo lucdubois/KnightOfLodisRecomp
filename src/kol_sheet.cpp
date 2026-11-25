@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include "kol_region.h"
 
 namespace kol {
 namespace {
@@ -24,55 +25,55 @@ constexpr std::uint32_t kRomBase = 0x08000000u;
 // byte). Tile t of an archive's output lands at `first_tile + t`.
 struct Load { std::uint32_t archive; int first_tile; };
 constexpr Load kLoads[] = {
-    {0x086B75B4u, 0},     // the sheet tileset: labels, digits, icons, bars
-    {0x086FCD38u, 9},     // the frame's corners and edges
-    {0x086BC3D8u, 250},   // talent icons
-    {0x086BD8C0u, 314},   // STR:/INT:/AGI:, Move and more labels
+    {usa(0x086B75B4u), 0},     // the sheet tileset: labels, digits, icons, bars
+    {usa(0x086FCD38u), 9},     // the frame's corners and edges
+    {usa(0x086BC3D8u), 250},   // talent icons
+    {usa(0x086BD8C0u), 314},   // STR:/INT:/AGI:, Move and more labels
 };
 constexpr int kCharTiles = 1024;
 
-constexpr std::uint32_t kBgPalette = 0x0861DF68u;   // BG banks 0-15
-constexpr std::uint32_t kGlyphs = 0x0815DEC4u;      // font: 64 bytes per glyph
-constexpr std::uint32_t kGlyphWidths = 0x0815DE6Cu; // advance per code
-constexpr std::uint8_t kSpaceCode = 0x89u;
-constexpr int kSpaceWidth = 4;
-constexpr std::uint8_t kDashCode = 0x4Cu;   // '-' in the font
-constexpr std::uint32_t kIconBaseTable = 0x0860DD2Eu;   // element icon tiles
-constexpr std::uint32_t kTileBanks = 0x086B7534u;       // palette nibble/tile
+constexpr std::uint32_t kBgPalette = usa(0x0861DF68u);   // BG banks 0-15
+// The font and its character codes: kol_font.h (they differ by cartridge).
+using font::Code;
+using font::kGlyphs;
+constexpr Code kSpaceCode = font::kSpace;
+constexpr Code kDashCode = font::ascii('-');   // (0x4C in the USA font)
+constexpr std::uint32_t kIconBaseTable = usa(0x0860DD2Eu);   // element icon tiles
+constexpr std::uint32_t kTileBanks = usa(0x086B7534u);       // palette nibble/tile
 // Item pictures: raw 16x16 4bpp sprites, 128 bytes each (tiles TL TR BL BR),
 // indexed by picture (item field 30) after a 0x1A0-byte header. From the DMA
 // at 0x0802BC08: 0x08724208 + u16[0x08724208] + picture * 128. The sprite
 // palette is the high nibble of header byte 4 + picture * 2 (0x08040D42).
-constexpr std::uint32_t kItemIconTable = 0x08724208u;
-constexpr std::uint32_t kObjPalette = 0x0861E288u;   // OBJ banks 0-15
+constexpr std::uint32_t kItemIconTable = usa(0x08724208u);
+constexpr std::uint32_t kObjPalette = usa(0x0861E288u);   // OBJ banks 0-15
 constexpr int kMaxRomItem = 0xC7;
 // The support/fear gauge: five six-tile bars (+2 +1 0 -1 -2) from tile 0x13A,
 // each tile's bank a nibble in its own table (as 0x0803E6D8 reads it).
 constexpr int kGaugeTile = 0x13A;
 // Portraits: 48x48 layers of 36 tiles, 18 archive entries each, in the A7
 // archive at 0x086C052C; palettes of 16 colours at 0x0861EA28 (0x0801C1BC).
-constexpr std::uint32_t kPortraitArchive = 0x086C052Cu;
-constexpr std::uint32_t kPortraitPalettes = 0x0861EA28u;
+constexpr std::uint32_t kPortraitArchive = usa(0x086C052Cu);
+constexpr std::uint32_t kPortraitPalettes = usa(0x0861EA28u);
 // The dialog's portraits (loader 0x0801B8xx): the same layer numbers and palettes, 15
 // entries (30 tiles) a layer in this archive, 122 layers where the status window's has
 // 98. A layer is 40x48 in the dialog's sprite pieces: 32x32 (16 tiles), the 8x32 column
 // right of it (4), 32x16 under it (8), 8x16 (2).
-constexpr std::uint32_t kDialogPortraitArchive = 0x086E3F3Cu;
-constexpr std::uint32_t kGaugeBanks = 0x086BD888u + 4u;
+constexpr std::uint32_t kDialogPortraitArchive = usa(0x086E3F3Cu);
+constexpr std::uint32_t kGaugeBanks = usa(0x086BD888u) + 4u;
 // Talent icons: tiles from 0xFA (the talent archive above), each tile's bank
 // a nibble in the table in front of that archive, as 0x0803EF44 reads it.
 constexpr int kTalentTile = 0x0FA;
-constexpr std::uint32_t kTalentBanks = 0x086BC3B0u + 4u;
+constexpr std::uint32_t kTalentBanks = usa(0x086BC3B0u) + 4u;
 // Move icons (0x0803BDC0): land (10 icons) and water (5), each two entries of
 // its own A7 archive, each row's bank a nibble in the table in front of it.
-constexpr std::uint32_t kLandIcons = 0x086BF004u;
-constexpr std::uint32_t kLandBanks = 0x086BEFE8u + 4u;
-constexpr std::uint32_t kWaterIcons = 0x086BED28u;
-constexpr std::uint32_t kWaterBanks = 0x086BED18u + 4u;
+constexpr std::uint32_t kLandIcons = usa(0x086BF004u);
+constexpr std::uint32_t kLandBanks = usa(0x086BEFE8u) + 4u;
+constexpr std::uint32_t kWaterIcons = usa(0x086BED28u);
+constexpr std::uint32_t kWaterBanks = usa(0x086BED18u) + 4u;
 // Emblem pictures: 35 of 16x16 in their own A7 archive, two entries each, each
 // tile's bank a nibble in the table in front of it (0x0803C0C6, 0x0803BA8E).
-constexpr std::uint32_t kEmblemArchive = 0x086D6B7Cu;
-constexpr std::uint32_t kEmblemBanks = 0x086D6B30u + 4u;
+constexpr std::uint32_t kEmblemArchive = usa(0x086D6B7Cu);
+constexpr std::uint32_t kEmblemBanks = usa(0x086D6B30u) + 4u;
 // The speed's decimal point, a sprite the window places over its last two
 // digits (OAM tile 0x2FC, OBJ bank 1, measured in states/AY_kamui_talents).
 // Its source in the ROM was not found (in no A7 archive), so the 3x3 dot is
@@ -271,7 +272,7 @@ public:
     }
     // A 16-row 4bpp glyph as the font and the name strips store it, drawn
     // at a pixel position in the palette's ink bank.
-    void glyph16(std::uint32_t addr, int x0, int y0) {
+    void glyph16(std::uint32_t addr, int x0, int y0, int bank = kInk) {
         if (addr < kRomBase || addr - kRomBase + 64u > rom_size_) return;
         const std::uint8_t* g = rom_ + (addr - kRomBase);
         for (int y = 0; y < 16; ++y)
@@ -280,7 +281,7 @@ public:
                 const int i = (x & 1) ? (b >> 4) : (b & 0xF);
                 const int X = x0 + x + ox_, Y = y0 + y + oy_;
                 if (i && X >= 0 && X < kSheetW && Y >= 0 && Y < h_) {
-                    std::uint32_t ink = a_.pal[kInk][i];
+                    std::uint32_t ink = a_.pal[bank][i];
                     if (grey_) {
                         const unsigned luma = ((ink >> 16) & 0xFFu) * 3 + ((ink >> 8) & 0xFFu) * 6 + (ink & 0xFFu);
                         ink = luma < 1000u ? kGreyInk : kGreyShade;
@@ -290,17 +291,29 @@ public:
             }
     }
     // Text in the game's own proportional font, from ROM character codes.
-    int text_width(const std::uint8_t* codes, int n) const {
+    int text_width(const Code* codes, int n) const {
         int w = 0;
         for (int i = 0; i < n; ++i) w += advance(codes[i]);
         return w;
     }
-    void text(const std::uint8_t* codes, int n, int x, int y) {
+    void text(const Code* codes, int n, int x, int y, int bank = kInk) {
         for (int i = 0; i < n; ++i) {
-            if (codes[i] != kSpaceCode)
-                glyph16(kGlyphs + static_cast<std::uint32_t>(codes[i]) * 64u, x, y);
+            // (The USA build draws every code but its space, as it always
+            // did; the Japanese one has controls and our own half space.)
+            const bool ink = kRegion == Region::Usa ? codes[i] != kSpaceCode : font::is_glyph(codes[i]);
+            if (ink)
+                glyph16(kGlyphs + static_cast<std::uint32_t>(codes[i]) * 64u,
+                        x - font::left(rom_, rom_size_, codes[i]), y, bank);
             x += advance(codes[i]);
         }
+    }
+    // A glyph in its own 8-pixel cell, as the Japanese game sets its texts
+    // (text() above draws that font's Latin letters and digits by their ink,
+    // for our own English lines: a game text drawn so would lose the columns
+    // its indents and centred lines count on).
+    void cell(Code code, int x, int y, int bank = kInk) {
+        if (font::is_glyph(code))
+            glyph16(kGlyphs + static_cast<std::uint32_t>(code) * 64u, x, y, bank);
     }
     // A name the way the game draws it: its strip if it has one, otherwise
     // its text in the font. Returns the width drawn.
@@ -439,11 +452,7 @@ public:
 
 private:
     bool grey_ = false;
-    int advance(std::uint8_t c) const {
-        if (c == kSpaceCode) return kSpaceWidth;
-        const std::uint32_t a = kGlyphWidths + c;
-        return (a - kRomBase < rom_size_) ? rom_[a - kRomBase] : 6;
-    }
+    int advance(Code c) const { return font::advance(rom_, rom_size_, c); }
     const Art& a_;
     const std::uint8_t* rom_;
     std::uint32_t rom_size_;
@@ -735,13 +744,48 @@ void unit_card(Canvas& c, const UnitInfo& u, int fb, int confirm = 0, int base_y
 // under it (a top-row emblem starts at 100: Philosopher's Stone's five lines
 // and a paragraph needed 104).
 int help_card(Canvas& c, const UnitInfo& u, int bank, std::uint32_t* argb, int limit,
-              const std::uint8_t* title = nullptr, int title_len = 0, int fixed_h = 0) {
+              const Code* title = nullptr, int title_len = 0, int fixed_h = 0) {
     // The text reflowed: the box's line ends (0x88) join their lines, and a
     // page end (0x8E) joins too unless the page ends a sentence (a period),
     // which starts a new paragraph. A break after a hyphen joins without a
     // space ("blood-" "curdling"). Then word wrap to the card's width. A
     // `title` is a paragraph of its own above the text (the bar's help).
-    std::uint8_t text[sizeof u.help_codes + 32];
+    Code text[sizeof u.help_codes / sizeof u.help_codes[0] + 32];
+    constexpr int kTextX = 12, kWidth = kSheetW - 2 * kTextX;
+    struct Line { int start, len, gaps; };   // gaps: paragraph breaks above
+    Line lines[32];
+    int n = 0;
+    if (kRegion == Region::Japan) {
+        // The Japanese text is not reflowed: its lines are the game's own,
+        // set by hand for a box 26 characters wide, and the card holds 28.
+        // (There are no words to wrap at, and the texts indent and centre
+        // with blanks.) Pages are two lines; as above, a page that ends a
+        // sentence starts a paragraph. Colour controls stay in the line and
+        // take no room.
+        int tn = 0, gaps = 0, start = 0, in_page = 0;
+        for (int i = 0; title && i < title_len && i < 32; ++i) text[tn++] = title[i];
+        if (tn > 0) {
+            lines[n++] = {0, tn, 0};
+            gaps = 1;
+            start = tn;
+        }
+        auto close = [&] {
+            if (n >= 32) return;
+            lines[n++] = {start, tn - start, gaps};
+            if (++in_page == 2) {
+                in_page = 0;
+                int k = tn - 1;
+                while (k >= start && (text[k] == font::kSpace || font::is_colour(text[k]))) --k;
+                if (k >= start && text[k] == font::kFullStop) ++gaps;
+            }
+            start = tn;
+        };
+        for (int i = 0; i < u.help_len && tn < static_cast<int>(sizeof text / sizeof text[0]) - 1; ++i) {
+            if (u.help_codes[i] == font::kNewline) close();
+            else text[tn++] = u.help_codes[i];
+        }
+        if (tn > start) close();
+    } else {
     int paras[34] = {0};   // paragraph k is text[paras[k] .. paras[k + 1])
     int tn = 0, np = 0;
     for (int i = 0; title && i < title_len && i < 32; ++i) text[tn++] = title[i];
@@ -750,8 +794,8 @@ int help_card(Canvas& c, const UnitInfo& u, int bank, std::uint32_t* argb, int l
         if (tn > paras[np] && text[tn - 1] != 0x89u && text[tn - 1] != kDashCode)
             text[tn++] = 0x89u;
     };
-    for (int i = 0; i < u.help_len && tn < static_cast<int>(sizeof text) - 1; ++i) {
-        const std::uint8_t b = u.help_codes[i];
+    for (int i = 0; i < u.help_len && tn < static_cast<int>(sizeof text / sizeof text[0]) - 1; ++i) {
+        const Code b = u.help_codes[i];
         if (b == 0x8Du) break;
         if (b == 0x88u) { join(); continue; }
         if (b == 0x8Eu) {
@@ -771,10 +815,6 @@ int help_card(Canvas& c, const UnitInfo& u, int bank, std::uint32_t* argb, int l
     }
     paras[++np] = tn;
 
-    constexpr int kTextX = 12, kWidth = kSheetW - 2 * kTextX;
-    struct Line { int start, len, gaps; };   // gaps: paragraph breaks above
-    Line lines[32];
-    int n = 0;
     for (int p = 0; p < np && n < 32; ++p) {
         int i = paras[p];
         const int e = paras[p + 1];
@@ -795,6 +835,7 @@ int help_card(Canvas& c, const UnitInfo& u, int bank, std::uint32_t* argb, int l
             i = fit;
             while (i < e && text[i] == 0x89u) ++i;
         }
+    }
     }
     if (n == 0) return 0;
     constexpr int kTop = 10, kBottom = 8, kGlyph = 16;
@@ -821,9 +862,27 @@ int help_card(Canvas& c, const UnitInfo& u, int bank, std::uint32_t* argb, int l
         for (int x = 0; x < kSheetW; ++x) argb[y * kSheetW + x] = 0xFF000000u;
     card(c, 0, r0, kSheetCols - 1, r0 + rows - 1, bank);
     const int y0 = r0 * 8 + kTop + (fixed_h > 0 ? 0 : (rows * 8 - kTop - span() - kBottom) / 2);
-    for (int i = 0; i < n; ++i)
-        c.text(text + lines[i].start, lines[i].len, kTextX,
-               y0 + pitch * i + gap * lines[i].gaps);
+    int ink = kInk;   // (Japan) the colour a control set, kept across lines
+    for (int i = 0; i < n; ++i) {
+        const int y = y0 + pitch * i + gap * lines[i].gaps;
+        if (kRegion != Region::Japan) {
+            c.text(text + lines[i].start, lines[i].len, kTextX, y);
+            continue;
+        }
+        if (i == 0 && title && title_len > 0) {   // our own line: by its ink
+            c.text(text + lines[i].start, lines[i].len, kTextX, y);
+            continue;
+        }
+        int x = kTextX;
+        for (int k = lines[i].start; k < lines[i].start + lines[i].len; ++k) {
+            if (font::is_colour(text[k])) {
+                ink = kInk + std::min<int>(text[k] & 0xFFu, 3);
+                continue;
+            }
+            c.cell(text[k], x, y, ink);
+            x += 8;
+        }
+    }
     return (r0 + rows) * 8;
 }
 
@@ -880,7 +939,7 @@ int draw_goth_price(Canvas& c, std::uint32_t* px, const std::uint8_t* rom, std::
                     int value) {
     static std::vector<std::uint8_t> plate = [&] {
         std::vector<std::uint8_t> a, b, out;
-        if (a7_entry(rom, rom_size, 0x0870A3E7u, 8, &a) && a7_entry(rom, rom_size, 0x0870A3E7u, 9, &b) &&
+        if (a7_entry(rom, rom_size, usa(0x0870A3E7u), 8, &a) && a7_entry(rom, rom_size, usa(0x0870A3E7u), 9, &b) &&
             a.size() >= 64u && b.size() >= 64u) {
             out.assign(a.begin() + 32, a.begin() + 64);
             out.insert(out.end(), b.begin(), b.begin() + 64);
@@ -917,7 +976,7 @@ void render_item_box(const UnitInfo& u, std::uint32_t record, int item, int stag
     Canvas c(a, rom, rom_size, px.data());
     card(c, 0, 0, kSheetCols - 1, kItemBoxH / 8 - 1, kFurniture);
     auto say = [&](const char* t, int x, int y) {
-        std::uint8_t b[64];
+        Code b[64];
         const int n = menu_encode(t, b, 64);
         c.text(b, n, x, y);
         return c.text_width(b, n);
@@ -1013,20 +1072,20 @@ void render_item_box(const UnitInfo& u, std::uint32_t record, int item, int stag
         for (const int id : {kSpellYes, kSpellNo}) {
             const int bx = id == kSpellYes ? kSpellYesX : kSpellNoX, in = pressed == id ? 1 : 0;
             button(bx, kItemButtonY, kSpellButtonW, kSpellButtonH, in);
-            std::uint8_t b[8];
+            Code b[8];
             const int n = menu_encode(id == kSpellYes ? "Yes" : "No", b, 8);
             c.text(b, n, bx + (kSpellButtonW - c.text_width(b, n)) / 2 + in, kItemButtonY + 4 + in);
         }
     } else {
         if (free_copy) {
-            std::uint8_t b[32];
+            Code b[32];
             const int n = menu_encode("In stock", b, 32);
             c.text(b, n, 236 - c.text_width(b, n), 10);
         } else {
             const int left = draw_goth_price(c, px.data(), rom, rom_size, 236, 10, price);
             if (!afford) say("Need", left - 6 - 28, 10);
         }
-        static const std::uint8_t kDashes[2] = {kDashCode, kDashCode};
+        static const Code kDashes[2] = {kDashCode, kDashCode};
         for (int s = 0; s < 4; ++s) {
             const int x = kSpellSlotX[s % 2], y = kItemSlotY[s / 2];
             const bool live = afford && item_slot_takes(record, s, item);
@@ -1057,9 +1116,9 @@ void render_spell_box(const UnitInfo& u, std::uint32_t record, int spell, int st
     std::vector<std::uint32_t> px(kSheetW * kSheetH, 0xFF000000u);
     Canvas c(a, rom, rom_size, px.data());
     card(c, 0, 0, kSheetCols - 1, kSpellBoxH / 8 - 1, kFurniture);
-    auto encoded = [&](const char* t, std::uint8_t* b) { return menu_encode(t, b, 64); };
+    auto encoded = [&](const char* t, Code* b) { return menu_encode(t, b, 64); };
     auto say = [&](const char* t, int x, int y) {
-        std::uint8_t b[64];
+        Code b[64];
         const int n = encoded(t, b);
         c.text(b, n, x, y);
         return c.text_width(b, n);
@@ -1105,7 +1164,7 @@ void render_spell_box(const UnitInfo& u, std::uint32_t record, int spell, int st
         for (const int id : {kSpellYes, kSpellNo}) {
             const int bx = id == kSpellYes ? kSpellYesX : kSpellNoX, in = pressed == id ? 1 : 0;
             button(bx, kSpellButtonY, kSpellButtonW, kSpellButtonH, in);
-            std::uint8_t b[8];
+            Code b[8];
             const int n = encoded(id == kSpellYes ? "Yes" : "No", b);
             c.text(b, n, bx + (kSpellButtonW - c.text_width(b, n)) / 2 + in, kSpellButtonY + 4 + in);
         }
@@ -1113,18 +1172,18 @@ void render_spell_box(const UnitInfo& u, std::uint32_t record, int spell, int st
         talent_icon(c, 12, 8, spell, skind, ssub);
         c.name(sn, 28, 8);
         if (free_copy) {
-            std::uint8_t b[64];
+            Code b[64];
             const int n = encoded("In stock", b);
             c.text(b, n, 236 - c.text_width(b, n), 8);
         } else {
             const int left = goth_price(236, 8, spell_price(spell));   // on the name's line
             if (!afford) {
-                std::uint8_t b[64];
+                Code b[64];
                 const int n = encoded("Need", b);
                 c.text(b, n, left - 6 - c.text_width(b, n), 8);
             }
         }
-        static const std::uint8_t kDashes[2] = {kDashCode, kDashCode};
+        static const Code kDashes[2] = {kDashCode, kDashCode};
         for (int s = 0; s < 4; ++s) {
             const int x = kSpellSlotX[s % 2], y = kSpellSlotY[s / 2];
             const bool live = afford && spell_slot_takes(record, s, spell);
@@ -1145,7 +1204,7 @@ void render_spell_box(const UnitInfo& u, std::uint32_t record, int spell, int st
     for (int y = 0; y < kSpellBoxH; ++y) std::copy_n(px.data() + y * kSheetW, kSheetW, argb + y * kSheetW);
 }
 
-int render_help_card(const std::uint8_t* title, int title_len, const UnitInfo& text,
+int render_help_card(const Code* title, int title_len, const UnitInfo& text,
                      std::uint32_t* argb, int fixed_h) {
     const Art& a = art();
     std::uint32_t rom_size = 0;
@@ -1258,7 +1317,7 @@ bool render_unit_sheet(const UnitInfo& u, std::uint32_t* argb, const UnitInfo* t
             big_number2(c, kMpX, y, u.talent_mp[s]);
         } else if (tid < 0) {
             talent_icon(c, ticon, y, tid, 0, 0);
-            static const std::uint8_t kDashes[2] = {kDashCode, kDashCode};
+            static const Code kDashes[2] = {kDashCode, kDashCode};
             c.text(kDashes, 2, ticon + 16, y);
             for (const int x : {kPowX, kMpX})
                 for (int k = 0; k < 2; ++k) {
@@ -1528,7 +1587,7 @@ void draw_sheet_chance(std::uint32_t* argb, int percent) {
     const std::uint8_t* rom = unit_data_rom(&rom_size);
     if (!tried && rom) {
         tried = true;
-        constexpr std::uint32_t kConfirmArchive = 0x086B904Cu;
+        constexpr std::uint32_t kConfirmArchive = usa(0x086B904Cu);
         const int n = a7_count(rom, rom_size, kConfirmArchive);
         for (int i = 0; i < n; ++i) {
             std::vector<std::uint8_t> e;

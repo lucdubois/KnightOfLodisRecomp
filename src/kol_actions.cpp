@@ -51,6 +51,7 @@
 #include "kol_desktop.h"
 #include "kol_shop_buy.h"
 #include "kol_actions.h"
+#include "kol_dev.h"
 #include "kol_menu.h"
 #include "kol_auto_win.h"
 #include "kol_settings.h"
@@ -67,6 +68,7 @@
 #include "mod_function_hooks.h"
 #include "runtime.h"
 #include "runtime_arm.h"
+#include "kol_region.h"
 
 namespace gba {
 extern "C" unsigned g_ppu_debug_hide_layers;   // gba_ppu.h
@@ -76,11 +78,11 @@ namespace kol {
 namespace {
 
 // ── The battle map's cycle ──────────────────────────────────────────────
-constexpr std::uint32_t kHandler = 0x080745A4u;   // hold-L state machine
-constexpr std::uint32_t kSelect = 0x08074338u;    // select(cmd): 0 next, 1 previous
-constexpr std::uint32_t kCtlPtr = 0x0202AB8Cu;    // u32 -> battle control
-constexpr std::uint32_t kFlags = 0x0202A900u;     // u32 battle flags
-constexpr std::uint32_t kObjPtr = 0x0202A238u;    // u32 -> map objects
+constexpr std::uint32_t kHandler = usa(0x080745A4u);   // hold-L state machine
+constexpr std::uint32_t kSelect = usa(0x08074338u);    // select(cmd): 0 next, 1 previous
+constexpr std::uint32_t kCtlPtr = usa(0x0202AB8Cu);    // u32 -> battle control
+constexpr std::uint32_t kFlags = usa(0x0202A900u);     // u32 battle flags
+constexpr std::uint32_t kObjPtr = usa(0x0202A238u);    // u32 -> map objects
 constexpr std::uint32_t kObjStride = 0xD0u;
 constexpr int kObjCount = 26;
 constexpr std::uint32_t kCtlState = 0x73Eu;
@@ -88,65 +90,65 @@ constexpr std::uint32_t kCtlIndex = 0x73Fu;
 constexpr std::uint32_t kCtlSaved = 0x740u;       // 26 saved obj+0x65 bytes
 constexpr std::uint32_t kCtlBlink = 0x75Au;       // u16
 constexpr std::uint32_t kCtlFresh = 0x75Cu;
-constexpr std::uint32_t kCursorMode = 0x03000FD5u;
-constexpr std::uint32_t kCursorLock = 0x03000FD6u;  // 0xFF while selecting
-constexpr std::uint32_t kCursorCellX = 0x03000FDCu;  // cursor (0x03000FA0) +0x3C
-constexpr std::uint32_t kCursorCellY = 0x03000FE0u;  // +0x40
+constexpr std::uint32_t kCursorMode = usa(0x03000FD5u);
+constexpr std::uint32_t kCursorLock = usa(0x03000FD6u);  // 0xFF while selecting
+constexpr std::uint32_t kCursorCellX = usa(0x03000FDCu);  // cursor (0x03000FA0) +0x3C
+constexpr std::uint32_t kCursorCellY = usa(0x03000FE0u);  // +0x40
 constexpr std::uint8_t kCursorFree = 1, kCursorGlide = 4;   // +0x35
 constexpr char kHookId[] = "kol.next-unit";
-constexpr std::uint32_t kShortcutA = 0x02001330u;   // option 8: 0 Next .. 4 Level Up
-constexpr std::uint32_t kShortcutB = 0x02001331u;   // option 9
+constexpr std::uint32_t kShortcutA = usa(0x02001330u);   // option 8: 0 Next .. 4 Level Up
+constexpr std::uint32_t kShortcutB = usa(0x02001331u);   // option 9
 constexpr int kShortcutCommands = 5;
-constexpr std::uint32_t kShortcutEnd = 0x0806D970u;  // (2) after the restore, as the game
+constexpr std::uint32_t kShortcutEnd = usa(0x0806D970u);  // (2) after the restore, as the game
 
 // ── The status window's ─────────────────────────────────────────────────
-constexpr std::uint32_t kStatusTask = 0x0803A0D0u;
-constexpr std::uint32_t kWinPtr = 0x02002B1Cu;    // u32 -> window control
-constexpr std::uint32_t kWinUnit = 0x5854u;       // u32 unit record
-constexpr std::uint32_t kWinEntry = 0x5860u;      // u32 battle entry, or 0
+constexpr std::uint32_t kStatusTask = usa(0x0803A0D0u);
+constexpr std::uint32_t kWinPtr = usa(0x02002B1Cu);    // u32 -> window control
+constexpr std::uint32_t kWinUnit = usa_ctl(0x5854u);       // u32 unit record
+constexpr std::uint32_t kWinEntry = usa_ctl(0x5860u);      // u32 battle entry, or 0
 constexpr std::uint8_t kTaskBuild = 0;
 constexpr std::uint32_t kRecSize = 0x68u;
 // The army: 32 record slots from 0x02000030, an empty one has class 0 — the
 // roster grid lists them in this order and skips those.
-constexpr std::uint32_t kArmy = 0x02000030u;
+constexpr std::uint32_t kArmy = usa(0x02000030u);
 constexpr std::uint32_t kArmySlots = 32u;
 // A battle: two sides of 8 records from 0x02001420, each with a 0x1C-byte
 // entry from 0x02001AA0; a unit is on the map while its state byte +0x4E and
 // its HP are nonzero (as the support gauge reads it).
-constexpr std::uint32_t kBattle = 0x02001420u;
-constexpr std::uint32_t kBattleEntries = 0x02001AA0u;
+constexpr std::uint32_t kBattle = usa(0x02001420u);
+constexpr std::uint32_t kBattleEntries = usa(0x02001AA0u);
 constexpr std::uint32_t kEntrySize = 0x1Cu;
 constexpr std::uint32_t kSideSlots = 8u;
 constexpr char kStatusHookId[] = "kol.status-unit";
-constexpr std::uint32_t kWinSub = 0x61A4u;        // u8 sub-state: 1 = up
-constexpr std::uint32_t kWinPage = 0x61D6u;       // u8 lower page: 0 EQUIP., 1 EMBLEM
-constexpr std::uint32_t kWinPageSlide = 0x5838u;  // u16, 0 when the window opens
+constexpr std::uint32_t kWinSub = usa_ctl(0x61A4u);        // u8 sub-state: 1 = up
+constexpr std::uint32_t kWinPage = usa_ctl(0x61D6u);       // u8 lower page: 0 EQUIP., 1 EMBLEM
+constexpr std::uint32_t kWinPageSlide = usa_ctl(0x5838u);  // u16, 0 when the window opens
 // The army roster's task, which opens the status window from the grid and
 // draws its contents; its state byte is its r1 too.
-constexpr std::uint32_t kRosterTask = 0x08034498u;
+constexpr std::uint32_t kRosterTask = usa(0x08034498u);
 constexpr std::uint8_t kRosterWindowUp = 3;
 // The battle window's picture is a sprite object, not drawn by the task's
 // init: 0x0803A964(i) re-points window sprite i (index at ctl+0x5ED2) at the
 // unit the control block names, as the game's own menus do.
-constexpr std::uint32_t kRefreshSprite = 0x0803A964u;
-constexpr std::uint32_t kWinSpriteIndex = 0x5ED2u;
+constexpr std::uint32_t kRefreshSprite = usa(0x0803A964u);
+constexpr std::uint32_t kWinSpriteIndex = usa_ctl(0x5ED2u);
 // Its colours are separate: 0x0802A7A0(0) loads the window unit's palette
 // (0x08143378, into the OBJ palette shadow) when the window opens, for every
 // unit of the list in the roster (ctl+0x6194 bit 4) but only for the current
 // one in battle. So after a switch in battle the new unit wore the first
 // unit's colours (Alphonse's leader palette on everyone). The hook calls it
 // for the new unit first, on the idle call before the sprite refresh.
-constexpr std::uint32_t kLoadPalettes = 0x0802A7A0u;
+constexpr std::uint32_t kLoadPalettes = usa(0x0802A7A0u);
 constexpr char kRosterHookId[] = "kol.roster-status-unit";
 // In the army roster the window's unit is not the pointer alone: 0x0803AA8C
 // derives it from a position in the grid's list of record indices, and the
 // menus (class change among them) call that again. So the position and the
 // record index move with the pointer. The battle window has no list there
 // (0x0803AA8C returns early for it).
-constexpr std::uint32_t kWinList = 0x58FCu;       // u8 record indices, 0xFF ends
+constexpr std::uint32_t kWinList = usa_ctl(0x58FCu);       // u8 record indices, 0xFF ends
 constexpr std::uint32_t kWinListLen = 0x20u;
-constexpr std::uint32_t kWinPos = 0x5ECBu;        // u8 position in that list
-constexpr std::uint32_t kWinRecIndex = 0x5ED2u;   // u8 its record index
+constexpr std::uint32_t kWinPos = usa_ctl(0x5ECBu);        // u8 position in that list
+constexpr std::uint32_t kWinRecIndex = usa_ctl(0x5ED2u);   // u8 its record index
 
 // One request, a direction (+1 next, -1 previous), served by whichever hook
 // the game runs first: the status task while its window is up, the map's
@@ -256,7 +258,7 @@ int on_handler(std::uint32_t, int, ArmCpuState* cpu) {
         std::printf("next_unit: call=%d S=%u idx=%u mode=%u m36=%u cur=(%u,%u) blink=%u\n",
                     g_calls, bus_read_u8(ctl + kCtlState),
                     bus_read_u8(ctl + kCtlIndex), bus_read_u8(kCursorMode), bus_read_u8(kCursorLock),
-                    bus_read_u16(0x03000FDCu), bus_read_u16(0x03000FE0u),
+                    bus_read_u16(usa(0x03000FDCu)), bus_read_u16(usa(0x03000FE0u)),
                     bus_read_u16(ctl + kCtlBlink));
     }
     if (g_epoch != g_runtime_state_epoch || ctl != g_ctl) {
@@ -466,18 +468,18 @@ bool status_switch_off() {
 // window's B made one a moment before.
 // While the window is up, a tap on another unit of the list shows that one,
 // as Next does (point the window at it, rebuild from the task's init).
-constexpr std::uint32_t kWorldMap = 0x02029C5Cu;      // u32 -> world map control
+constexpr std::uint32_t kWorldMap = usa(0x02029C5Cu);      // u32 -> world map control
 constexpr std::uint32_t kWorldTasks = 0xB4u;          // its task slots
-constexpr std::uint32_t kRoamTask = 0x08128D9Cu;
+constexpr std::uint32_t kRoamTask = usa(0x08128D9Cu);
 constexpr std::uint8_t kRoamPad = 4;
-constexpr std::uint32_t kCommandTask = 0x08128220u;
+constexpr std::uint32_t kCommandTask = usa(0x08128220u);
 constexpr std::uint8_t kCommandPad = 1, kCommandOrganize = 11, kCommandFadeOut = 15;
 constexpr std::uint8_t kCommandFadeIn = 17;
-constexpr std::uint32_t kCommandNext = 0x02029C54u;   // u16 the state after the fade
-constexpr std::uint32_t kTaskStart = 0x08002D38u;     // (slots, i, fn|1)
-constexpr std::uint32_t kTaskSuspend = 0x08002E7Cu;   // (slots, i)
-constexpr std::uint32_t kWinPrevScreen = 0x61A5u;     // kWinSub is the screen
-constexpr std::uint32_t kWinExit = 0x61A7u;           // u8 exit code
+constexpr std::uint32_t kCommandNext = usa(0x02029C54u);   // u16 the state after the fade
+constexpr std::uint32_t kTaskStart = usa(0x08002D38u);     // (slots, i, fn|1)
+constexpr std::uint32_t kTaskSuspend = usa(0x08002E7Cu);   // (slots, i)
+constexpr std::uint32_t kWinPrevScreen = usa_ctl(0x61A5u);     // kWinSub is the screen
+constexpr std::uint32_t kWinExit = usa_ctl(0x61A7u);           // u8 exit code
 constexpr std::uint8_t kStatusUp = 3;                 // the status task, the grid (or a screen) up
 // Item, Spell or Class from the bar open as the player opens them: R in the
 // grid, then A in its R menu on the item. The window's key reader 0x0803AD4C
@@ -488,20 +490,20 @@ constexpr std::uint8_t kStatusUp = 3;                 // the status task, the gr
 // then does the rest: 0x080402E0(screen 4 / 9 / 15, exit 4), the fade.
 // Setting the screen id by hand (at the status task's first call, or with
 // the grid up) left the screen black.
-constexpr std::uint32_t kKeyRead = 0x0803AD4Cu;
-constexpr std::uint32_t kGridKeyReadReturn = 0x08032A5Au, kRMenuKeyReadReturn = 0x0802BEACu;
-constexpr std::uint32_t kWinKey = 0x61BCu, kWinKeyNew = 0x61C0u, kWinRMenuCursor = 0x61CCu;
+constexpr std::uint32_t kKeyRead = usa(0x0803AD4Cu);
+constexpr std::uint32_t kGridKeyReadReturn = usa(0x08032A5Au), kRMenuKeyReadReturn = usa(0x0802BEACu);
+constexpr std::uint32_t kWinKey = usa_ctl(0x61BCu), kWinKeyNew = usa_ctl(0x61C0u), kWinRMenuCursor = usa_ctl(0x61CCu);
 // The same in a unit's window (its screen 1): R there opens the unit's own
 // R menu, screen 0x1B (0x080362DE), Item, Spell, Class and Dismiss for that
 // unit, its cursor at +0x61CE (0x080343EE). The window reads its keys from
 // its call returning to 0x08035F9C, that R menu from 0x08034068.
 struct KeyContext { std::uint32_t open_ret, menu_ret, cursor; };
 constexpr KeyContext kGridContext{kGridKeyReadReturn, kRMenuKeyReadReturn, kWinRMenuCursor};
-constexpr KeyContext kUnitContext{0x08035F9Cu, 0x08034068u, 0x61CEu};
+constexpr KeyContext kUnitContext{usa(0x08035F9Cu), usa(0x08034068u), usa_ctl(0x61CEu)};
 constexpr std::uint8_t kScreenGrid = 0, kScreenUnit = 1, kScreenGridMenu = 3, kScreenUnitMenu = 0x1B;
 KeyContext g_key_ctx = kGridContext;
 int g_flow_item = 0;   // Item 0, Spell 1, Class 2: the R menus' order
-constexpr std::uint32_t kRMenuDraw = 0x080414C0u, kGridSprites = 0x0804096Cu;
+constexpr std::uint32_t kRMenuDraw = usa(0x080414C0u), kGridSprites = usa(0x0804096Cu);
 constexpr char kRMenuDrawHookId[] = "kol.rmenu-draw";
 bool g_hide_rmenu = false;   // the grid's R menu is ours to pass through: not drawn
 constexpr std::uint16_t kReadKeyR = 0x100;   // the reader's mask for R
@@ -517,14 +519,14 @@ int g_screen_chain = 0;   // B's chained after the screen: 2 from roaming, 1 fro
 std::atomic<int> g_org_request{0};
 std::atomic<std::int64_t> g_org_request_ms{0};
 std::atomic<bool> g_org_ready{false};   // one of those is up, nothing under way
-constexpr std::uint32_t kWinMode = 0x6194u;
+constexpr std::uint32_t kWinMode = usa_ctl(0x6194u);
 constexpr std::uint8_t kModeBattle = 0x20u;
-constexpr std::uint32_t kKeysNew = 0x03000822u;       // the window's 0x0803AD4C reads A, then B
+constexpr std::uint32_t kKeysNew = usa(0x03000822u);       // the window's 0x0803AD4C reads A, then B
 constexpr std::uint16_t kKeyA = 1, kKeyB = 2;
 constexpr char kRoamHookId[] = "kol.profile-roam";
 constexpr char kCommandHookId[] = "kol.profile-command";
-constexpr std::uint32_t kCommandDraw = 0x08127F7Cu;
-constexpr std::uint32_t kPlaySound = 0x0814506Cu;     // (id)
+constexpr std::uint32_t kCommandDraw = usa(0x08127F7Cu);
+constexpr std::uint32_t kPlaySound = usa(0x0814506Cu);     // (id)
 constexpr std::uint32_t kSoundCancel = 0xB0u;
 constexpr char kCommandDrawHookId[] = "kol.profile-command-draw";
 constexpr char kSoundHookId[] = "kol.profile-sound";
@@ -547,8 +549,8 @@ constexpr std::uint16_t kCommandTraining = 12, kCommandShop = 13;   // Organize 
 // 0x0200119E + place nonzero and byte 2 of its ROM record, 0x08621228 +
 // place * 0x2C, nonzero); neither while story flag 0x92 (EWRAM 0x0200122C +
 // 0x92) names the place the army is at (0x02001197).
-constexpr std::uint32_t kPlaceKnown = 0x0200119Eu, kPlaceRecords = 0x08621228u;
-constexpr std::uint32_t kPlaceHere = 0x02001197u, kStoryFlags = 0x0200122Cu;
+constexpr std::uint32_t kPlaceKnown = usa(0x0200119Eu), kPlaceRecords = usa(0x08621228u);
+constexpr std::uint32_t kPlaceHere = usa(0x02001197u), kStoryFlags = usa(0x0200122Cu);
 constexpr std::uint32_t kWmPlace = 0x14u;
 std::atomic<int> g_items_ok{0};   // bit 0 Training, bit 1 Shop
 enum class Profile { Idle, Starting, Suspending, Launch, Window, Up, Returning };
@@ -696,6 +698,19 @@ std::uint32_t profile_take() {
 
 int on_roam_task(std::uint32_t, int, ArmCpuState* cpu) {
     profile_check();
+    // TEST (dev builds): KOL_WORLD_BUTTON_AT="k:n" taps the second screen's
+    // world button k on this hook's n-th call, as the bar would: 0 Item,
+    // 1 Spell, 2 Class, 3 Training, 4 Shop, 5 Save, 6 Load.
+    if (kDevTools) {
+        static const char* spec = std::getenv("KOL_WORLD_BUTTON_AT");
+        static int calls = 0;
+        int k = 0, n = 0;
+        if (spec && std::sscanf(spec, "%d:%d", &k, &n) == 2 && ++calls == n) {
+            if (k <= 4) action_world_item(k);
+            else if (k == 5) action_world_save();
+            else action_world_load();
+        }
+    }
     if (const std::uint32_t at = bus_read_u32(kWorldMap)) {
         const int ok = items_ok(at);
         if (ok != g_items_ok.exchange(ok, std::memory_order_relaxed) && profile_trace())
@@ -1006,10 +1021,10 @@ void profile_roster_task(std::uint32_t win, std::uint32_t state) {
 // the Original preset, a later set is swapped for the +0x20 one and the call
 // made again; the time of day stays as the game set it (kol_focus lights the
 // room for the evening by it). KOL_NO_DAY_PALETTE=1: off.
-constexpr std::uint32_t kRoomPaletteLoad = 0x080286ECu;
-constexpr std::uint32_t kRoomPaletteTable = 0x085E710Cu;
-constexpr std::uint32_t kMapHeaderPtr = 0x02029CC0u;
-constexpr std::uint32_t kMapNumberAt = 0x02029D40u;
+constexpr std::uint32_t kRoomPaletteLoad = usa(0x080286ECu);
+constexpr std::uint32_t kRoomPaletteTable = usa(0x085E710Cu);
+constexpr std::uint32_t kMapHeaderPtr = usa(0x02029CC0u);
+constexpr std::uint32_t kMapNumberAt = usa(0x02029D40u);
 constexpr char kDayPaletteHookId[] = "kol.day-palette";
 bool g_pass_day_palette = false;   // the call made again: let it run
 
@@ -1217,19 +1232,19 @@ namespace {
 // The move choice's NAVI prompt, answered as if A had closed it. Its state-9
 // handler calls the text-box poll 0x0801670C at 0x080662F0 and moves on when
 // that returns 0xFF (see game.toml). Only that caller is answered.
-constexpr std::uint32_t kTextPoll = 0x0801670Cu;
-constexpr std::uint32_t kShopBuyPollReturn = 0x08133A10u;   // the magic shop (kol_shop_buy.cpp)
-constexpr std::uint32_t kMoveNaviReturn = 0x080662F4u;
+constexpr std::uint32_t kTextPoll = usa(0x0801670Cu);
+constexpr std::uint32_t kShopBuyPollReturn = usa(0x08133A10u);   // the magic shop (kol_shop_buy.cpp)
+constexpr std::uint32_t kMoveNaviReturn = usa(0x080662F4u);
 constexpr char kMoveNaviHookId[] = "kol.skip-move-navi";
 // The move choice's message state (0x08066B28): it polls the same routine,
 // then closes the box and returns to the state it came from. A for a cell
 // out of range puts up "Can't move to that spot." (bank 0x0875C8DE entry
 // 0x1D, fetched from 0x0806657E). That is answered too; the second screen
 // shows the text instead (move_message).
-constexpr std::uint32_t kMoveMessageReturn = 0x08066B2Cu;
+constexpr std::uint32_t kMoveMessageReturn = usa(0x08066B2Cu);
 // The text fetch 0x08015D50(box, ?, bank, index): only recorded, to know
 // which message the box would have shown.
-constexpr std::uint32_t kTextFetch = 0x08015D50u;
+constexpr std::uint32_t kTextFetch = usa(0x08015D50u);
 constexpr char kTextFetchHookId[] = "kol.text-fetch-seen";
 std::atomic<std::uint32_t> g_fetch_bank{0}, g_msg_bank{0};
 std::atomic<unsigned> g_fetch_index{0}, g_msg_index{0}, g_msg_serial{0};
@@ -1246,14 +1261,14 @@ std::atomic<unsigned> g_fetch_index{0}, g_msg_index{0}, g_msg_serial{0};
 // branch, and the second screen shows the text instead. The tutorial is left
 // to the game. The figure is 5 in modes 3 and 4 and 8 otherwise, the game's
 // own choice (0x08143054 / 0x08143070).
-constexpr std::uint32_t kPrepTask = 0x0807EC78u;
-constexpr std::uint32_t kPrepCtlPtr = 0x0202B2A8u;
-constexpr std::uint32_t kPrepState = 0x2052u, kPrepNaviShown = 0x2053u, kPrepSlideLeft = 0x2064u;
-constexpr std::uint32_t kOptionFlags = 0x0200132Fu;   // option byte 3: bit 0 Navigation ON
-constexpr std::uint32_t kTutorialFlags = 0x020011D5u; // event flag 0x4A: bit 2 (0x020011CC + 9)
-constexpr std::uint32_t kBattleMode = 0x020012E0u;
+constexpr std::uint32_t kPrepTask = usa(0x0807EC78u);
+constexpr std::uint32_t kPrepCtlPtr = usa(0x0202B2A8u);
+constexpr std::uint32_t kPrepState = usa_ctl(0x2052u), kPrepNaviShown = usa_ctl(0x2053u), kPrepSlideLeft = usa_ctl(0x2064u);
+constexpr std::uint32_t kOptionFlags = usa(0x0200132Fu);   // option byte 3: bit 0 Navigation ON
+constexpr std::uint32_t kTutorialFlags = usa(0x020011D5u); // event flag 0x4A: bit 2 (0x020011CC + 9)
+constexpr std::uint32_t kBattleMode = usa(0x020012E0u);
 constexpr char kPrepNaviHookId[] = "kol.prep-navi";
-constexpr std::uint32_t kNaviBank = 0x0875D99Au;
+constexpr std::uint32_t kNaviBank = usa(0x0875D99Au);
 constexpr unsigned kPrepNaviEntry = 0x10u;
 // Battle preparation's warnings. A on a unit in the preparation screen
 // (state 2) may pick a warning instead of dispatching it: bank 0x0875C8DE
@@ -1266,11 +1281,11 @@ constexpr unsigned kPrepNaviEntry = 0x10u;
 // system is untouched, answer the first poll 0, and answer state 1's first
 // poll "closed": the next frame the task is back in state 2, having done
 // nothing, and the second screen shows the text instead.
-constexpr std::uint32_t kPrepWarnFetchReturn = 0x0807F200u;
-constexpr std::uint32_t kPrepWarnOpenReturn = 0x0807F208u;
-constexpr std::uint32_t kPrepWarnPollReturn = 0x0807F20Cu;
-constexpr std::uint32_t kPrepWaitPollReturn = 0x0807EF9Cu;
-constexpr std::uint32_t kTextWindow = 0x08019088u;
+constexpr std::uint32_t kPrepWarnFetchReturn = usa(0x0807F200u);
+constexpr std::uint32_t kPrepWarnOpenReturn = usa(0x0807F208u);
+constexpr std::uint32_t kPrepWarnPollReturn = usa(0x0807F20Cu);
+constexpr std::uint32_t kPrepWaitPollReturn = usa(0x0807EF9Cu);
+constexpr std::uint32_t kTextWindow = usa(0x08019088u);
 constexpr char kTextWindowHookId[] = "kol.prep-warning-window";
 std::uint64_t g_warn_epoch = 0;
 bool g_warn_pending = false;   // a skipped warning; state 1 still to be let go
@@ -1293,7 +1308,7 @@ bool warn_pending() {
 // 0x93 (0x0801FA78), which starts it. With "No random battles" on, the hook
 // takes the roll's jump for group 2 (ctx byte 0 == 2) exactly as the game
 // does when it fails; other scripts' rolls run as always.
-constexpr std::uint32_t kRandomChance = 0x08021A40u;
+constexpr std::uint32_t kRandomChance = usa(0x08021A40u);
 constexpr char kNoEncounterHookId[] = "kol.no-random-battles";
 
 int on_random_chance(std::uint32_t, int, ArmCpuState* cpu) {
@@ -1314,7 +1329,7 @@ int on_random_chance(std::uint32_t, int, ArmCpuState* cpu) {
 // Set when a scene loaded the debug map (see debug_scene_camera_tick).
 std::atomic<bool> g_scene_map_loaded{false};
 std::uint32_t g_scene_map_epoch = 0;
-constexpr std::uint32_t kBattleMapPick = 0x08118B4Cu;
+constexpr std::uint32_t kBattleMapPick = usa(0x08118B4Cu);
 constexpr char kBattleMapHookId[] = "kol.debug-battle-map";
 
 int on_battle_map_pick(std::uint32_t, int, ArmCpuState* cpu) {
@@ -1332,8 +1347,8 @@ int on_battle_map_pick(std::uint32_t, int, ArmCpuState* cpu) {
 // the battle interface lives (screen bases 0x16/0x14/0x13/0x12), so a
 // battle cannot show them; a scene can. With Debug > Battle Map set, the
 // number is written first and the game's loader runs as always.
-constexpr std::uint32_t kSceneMapLoad = 0x0811C77Cu;
-constexpr std::uint32_t kMapNumberAddr = 0x02029D40u;
+constexpr std::uint32_t kSceneMapLoad = usa(0x0811C77Cu);
+constexpr std::uint32_t kMapNumberAddr = usa(0x02029D40u);
 constexpr char kSceneMapHookId[] = "kol.debug-scene-map";
 
 int on_scene_map_load(std::uint32_t, int, ArmCpuState*) {
@@ -1357,9 +1372,9 @@ int on_scene_map_load(std::uint32_t, int, ArmCpuState*) {
 // start over with a map. The reloads are the same map going on: not
 // counted (a look at the unit list would have dried the battle). The hook
 // declines. KOL_MAP_LOAD_LOG=1: each call, its map number and caller.
-constexpr std::uint32_t kMapHeader = 0x08021B68u;
+constexpr std::uint32_t kMapHeader = usa(0x08021B68u);
 constexpr char kMapHeaderHookId[] = "kol.map-loads";
-constexpr std::uint32_t kMapOpens[] = {0x08047ABAu, 0x08047BE8u, 0x08047CB4u, 0x08047D3Cu, 0x0811C780u};
+constexpr std::uint32_t kMapOpens[] = {usa(0x08047ABAu), usa(0x08047BE8u), usa(0x08047CB4u), usa(0x08047D3Cu), usa(0x0811C780u)};
 std::atomic<unsigned> g_map_loads{0};
 
 int on_map_header(std::uint32_t, int, ArmCpuState* cpu) {
@@ -1383,7 +1398,7 @@ unsigned map_loads() { return g_map_loads.load(std::memory_order_relaxed); }
 // the scene was not written for the routes overflow its 16 steps and it
 // hangs on purpose. With Debug > Battle Map set it answers its own "no such
 // actor" result (0x110): the actor stays, the script goes on.
-constexpr std::uint32_t kSceneWalk = 0x0811978Cu;
+constexpr std::uint32_t kSceneWalk = usa(0x0811978Cu);
 constexpr char kSceneWalkHookId[] = "kol.debug-scene-walk";
 
 int on_scene_walk(std::uint32_t, int, ArmCpuState* cpu) {
@@ -1476,7 +1491,7 @@ int on_text_poll(std::uint32_t, int, ArmCpuState* cpu) {
 // jump left part of the view unfilled). Only after the scene
 // map hook ran (not in Training's battle, where the D-pad is the game's),
 // in this run of the state (g_runtime_state_epoch).
-constexpr std::uint32_t kCameraX = 0x02026C78u;
+constexpr std::uint32_t kCameraX = usa(0x02026C78u);
 constexpr std::uint32_t kKeyInput = 0x04000130u;
 
 // The viewer's tile cursor: a cell the D-pad steps (as the game's cursor
@@ -1508,7 +1523,7 @@ void debug_viewer_cell_init(int cx, int cz) {
             int x0 = 32, z0 = 32, x1 = -1, z1 = -1;
             for (int z = 0; z < 32; ++z)
                 for (int x = 0; x < 32; ++x)
-                    if (bus_read_u8(0x02016440u + static_cast<std::uint32_t>((z * 32 + x) * 4)) != 0xFF) {
+                    if (bus_read_u8(usa(0x02016440u) + static_cast<std::uint32_t>((z * 32 + x) * 4)) != 0xFF) {
                         x0 = std::min(x0, x); x1 = std::max(x1, x);
                         z0 = std::min(z0, z); z1 = std::max(z1, z);
                     }

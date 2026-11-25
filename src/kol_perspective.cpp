@@ -55,6 +55,7 @@
 #include <vector>
 #include <atomic>
 #include <functional>
+#include "kol_region.h"
 
 namespace {
 
@@ -134,7 +135,7 @@ float strength() {
 // rest, in menus, on the enemy phase banner, or in a spell
 // (states/BW_spell_confirm.state; a spell's animation is a scene of its own).
 // Watched through the function-entry hook, so the guest is not changed.
-constexpr std::uint32_t kStrikeFn = 0x08088912u;
+constexpr std::uint32_t kStrikeFn = kol::usa(0x08088912u);
 // A spell takes the same camera (the user, 2026-10-15). 0x080AC608, in the
 // spell-effect code, is called once a frame from the effect's start to its
 // end and never otherwise: every frame of Summon Darkness (786-1274 after
@@ -142,7 +143,7 @@ constexpr std::uint32_t kStrikeFn = 0x08088912u;
 // (which also strikes); never at rest, in menus or in an attack
 // (states/BV_attack_confirm.state, 299 strike frames). Found with a
 // per-frame function-entry record. KOL_PERSP_NO_SPELL_CAMERA=1: attacks only.
-constexpr std::uint32_t kSpellFn = 0x080AC608u;
+constexpr std::uint32_t kSpellFn = kol::usa(0x080AC608u);
 // The spell before its effect: 0x080AC5C8 is called once a frame while the
 // caster charges the spell's orb (Crag Crush 69 frames, then kSpellFn takes
 // over; Ice Javelin too), never at rest, in menus or in an attack
@@ -150,7 +151,7 @@ constexpr std::uint32_t kSpellFn = 0x080AC608u;
 // (perspective_spell_running: a spell's light, kol_focus spell_lights).
 // Found by the function entries of the charges of states/IF and GD against
 // the frames before them and against BK and GN.
-constexpr std::uint32_t kSpellChargeFn = 0x080AC5C8u;
+constexpr std::uint32_t kSpellChargeFn = kol::usa(0x080AC5C8u);
 constexpr float kStrikeStep = 1.0f / 14.0f;
 constexpr int kStrikeHold = 8;   // frames a strike stays on after its last call
 void (*g_prev_entry_hook)(std::uint32_t) = nullptr;
