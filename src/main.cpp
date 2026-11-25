@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #if defined(_WIN32)
@@ -42,9 +43,11 @@
 namespace {
 
 // The program again, with its first arguments (the menu's restart: Options >
-// Technical > BIOS, a mod), once the game has quit and written its save.
-void start_again(std::vector<std::string> first) {
-    std::string self;
+// Technical > BIOS, a mod), once the game has quit and written its save. Or
+// `other`, the package's program for the other game, in this one's place.
+void start_again(std::vector<std::string> first, std::string other = {}) {
+    std::string self = other;
+    if (self.empty()) {
 #if defined(_WIN32)
     char buf[MAX_PATH] = {};
     if (GetModuleFileNameA(nullptr, buf, MAX_PATH)) self = buf;
@@ -57,7 +60,9 @@ void start_again(std::vector<std::string> first) {
     const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     if (n > 0) self = std::string(buf, static_cast<std::size_t>(n));
 #endif
+    }
     if (self.empty() && !first.empty()) self = first[0];
+    if (!other.empty() && !first.empty()) first[0] = other;
     std::vector<char*> av;
     for (auto& a : first) av.push_back(a.data());
     av.push_back(nullptr);
@@ -90,7 +95,22 @@ int main(int argc, char** argv) {
     if (kol::vs_mirror_child()) kol::vsnet::mirror_settings();
     std::vector<std::string> args = copy ? std::vector<std::string>(argv, argv + argc)
                                          : kol::desktop_prepare(argc, argv, &ok);
-    if (!ok) return 1;
+    if (!ok) {
+        // Not this program's game: the other one's program, on the same
+        // arguments (less --setup: the screen has been answered).
+        if (const std::string other = copy ? std::string() : kol::desktop_handover(); !other.empty()) {
+            std::vector<std::string> again;
+            for (const std::string& a : first)
+                if (a != "--setup") again.push_back(a);
+#if defined(_WIN32)
+            _putenv_s("KOL_HANDED_OVER", "1");
+#else
+            setenv("KOL_HANDED_OVER", "1", 1);
+#endif
+            start_again(again, other);
+        }
+        return 1;
+    }
     if (!copy) kol::vs_cpu_args(args);
     std::vector<char*> args_v;
     for (auto& a : args) args_v.push_back(a.data());

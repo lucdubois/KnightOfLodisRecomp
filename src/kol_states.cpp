@@ -47,7 +47,7 @@ std::string g_picked;
 std::string dir() {
     static const std::string d = [] {
         if (const char* e = std::getenv("KOL_STATES_DIR"); e && *e) return std::string(e);
-        const std::string s = settings_dir();
+        const std::string s = game_dir();   // (each game its own: kol_region.h)
         // A mod (a patched ROM) keeps its own numbered states.
         return s.empty() ? std::string() : s + "/states" + kol::rom_file_tag();
     }();

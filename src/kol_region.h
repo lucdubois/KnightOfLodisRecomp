@@ -96,12 +96,7 @@ inline constexpr const char* kCartSha1 = "ec257d645c601e439f1ab34d9b598c0443aec3
 inline constexpr const char* kCartAsk = "Select the game's ROM (Tactics Ogre Gaiden: The Knight of Lodis, Japan)";
 inline constexpr const char* kCartWrong = "Wrong file: not this game's ROM (the Japanese version is needed).";
 inline constexpr const char* kCartVersion = "the Japanese version";
-// The player's folder (kol_desktop.cpp) and the tag of the files that hold
-// what one ROM's game made (kol::rom_file_tag: numbered states, the Fast
-// Loading memo): this build's own, so that it never reads or writes the USA
-// build's save, states or memo, whichever folder it is pointed at.
-inline constexpr const char* kDataDirName = "KnightOfLodisRecomp-Japan";
-inline constexpr const char* kRegionTag = "-jp";
+inline constexpr int kThisCart = 1;   // in kCarts, below
 
 #else
 
@@ -117,9 +112,37 @@ inline constexpr const char* kCartSha1 = "85a46320a31f16f5c6dda27fc094edd078dbe4
 inline constexpr const char* kCartAsk = "Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA)";
 inline constexpr const char* kCartWrong = "Wrong file: not this game's ROM (the USA version is needed).";
 inline constexpr const char* kCartVersion = "the USA version";
-inline constexpr const char* kDataDirName = "KnightOfLodisRecomp";
-inline constexpr const char* kRegionTag = "";
+inline constexpr int kThisCart = 0;
 
 #endif
+
+// ── One package, more than one game ─────────────────────────────────────
+// A program runs one cartridge (the region above, chosen when it is
+// compiled), and a package may hold a program for each, side by side. The
+// front end (the setup screen, the start) knows every cartridge, whichever
+// one this program runs: the player gives either ROM, and the program that
+// was started hands over to the other when that game is the one to play.
+//
+// Each game keeps what it made in its own folder of the player's: its ROM,
+// its save, its numbered states, its mod, the Fast Loading memo (a save
+// state is one game's memory, and the two lay theirs out differently; a name
+// typed in one game is other characters in the other). The first game's
+// folder is the player's folder itself, where its files have always been.
+// What is ours is shared: the settings, the keys, the BIOS file, the maps'.
+struct Cart {
+    const char* key;       // its word in game.cfg
+    const char* name;      // the game's title
+    const char* short_name;
+    const char* sha1;      // its ROM's
+    const char* folder;    // its folder inside the player's ("": the player's folder itself)
+    const char* program;   // its program's file name, beside this one
+};
+inline constexpr Cart kCarts[] = {
+    {"usa", "Tactics Ogre: The Knight of Lodis", "USA",
+     "85a46320a31f16f5c6dda27fc094edd078dbe43d", "", "KnightOfLodisRecomp"},
+    {"japan", "Tactics Ogre Gaiden: The Knight of Lodis (Japan)", "Japan",
+     "ec257d645c601e439f1ab34d9b598c0443aec3da", "japan", "KnightOfLodisRecomp-jp"},
+};
+inline constexpr int kCartCount = static_cast<int>(sizeof kCarts / sizeof kCarts[0]);
 
 }  // namespace kol

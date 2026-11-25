@@ -542,6 +542,7 @@ enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, 
                                  Cheevo,     // the Achievements page's rows (page 8)
                                  Mod,        // a mod (a ROM patch): the platform's dialog
                                  UnlinkRom,     // Debug: back to the setup screen
+                                 GameChoice,    // Technical: the cartridge played; the other on the setup screen
                                  Licenses,      // the third-party notices (the platform shows them)
                                  Logs,          // the session's log and the last crash's (kol_crash)
                                  Sync,          // Android: the saves and logs copied to a folder (SyncFolder.java)
@@ -615,6 +616,7 @@ const Row kEnhancements[] = {
 const Row kTechnical[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
     {Kind::Bios, 0, "BIOS", "The GBA BIOS, or the built-in\none. Takes effect on restart."},
+    {Kind::GameChoice, 0, "Game", "The version played: USA or\nJapan, each with its own saves."},
 #if defined(__ANDROID__)
     // Replaced Logs > Save (2026-11-24, asked): the logs go there too.
     {Kind::Sync, 0, "Sync Folder", "The save, states and logs\ncopied to a folder you choose."},
@@ -1243,6 +1245,7 @@ Text value_text(const Art& a, const Row& r) {
         case Kind::Logs: return encode(">");
         case Kind::Sync: return encode(g_sync_folder.empty() ? "Off" : "On");
         case Kind::Bios: return encode(bios_next_real() ? "GBA BIOS" : "Built-in");
+        case Kind::GameChoice: return encode(kCarts[kThisCart].short_name);
         case Kind::Quit: return encode(">");
         case Kind::DisplayMode: return encode(display_full_screen() ? "Full Screen" : "Window");
         case Kind::Scaling:
@@ -1688,6 +1691,22 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
             break;
         case Kind::Mod: mod_dialog(); break;
         case Kind::Bios: bios_dialog(); break;
+        case Kind::GameChoice: {
+            // The other cartridge has its own program, its own save and
+            // states (kol_region.h): chosen on the setup screen, which takes
+            // its ROM too.
+            if (settings_dir().empty() || !g_platform.choose_game) {
+                open_dialog("Game", "This run's game is set on its command line (--rom).", {"OK"}, 0, nullptr);
+                break;
+            }
+            const std::string text = std::string("Playing ") + kCarts[kThisCart].name +
+                                     ". Restart on the setup screen to play the other version? It has its own "
+                                     "saves; these are kept.";
+            open_dialog("Game", text.c_str(), {"Setup", "Cancel"}, 1, [](int b) {
+                if (b == 0 && g_platform.choose_game) g_platform.choose_game();
+            });
+            break;
+        }
         case Kind::ShaderItem: {
             if (dir < 0 || r.id < 0 || r.id >= static_cast<int>(g_sh_entries.size())) break;
             const ShaderEntry e = g_sh_entries[static_cast<std::size_t>(r.id)];

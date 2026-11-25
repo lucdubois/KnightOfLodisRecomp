@@ -185,7 +185,7 @@ public class MainActivity extends SDLActivity {
 
     /** The slot file the runtime writes; its time is shown beside the slot. */
     private String slotStamp(int slot) {
-        final File f = new File(getFilesDir(), "totkol.state" + slot);
+        final File f = new File(Game.activeDir(this), "totkol.state" + slot);
         if (!f.exists()) return null;
         return new SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
                 .format(new Date(f.lastModified()));
@@ -369,7 +369,12 @@ public class MainActivity extends SDLActivity {
 
     @Override
     protected String[] getLibraries() {
-        // SDL2 first: libmain.so links against it.
-        return new String[] { "SDL2", "main" };
+        // SDL2 first: the game's library links against it. Which game: the
+        // one to play (Game.java), fixed for this process once it is loaded.
+        if (Game.loaded < 0) {
+            final int g = Game.current(this);
+            Game.loaded = g >= 0 ? g : Game.USA;
+        }
+        return new String[] { "SDL2", Game.library(Game.loaded) };
     }
 }

@@ -534,8 +534,9 @@ void fast_load_install() {
     if (const char* e = std::getenv("KOL_FAST_LOAD_MEMO")) g_memo_path = e;
     // The memo keys on RAM only, not on the ROM it also reads: a mod (a
     // patched ROM, gbarecomp --rom-patch) keeps its own file.
-    else if (!settings_dir().empty())
-        g_memo_path = settings_dir() + "/fast_load_memo" + kol::rom_file_tag() + ".bin";
+    // And each game its own (game_dir: the other cartridge's is another ROM).
+    else if (!game_dir().empty())
+        g_memo_path = game_dir() + "/fast_load_memo" + kol::rom_file_tag() + ".bin";
     memo_load();
     if (g_check) std::fprintf(stderr, "fast_load: CHECK mode (the game does the work; results compared%s)\n",
                               std::getenv("GBARECOMP_INSN_TRACE") ? " as each routine returns" : " later: set GBARECOMP_INSN_TRACE=1");

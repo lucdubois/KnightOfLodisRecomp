@@ -45,6 +45,11 @@ bool desktop_restart_requested();
 // That restart is onto the setup screen (Options > Mod where no system
 // dialog can be used): main adds --setup.
 bool desktop_restart_on_setup();
+// After desktop_prepare said no (*ok false): the other game's program to
+// start in this one's place, or "" (the setup screen was closed). A package
+// holds a program for each game (kol_region.h kCarts), and the player's
+// choice, or the ROM in place, may be the other one's.
+std::string desktop_handover();
 
 // The right stick's click, from kol_actions' pad hook (down 1, up 0), with
 // whether the left stick is held. A short click alone opens or closes the

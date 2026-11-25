@@ -98,6 +98,11 @@ bool bios_file_present();
 // game's (fast-load memo, numbered states); "" for the stock game.
 const char* rom_patch_name();
 std::string rom_file_tag();
+// The folder of what this program's game made (kol_region.h kCarts): its
+// numbered states, the Fast Loading memo, its mod; its ROM and save are there
+// too. settings_dir() itself for the first game, a folder inside it for
+// another; "" when settings_dir() is.
+std::string game_dir();
 
 // Applies immediately and persists. Safe to call from another thread: the one
 // action that cannot be done in place — changing the view width — goes through

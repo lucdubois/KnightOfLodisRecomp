@@ -47,14 +47,14 @@ public final class Mods {
 
     /** The mod file in files/mod/, or null. */
     static File current(Context ctx) {
-        File[] fs = new File(ctx.getFilesDir(), DIR).listFiles();
+        File[] fs = new File(Game.activeDir(ctx), DIR).listFiles();
         if (fs == null) return null;
         for (File f : fs) if (f.isFile()) return f;
         return null;
     }
 
     static void clear(Context ctx) {
-        File[] fs = new File(ctx.getFilesDir(), DIR).listFiles();
+        File[] fs = new File(Game.activeDir(ctx), DIR).listFiles();
         if (fs != null) for (File f : fs) f.delete();
     }
 

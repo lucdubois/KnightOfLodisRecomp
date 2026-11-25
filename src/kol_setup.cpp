@@ -24,6 +24,17 @@
 #include <thread>
 #include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include "rom_patch.h"
 #include "sha1.h"
@@ -158,6 +169,77 @@ bool setup_file_is(const std::string& path, const char* sha1_hex) {
     return read_file(path, &data) && same_hex(sha1_of(data), sha1_hex);
 }
 
+// ── One package, more than one game ─────────────────────────────────────
+
+std::string setup_game_dir(const std::string& dir, int cart) {
+    if (cart < 0 || cart >= kCartCount) return dir;
+    const char* folder = kCarts[cart].folder;
+    return *folder ? dir + "/" + folder : dir;
+}
+
+std::string setup_program(int cart) {
+    if (cart < 0 || cart >= kCartCount) return {};
+    static const std::string self = []() -> std::string {
+#if defined(_WIN32)
+        wchar_t buf[32768];
+        const DWORD n = ::GetModuleFileNameW(nullptr, buf, 32768);
+        if (n == 0 || n >= 32768) return {};
+        return fs::path(std::wstring(buf, n)).string();
+#elif defined(__APPLE__)
+        std::uint32_t n = 0;
+        _NSGetExecutablePath(nullptr, &n);
+        std::string p(n, '\0');
+        if (_NSGetExecutablePath(p.data(), &n) != 0) return {};
+        p.resize(std::strlen(p.c_str()));
+        return p;
+#else
+        char buf[4096];
+        const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof buf - 1);
+        return n > 0 ? std::string(buf, static_cast<std::size_t>(n)) : std::string();
+#endif
+    }();
+    if (cart == kThisCart) return self.empty() ? std::string(kCarts[cart].program) : self;
+    // Desktop checks (dev builds): KOL_OTHER_PROGRAM names the other game's
+    // program where the two are not side by side (two build folders).
+    if constexpr (kDevTools)
+        if (const char* e = std::getenv("KOL_OTHER_PROGRAM"); e && *e) return e;
+    if (self.empty()) return {};
+    std::string name = kCarts[cart].program;
+#if defined(_WIN32)
+    name += ".exe";
+#endif
+    std::error_code ec;
+    const fs::path other = fs::path(self).parent_path() / name;
+    return fs::is_regular_file(other, ec) ? other.string() : std::string();
+}
+
+bool setup_rom_in_place(const std::string& dir, int cart) {
+    if (cart < 0 || cart >= kCartCount) return false;
+    return setup_file_is(setup_game_dir(dir, cart) + "/totkol.gba", kCarts[cart].sha1);
+}
+
+int setup_game(const std::string& dir) {
+    const auto can = [&](int c) { return !setup_program(c).empty() && setup_rom_in_place(dir, c); };
+    std::string key;
+    {
+        std::ifstream f(dir + "/game.cfg");
+        std::getline(f, key);
+        while (!key.empty() && (key.back() == '\r' || key.back() == '\n' || key.back() == ' ')) key.pop_back();
+    }
+    for (int c = 0; c < kCartCount; ++c)
+        if (key == kCarts[c].key && can(c)) return c;
+    if (can(kThisCart)) return kThisCart;
+    for (int c = 0; c < kCartCount; ++c)
+        if (can(c)) return c;
+    return -1;
+}
+
+void setup_game_set(const std::string& dir, int cart) {
+    if (cart < 0 || cart >= kCartCount) return;
+    std::ofstream f(dir + "/game.cfg", std::ios::trunc);
+    f << kCarts[cart].key << "\n";
+}
+
 std::string setup_mod_path(const std::string& dir) {
     std::error_code ec;
     std::vector<std::string> names;
@@ -170,14 +252,14 @@ std::string setup_mod_path(const std::string& dir) {
     return dir + "/mod/" + names.front();
 }
 
-bool setup_mod_take(const std::string& dir, const std::string& file, std::string* why) {
+bool setup_mod_take(const std::string& dir, const std::string& file, std::string* why, bool checked) {
     std::vector<std::uint8_t> data;
     if (!read_file(file, &data)) { *why = "Cannot read that file."; return false; }
     // A patch that does not apply, or changes the game's code, is refused
     // here when the ROM is in place to try it on.
     std::vector<std::uint8_t> rom, out;
     std::string summary, err;
-    if (read_file(dir + "/totkol.gba", &rom) && same_hex(sha1_of(rom), kRomSha1) &&
+    if (checked && read_file(dir + "/totkol.gba", &rom) && same_hex(sha1_of(rom), kRomSha1) &&
         !gbarecomp::rom_patch_load_and_check(file, rom, &out, &summary, &err)) {
         *why = "That mod can't be played: " + err + ".";
         return false;
@@ -195,8 +277,17 @@ void setup_mod_remove(const std::string& dir) {
 }
 
 namespace {
-const char* const kAskFile[3] = {kCartAsk,
-                                 "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
+// What a ROM is asked with: this program's game by its name when the package
+// holds only it, either game's when it holds both.
+const char* ask_rom() {
+    int n = 0;
+    for (int c = 0; c < kCartCount; ++c) n += !setup_program(c).empty();
+    return n > 1 ? "Select the game's ROM (Tactics Ogre: The Knight of Lodis, USA or Japan)" : kCartAsk;
+}
+const char* ask_file(int what) {
+    static const char* const kAsk[3] = {nullptr, "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
+    return what == 0 ? ask_rom() : kAsk[what];
+}
 #if defined(__linux__)
 std::unique_ptr<SystemPick> g_game_pick;   // setup_file_dialog's, from the running game
 #endif
@@ -206,19 +297,19 @@ int setup_file_dialog(int what, std::string* file) {
     if (what < 0 || what > 2) return 0;
 #if defined(__APPLE__)
     SDL_Window* const window = SDL_GetKeyboardFocus();
-    const bool chosen = setup_mac_open_panel(kAskFile[what], file);
+    const bool chosen = setup_mac_open_panel(ask_file(what), file);
     if (window) SDL_RaiseWindow(window);
     if (!chosen) file->clear();
     return 1;
 #elif defined(_WIN32)
     SDL_Window* const window = SDL_GetKeyboardFocus();
-    const bool chosen = setup_win_open_dialog(window, what, kAskFile[what], file);
+    const bool chosen = setup_win_open_dialog(window, what, ask_file(what), file);
     if (window) SDL_RaiseWindow(window);
     if (!chosen) file->clear();
     return 1;
 #elif defined(__linux__)
     if (g_game_pick) return 2;   // (one at a time: the one up answers)
-    const std::string cmd = system_dialog_command(kAskFile[what]);
+    const std::string cmd = system_dialog_command(ask_file(what));
     if (cmd.empty()) return 0;
     g_game_pick = std::make_unique<SystemPick>();
     SystemPick* p = g_game_pick.get();
@@ -450,9 +541,29 @@ struct Setup {
     bool rom_ok = false, rom_there = false, bios_ok = false, bios_there = false;
     std::string mod;      // its file name, or ""
     std::string status;   // a copy's error, a wrong file
-    int focus = 0;        // 0-2 the boxes, 3 Remove mod, 4 Play
+    int focus = 0;        // 0-2 the boxes, 3 Remove mod, 4 Play, 5 the game's title (two games in place)
     Box box[3];
-    SDL_Rect remove_at{}, play_at{};
+    SDL_Rect remove_at{}, play_at{}, title_at{};
+    // The package's games (kol_region.h kCarts): the one the boxes are for,
+    // which have their ROM in place, and which the package has a program for.
+    int game = kThisCart;
+    bool have[kCartCount] = {}, engine[kCartCount] = {};
+    int engines = 1;
+    std::string gdir() const { return setup_game_dir(dir, game); }
+    // Two games ready: the title is a switch between them.
+    bool can_switch() const {
+        int n = 0;
+        for (int c = 0; c < kCartCount; ++c) n += have[c] && engine[c];
+        return n > 1;
+    }
+    void switch_game() {
+        for (int k = 1; k < kCartCount; ++k) {
+            const int c = (game + k) % kCartCount;
+            if (have[c] && engine[c]) { game = c; break; }
+        }
+        status.clear();
+        refresh();
+    }
     // The browser.
     int picking = -1;     // 0 ROM, 1 BIOS, 2 Mod; -1 the main page
     std::string path;     // the folder shown
@@ -464,12 +575,18 @@ struct Setup {
 
     void refresh() {
         std::error_code ec;
-        const std::string rom = dir + "/totkol.gba", bios = dir + "/gba_bios.bin";
+        engines = 0;
+        for (int c = 0; c < kCartCount; ++c) {
+            engine[c] = !setup_program(c).empty();
+            engines += engine[c];
+            have[c] = setup_rom_in_place(dir, c);
+        }
+        const std::string rom = gdir() + "/totkol.gba", bios = dir + "/gba_bios.bin";
         rom_there = fs::exists(rom, ec);
-        rom_ok = rom_there && setup_file_is(rom, kRomSha1);
+        rom_ok = rom_there && have[game];
         bios_there = fs::exists(bios, ec);
         bios_ok = bios_there && setup_file_is(bios, kBiosSha1);
-        const std::string m = setup_mod_path(dir);
+        const std::string m = setup_mod_path(gdir());
         mod = m.empty() ? std::string() : fs::path(m).filename().string();
         if (!rom_there) box[0] = {box[0].at, '!', kRed, "Required: select the game's ROM"};
         else if (rom_ok) box[0] = {box[0].at, 'v', kGreen, "Loaded"};
@@ -539,10 +656,8 @@ struct Setup {
     void start_pick(int what) {
 #if defined(__APPLE__)
         // A Mac: the system's Open panel, not the screen's browser.
-        static const char* const kAsk[3] = {kCartAsk,
-                                            "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
         std::string file;
-        const bool chosen = setup_mac_open_panel(kAsk[what], &file);
+        const bool chosen = setup_mac_open_panel(ask_file(what), &file);
         if (window) SDL_RaiseWindow(window);
         if (!chosen) return;
         picking = what;
@@ -551,10 +666,8 @@ struct Setup {
         return;
 #elif defined(_WIN32)
         // Windows: the system's Open dialog, as the Mac's panel.
-        static const char* const kAskWin[3] = {kCartAsk,
-                                               "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
         std::string file;
-        const bool chosen = setup_win_open_dialog(window, what, kAskWin[what], &file);
+        const bool chosen = setup_win_open_dialog(window, what, ask_file(what), &file);
         if (window) SDL_RaiseWindow(window);
         if (!chosen) return;
         picking = what;
@@ -562,9 +675,7 @@ struct Setup {
         if (picking == what) picking = -1;   // (refused: the message on the main page)
         return;
 #elif defined(__linux__)
-        static const char* const kAskLinux[3] = {kCartAsk,
-                                                 "Select the GBA BIOS", "Select a mod (.ips, .ups or .bps)"};
-        const std::string cmd = system_dialog_command(kAskLinux[what]);
+        const std::string cmd = system_dialog_command(ask_file(what));
         if (!cmd.empty()) {
             if (sys_pick) return;   // (one at a time)
             sys_pick = std::make_unique<SystemPick>();
@@ -601,14 +712,34 @@ struct Setup {
         std::error_code ec;
         fs::create_directories(dir, ec);
         if (picking == 0) {
-            if (!same_hex(sha1_of(data), kRomSha1)) { status = kCartWrong; return; }
-            if (!write_file(dir + "/totkol.gba", data)) { status = "Copy failed."; return; }
+            // Whichever game's ROM it is (kCarts): into that game's folder,
+            // and that game is the one the boxes are for.
+            const std::string sha = sha1_of(data);
+            int cart = -1;
+            for (int c = 0; c < kCartCount; ++c)
+                if (same_hex(sha, kCarts[c].sha1)) cart = c;
+            if (cart < 0) {
+                status = engines > 1 ? "Wrong file: not the game's ROM (the USA or the Japanese version is needed)."
+                                     : kCartWrong;
+                return;
+            }
+            if (!engine[cart]) {
+                status = engines > 1 || cart == kThisCart
+                             ? std::string(kCartWrong)
+                             : std::string("That is ") + kCarts[cart].name + ": this download plays only " +
+                                   kCartVersion + ".";
+                return;
+            }
+            const std::string to = setup_game_dir(dir, cart);
+            fs::create_directories(to, ec);
+            if (!write_file(to + "/totkol.gba", data)) { status = "Copy failed."; return; }
+            game = cart;
         } else if (picking == 1) {
             if (!same_hex(sha1_of(data), kBiosSha1)) { status = "Not the GBA BIOS: the HLE BIOS will be used."; return; }
             if (!write_file(dir + "/gba_bios.bin", data)) { status = "Copy failed."; return; }
         } else {
             std::string why;
-            if (!setup_mod_take(dir, file, &why)) { status = why; return; }
+            if (!setup_mod_take(gdir(), file, &why, game == kThisCart)) { status = why; return; }
         }
         status.clear();
         picking = -1;
@@ -624,11 +755,14 @@ struct Setup {
         const std::string sha = sha1_of(data);
         std::string ext = fs::path(file).extension().string();
         for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        const int kind = same_hex(sha, kRomSha1) ? 0 : same_hex(sha, kBiosSha1) ? 1
+        bool a_rom = false;   // a ROM of the package's games (take says so if its program is not here)
+        for (int c = 0; c < kCartCount; ++c) a_rom = a_rom || (engine[c] && same_hex(sha, kCarts[c].sha1));
+        const int kind = a_rom ? 0 : same_hex(sha, kBiosSha1) ? 1
                        : (ext == ".ips" || ext == ".ups" || ext == ".bps") ? 2 : -1;
         if (kind < 0) {
             status = fs::path(file).filename().string() +
-                     " is not this game's ROM (" + std::string(kCartVersion) + "), the GBA BIOS or a mod (.ips, .ups, .bps).";
+                     (engines > 1 ? " is not the game's ROM (the USA or the Japanese version), the GBA BIOS or a mod (.ips, .ups, .bps)."
+                                  : " is not this game's ROM (" + std::string(kCartVersion) + "), the GBA BIOS or a mod (.ips, .ups, .bps).");
             return;
         }
         const int was = picking;
@@ -639,7 +773,7 @@ struct Setup {
     }
 
     void remove_mod() {
-        setup_mod_remove(dir);
+        setup_mod_remove(gdir());
         refresh();
     }
 
@@ -650,7 +784,17 @@ struct Setup {
         // (The sizes, a window 800 high: larger than the first try, asked 2026-11-18.)
         const int title = u.px(48), name = u.px(40), small = u.px(26), button = u.px(36);
         int y = u.h / 18;
-        u.text_mid(u.regular, u.w / 2, y, kCartName, title, kInk);
+        title_at = {};
+        if (can_switch()) {
+            // Two games in place: the title is a switch, in a card of its own.
+            const int tw = u.text_w(u.regular, kCarts[game].name, title), pad = u.px(70);
+            title_at = {u.w / 2 - tw / 2 - pad, y - u.px(8), tw + 2 * pad, title + u.px(22)};
+            u.card(title_at.x, title_at.y, title_at.w, title_at.h, kWhite, focus == 5 ? kAccent : kLine,
+                   focus == 5 ? u.px(4) : u.px(2));
+            u.text_mid(u.bold, title_at.x + u.px(34), y, "<", title, kSoft);
+            u.text_mid(u.bold, title_at.x + title_at.w - u.px(34), y, ">", title, kSoft);
+        }
+        u.text_mid(u.regular, u.w / 2, y, kCarts[game].name, title, kInk);
         y += title + u.h / 22;
         const int margin = u.w / 20, gap = u.w / 50;
         const int bw = (u.w - 2 * margin - 2 * gap) / 3, bh = u.h * 34 / 100;
@@ -704,21 +848,37 @@ struct Setup {
         if (what >= 0 && what <= 2) start_pick(what);
         else if (what == 3) { if (!mod.empty()) remove_mod(); }
         else if (what == 4 && !rom_ok) status = "Select the game's ROM first.";
+        else if (what == 5 && can_switch()) switch_game();
     }
 
     // True: Play, with the ROM in place.
     bool input_main(const Input& in) {
         switch (in.act) {
-            case Act::Left: if (focus <= 2) focus = std::max(0, focus - 1); else focus = 3; break;
-            case Act::Right: if (focus <= 2) focus = std::min(2, focus + 1); else focus = 4; break;
-            case Act::Down: if (focus <= 2) focus = focus == 0 ? 3 : 4; break;
-            case Act::Up: if (focus >= 3) focus = focus == 3 ? 0 : 2; break;
+            case Act::Left:
+                if (focus == 5) press_main(5);
+                else if (focus <= 2) focus = std::max(0, focus - 1);
+                else focus = 3;
+                break;
+            case Act::Right:
+                if (focus == 5) press_main(5);
+                else if (focus <= 2) focus = std::min(2, focus + 1);
+                else focus = 4;
+                break;
+            case Act::Down:
+                if (focus == 5) focus = 0;
+                else if (focus <= 2) focus = focus == 0 ? 3 : 4;
+                break;
+            case Act::Up:
+                if (focus == 3 || focus == 4) focus = focus == 3 ? 0 : 2;
+                else if (focus <= 2 && can_switch()) focus = 5;
+                break;
             case Act::Accept:
                 if (focus == 4 && rom_ok) return true;
                 press_main(focus);
                 break;
             case Act::Click: {
                 const SDL_Point p{in.x, in.y};
+                if (can_switch() && SDL_PointInRect(&p, &title_at)) { focus = 5; press_main(5); return false; }
                 for (int i = 0; i < 3; ++i)
                     if (SDL_PointInRect(&p, &box[i].at)) { focus = i; press_main(i); return false; }
                 if (SDL_PointInRect(&p, &remove_at)) { focus = 3; press_main(3); }
@@ -922,6 +1082,9 @@ bool setup_run(const std::string& dir, bool fullscreen) {
     st.window = win;
     st.ui.regular.load(kRobotoRegular);
     st.ui.bold.load(kRobotoBold);
+    // The game the boxes are for: the one that would start, else this
+    // program's own.
+    if (const int g = setup_game(dir); g >= 0) st.game = g;
     st.refresh();
     st.focus = st.rom_ok ? 4 : 0;
 
@@ -1040,6 +1203,7 @@ bool setup_run(const std::string& dir, bool fullscreen) {
     st.ui.bold.drop();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
+    if (play && st.rom_ok) setup_game_set(dir, st.game);   // the game to start (kol_desktop)
     return play && st.rom_ok;
 }
 
@@ -1200,8 +1364,13 @@ void setup_text_page(const std::string& title, const std::string& text, const st
 namespace kol {
 bool setup_file_is(const std::string&, const char*) { return false; }
 std::string setup_mod_path(const std::string&) { return {}; }
-bool setup_mod_take(const std::string&, const std::string&, std::string* why) { *why = "Not here."; return false; }
+bool setup_mod_take(const std::string&, const std::string&, std::string* why, bool) { *why = "Not here."; return false; }
 void setup_mod_remove(const std::string&) {}
+std::string setup_game_dir(const std::string& dir, int) { return dir; }
+std::string setup_program(int) { return {}; }
+bool setup_rom_in_place(const std::string&, int) { return false; }
+int setup_game(const std::string&) { return kThisCart; }
+void setup_game_set(const std::string&, int) {}
 int setup_file_dialog(int, std::string*) { return 0; }
 bool setup_file_dialog_poll(std::string*) { return false; }
 bool setup_run(const std::string&, bool) { return true; }

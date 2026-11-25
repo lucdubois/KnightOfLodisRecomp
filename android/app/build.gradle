@@ -46,7 +46,10 @@ android {
                 // test generators (gen_codegen_tests et al) — those get
                 // cross-compiled to arm64 and then cannot run on the build
                 // machine. SDL2 is still built, as `main` depends on it.
-                targets 'main'
+                // (main_jp: the Japanese game's library, when its recompiled
+                // code is there; jni/CMakeLists.txt.)
+                if (file("${rootDir}/../generated_atoj/dispatch_table.cpp").exists()) targets 'main', 'main_jp'
+                else targets 'main'
             }
         }
     }

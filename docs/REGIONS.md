@@ -191,38 +191,144 @@ new, dev builds only: world button k on the roam hook's n-th call):
 Coverage of those Japanese runs: the same two interpreted functions as
 before (0x08012EDC, 0x08012F4A), nothing new.
 
-## The desktop's setup screen and files
+## One package, two games (2026-11-25, the user's choice)
 
-The Japanese executable asks for its own cartridge (kol_region.h:
-`kCartSha1`, `kCartAsk`, `kCartWrong`, `kCartVersion`; kol_setup.h's
-`kRomSha1` is the build's): its setup screen is titled with the Japanese
-game's name, takes the Japanese ROM and refuses the USA one by name, and the
-USA build the other way round (headless, `KOL_SETUP_KEYS=drop:...`,
-`regionmap/shots/setup_wrong.png`, `setup_jp.png`). The USA screen's pictures
-are identical to the executable's from before the region work.
+A region is still chosen when a program is compiled: each ROM has its own
+recompiled code (`generated/` and `generated_atoj/`, about 440 MB of C++
+each, the same function and table names), and our own code takes its
+addresses at compile time (`usa()`), which is what makes a missing address a
+compile error. So a package holds a PROGRAM for each game, and the front end
+knows both (`kCarts` in kol_region.h; `Game.java` is the same table):
 
-It keeps its own files: the player's folder is `KnightOfLodisRecomp-Japan`
-(`kDataDirName`), and `rom_file_tag()` starts with `-jp` there
-(`kRegionTag`), so that numbered states and the Fast Loading memo (which keys
-on RAM only, not on the ROM it reads) are never shared with the USA build
-even in a folder given by hand. In such a shared folder the ROM and the save
-would still be the same two names (`totkol.gba`, `totkol.sav`): do not point
-both builds at one folder. Both builds start in player mode from the folder
-their setup screen filled (900 frames into the opening, HLE BIOS, the same
-three cold-boot misses each).
+- **Desktop**: `KnightOfLodisRecomp` (USA) and `KnightOfLodisRecomp-jp`
+  (CMake names the ATOJ build so) side by side. Either one can be started:
+  the setup screen takes either ROM (told by its SHA-1), and the program
+  that was started hands over to the other (`desktop_handover`, main.cpp's
+  `start_again`) when the game to play is not its own. With one program
+  alone, everything is as it was (its setup pictures are identical to the
+  executable's from before the region work, on three scripted sequences).
+- **Android**: one APK with `libmain.so` (USA) and `libmain_jp.so`
+  (`kol_game_library` in jni/CMakeLists.txt; built when `generated_atoj` is
+  there). `MainActivity.getLibraries()` loads the one to play; a process
+  holds one, so changing game is a restart (`RestartActivity`).
+- **Which game**: the one last chosen (`game.cfg` in the player's folder,
+  `usa` or `japan`) when its ROM is in place, else the one whose ROM is
+  (`setup_game`, `Game.current`). With both ROMs in place the setup screen's
+  title is a switch (desktop) or shows a "Switch to ..." button (Android).
+  From the game: Options > Technical > Game restarts on the setup screen.
 
-## Two builds
+### RetroAchievements: the USA game only
 
-A region is chosen when the program is compiled, for two reasons: each ROM
-has its own recompiled code (`generated/` and `generated_atoj/`, about 440 MB
-of C++ each, a 95 MB executable each, with the same function and table
-names), and our own code takes its addresses at compile time (`usa()`), which
-is what makes a missing address a compile error. One program for both ROMs
-would need the recompiler's output namespaced per ROM, a runtime that picks
-a dispatch table at start (gbarecomp), and `usa()` turned into a lookup at
-run time at its 560 uses. One PACKAGE for both is much cheaper: both
-programs (or, on Android, both native libraries) shipped together and the
-one that matches the player's ROM started.
+The achievement set is the USA cartridge's (kol_cheevos.cpp's fixed hash):
+its conditions read that game's memory at fixed addresses, which no `usa()`
+of ours translates. The first run of the Japanese game on the Thor
+(2026-11-25, the user logged in) unlocked 25 achievements in its first
+seconds, and the server kept them (5 of 87 before, 30 after, softcore). A
+program for another cartridge now never loads the set
+(`begin_game_load`): the page says "Only for the USA version of the game."
+The lesson is wider than achievements: anything that reads the guest's
+memory by address and is NOT in our source (a server's conditions, a cheat
+file, a tool's script) is one game's only.
+
+### Where each game's files are
+
+| | USA | Japan |
+|---|---|---|
+| ROM, save, slots, mod, numbered states, Fast Loading memo | the player's folder itself, under the names they always had | its `japan` folder |
+| settings, keys, display, BIOS file, shaders, logs, achievements login | the player's folder (shared) | the same |
+
+`game_dir()` (kol_settings) is the game's own folder in the running game;
+`setup_game_dir(dir, cart)` the same for the front end; `Game.dir` in Java.
+A save state is one game's memory and the two lay theirs out differently
+(the runtime refuses a state made on another ROM), a name typed in one game
+is other characters in the other, and the Fast Loading memo keys on RAM
+only: nothing a game made is shared.
+
+### Nothing an earlier version made moves
+
+The USA game's files are exactly where every earlier version put them, so an
+update needs no migration. Checked on the desktop: a player's folder made by
+the executable from before this work (ROM, save, a numbered state) started
+with the package's program: no setup screen, the state loaded to the same
+picture as in the old executable, the title's Continue offered as before,
+and the save, ROM and state files byte for byte unchanged. On the Thor: see
+the handoff note for what was checked after the install.
+
+### Checked (desktop, headless, a folder with both programs linked in)
+
+The Japanese ROM given to the USA program (it lands in `japan/`, the
+Japanese program takes over and runs); the USA ROM added from the Japanese
+program; a start with both in place from either program (the remembered game
+plays); the switch on the setup screen (`regionmap/shots/setup_two_games.png`,
+`pkg_boots.png`).
+
+### Checked (Android)
+
+On the emulator (arm64, headless): the two-game APK installed over an old
+1.1.1 install went straight to the USA game, its ROM, save and slot state
+byte for byte unchanged; the Japanese ROM put in `files/japan` and chosen
+loads `libmain_jp.so` and shows the Japanese opening; with both ROMs the
+setup screen's "Switch to ..." button changes game and Play loads the right
+library; a ROM given through the system file picker is told by its SHA-1
+and lands in its game's folder, a wrong file is refused with a message and
+the ROMs in place are untouched. On the Thor: installed over the debug app
+(1.2.1), its save, ROM, settings, memo and 883 state files unchanged; the
+user then played both games there.
+
+### The APK's size (measured 2026-11-25)
+
+113.0 MB packed fresh (debug, both games) against 77.1 MB (debug, one game)
+and 72.5 MB (the 1.2.2 release). (A debug APK repacked in place by Gradle
+after rebuilds was 148.9 MB: 36 MB of it a dead copy of a replaced library.
+Delete the APK and assemble again before measuring.) What is in it: the HD
+instrument bank 39.3 MB, stored as it is; each game's library 36 MB packed
+(31.7 in a release), 115 MB unpacked, of which the ROM's recompiled code is
+88 MB and our own sources 7 MB.
+
+Tried or estimated, for a smaller one:
+- one library for both games would share only our sources and the runtime
+  (some 7 to 25 MB of 115 unpacked): a few MB packed, for the loss of the
+  compile-time region;
+- the Japanese library as a patch on the USA one (zstd --patch-from): 20.3 MB
+  against 22.1 MB compressed alone, so the two builds' machine code shares
+  almost nothing byte for byte;
+- zstd -19 packs a library to 22 MB where the APK's deflate gives 36, but
+  the app would have to unpack and load it itself;
+- the bank through a lossless audio coder (FLAC, the file taken whole as
+  16-bit mono): about 20 MB of the 39;
+- the Japanese library downloaded when its ROM is first given: the APK as
+  small as a one-game one. The packaging scripts pack both programs when `generated_atoj` is there:
+`tools/package_macos.sh` (build-macos-atoj, the second executable in
+Contents/MacOS, signed before the bundle), `tools/package_windows.sh`
+(build-windows-atoj, KnightOfLodisRecomp-jp.exe beside the USA .exe, the
+README names both games), `tools/package_appimage.sh` (this checkout's own
+folder on the Deck, build-release-atoj there, both in usr/bin; KOL_SSH for
+a Deck at another address, KOL_PACKAGE_TAG for a test build's file name, so
+a release's AppImage on the Deck is never overwritten). Nothing is
+compressed beyond what each package format already did (the user's choice,
+2026-11-25). Not done: the Files provider and Sync Folder on Android (they
+carry the USA game's files only, as before), and `tools/package_flatpak.sh`.
+
+### Checked (desktop packages, 2026-11-25)
+
+Built with both programs (public builds, KOL_DEV_TOOLS=OFF), against
+1.2.2's one-game packages:
+
+| | both games | 1.2.2 |
+|---|---|---|
+| macOS zip | 98.3 MB | 68.3 MB |
+| Windows zip | 112.7 MB | 74.1 MB |
+| AppImage | 113.0 MB | 77.2 MB |
+
+Each run on a copy of a player's folder made by the executable from before
+this work (ROM, save, a numbered state; the same key presses from the
+title): no setup screen, the save, ROM and state byte for byte unchanged,
+and the picture at the end, the load menu with Continue from save,
+identical to the old executable's. And on a folder with both ROMs and Japan
+chosen: the USA program hands over to the Japanese one, which plays. The
+Mac app headless (dummy video); the Windows zip under Wine with the null
+display driver; the AppImage on the Deck headless, in a test folder
+(removed after; the player's own folder untouched).
 
 ## Not done
 
@@ -250,10 +356,9 @@ one that matches the player's ROM started.
   merged. gbarecomp's rule: a person reviews what goes into a game's
   config, so the translated game.toml should become a generated overlay
   under a small hand-written base.
-- Android: `SetupActivity` still accepts only the USA ROM and the app is not
-  built for Japan. One package for both ROMs or two is not decided (the
-  user asked 2026-11-25 whether the two builds can be combined: see "Two
-  builds" below).
+- Android's Files provider (`SavesProvider`) and Sync Folder still see the
+  USA game's files only; the Japanese game's (files/japan) are neither
+  listed nor copied. The packaging scripts pack one program.
 - This branch starts at 9159d23: the uncommitted menu fix on `main`
   (kol_menu.cpp, the translation mod) is not in it, and will meet this
   branch's kol_menu.cpp changes when merged.

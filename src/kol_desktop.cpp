@@ -458,7 +458,7 @@ void restart_on_setup() {
 void mod_take(const std::string& file) {
     if (file.empty()) return;   // (cancelled)
     std::string why;
-    if (!setup_mod_take(settings_dir(), file, &why)) {
+    if (!setup_mod_take(game_dir(), file, &why)) {
         std::fprintf(stderr, "desktop: mod %s not taken: %s\n", file.c_str(), why.c_str());
         menu_mod_picked(nullptr, why.c_str());
         return;
@@ -494,7 +494,7 @@ void mod_poll() {
 }
 
 void mod_remove() {
-    setup_mod_remove(settings_dir());
+    setup_mod_remove(game_dir());
     std::fprintf(stderr, "desktop: mod removed, the original game from the next start\n");
 }
 
@@ -576,15 +576,15 @@ void display_poll() {
 std::string default_data_dir() {
 #if defined(__APPLE__)
     if (const char* home = std::getenv("HOME"); home && *home)
-        return std::string(home) + "/Library/Application Support/" + kDataDirName;
+        return std::string(home) + "/Library/Application Support/KnightOfLodisRecomp";
 #elif defined(_WIN32)
     if (const char* app = std::getenv("APPDATA"); app && *app)
-        return std::string(app) + "\\" + kDataDirName;
+        return std::string(app) + "\\KnightOfLodisRecomp";
 #else
     if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg)
-        return std::string(xdg) + "/" + kDataDirName;
+        return std::string(xdg) + "/KnightOfLodisRecomp";
     if (const char* home = std::getenv("HOME"); home && *home)
-        return std::string(home) + "/.local/share/" + kDataDirName;
+        return std::string(home) + "/.local/share/KnightOfLodisRecomp";
 #endif
     return {};
 }
@@ -598,6 +598,10 @@ bool exists(const std::string& p) {
 
 bool desktop_restart_requested() { return g_restart.load(); }
 bool desktop_restart_on_setup() { return g_restart_setup.load(); }
+
+// The other game's program to start in this one's place (desktop_prepare).
+std::string g_handover;
+std::string desktop_handover() { return g_handover; }
 
 bool desktop_player_mode() { return g_player; }
 
@@ -623,6 +627,9 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     // developer's run takes --rom-patch, and kol_menu says so).
     platform.pick_mod = &mod_pick;
     platform.remove_mod = &mod_remove;
+    // Technical > Game: the setup screen again, where the other game's ROM
+    // is given or switched to (a package with both programs).
+    platform.choose_game = &restart_on_setup;
     // Options > Licenses: the notices on a page over the window.
     platform.show_licenses = &licenses_show;
     platform.page_up = &licenses_up;
@@ -669,7 +676,10 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     static std::string input_dir;
     input_dir = dir;
     gbarecomp::g_host_input_config_dir = input_dir.c_str();
-    const std::string rom = dir + "/totkol.gba";
+    // This game's own folder in the player's (kol_region.h kCarts): its ROM,
+    // its save, its mod. The BIOS and the settings are every game's.
+    const std::string gdir = setup_game_dir(dir, kThisCart);
+    const std::string rom = gdir + "/totkol.gba";
     const std::string bios = dir + "/gba_bios.bin";
     std::fprintf(stderr, "desktop: player mode, files in %s\n", dir.c_str());
 
@@ -694,9 +704,30 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     const bool fullscreen = std::find(rest.begin(), rest.end(), "--fullscreen") != rest.end();
     // The setup screen (kol_setup): with no ROM in the directory, or one that
     // is not this game's. Play there means the right ROM is in place.
-    if (!rom_given && (force_setup || !setup_file_is(rom, kRomSha1))) {
-        if (!setup_run(dir, fullscreen)) {
-            std::fprintf(stderr, "desktop: the setup screen was closed without Play\n");
+    // The package may hold a program for each game: the one to play is the
+    // one last chosen there, or the one whose ROM is in place (setup_game).
+    if (!rom_given) {
+        int game = setup_game(dir);
+        if (force_setup || game < 0) {
+            if (!setup_run(dir, fullscreen)) {
+                std::fprintf(stderr, "desktop: the setup screen was closed without Play\n");
+                *ok = false;
+                return args;
+            }
+            game = setup_game(dir);
+        }
+        if (game != kThisCart) {
+            // The other game: its own program takes over (main starts it,
+            // on this run's arguments). Once only: a program that was handed
+            // to and would hand back stops instead.
+            const std::string other = game >= 0 ? setup_program(game) : std::string();
+            if (other.empty() || std::getenv("KOL_HANDED_OVER")) {
+                std::fprintf(stderr, "desktop: no program here for the game to start\n");
+                *ok = false;
+                return args;
+            }
+            std::fprintf(stderr, "desktop: %s is played by %s\n", kCarts[game].name, other.c_str());
+            g_handover = other;
             *ok = false;
             return args;
         }
@@ -765,7 +796,7 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     // changes the game's code, is set aside in <dir>/mod_refused and the
     // original game starts, with a message.
     if (!rom_given) {
-        const std::string mod = setup_mod_path(dir);
+        const std::string mod = setup_mod_path(gdir);
         if (!mod.empty()) {
             std::ifstream f(rom, std::ios::binary);
             const std::vector<std::uint8_t> rom_bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -777,8 +808,8 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
                 args.push_back(mod);
             } else {
                 const std::string name = std::filesystem::path(mod).filename().string();
-                std::filesystem::create_directories(dir + "/mod_refused", ec);
-                std::filesystem::rename(mod, dir + "/mod_refused/" + name, ec);
+                std::filesystem::create_directories(gdir + "/mod_refused", ec);
+                std::filesystem::rename(mod, gdir + "/mod_refused/" + name, ec);
                 const std::string text = "The mod " + name + " can't be played: " + err +
                                          ".\n\nThe original game starts instead. Choose another mod in Options > Mod.";
                 std::fprintf(stderr, "desktop: mod %s refused: %s\n", name.c_str(), err.c_str());
@@ -787,7 +818,7 @@ std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
         }
     }
     args.emplace_back("--save-path");
-    args.push_back(dir + "/totkol.sav");
+    args.push_back(gdir + "/totkol.sav");
     args.emplace_back("--window");
     args.emplace_back("--skip-bios-intro");
     args.insert(args.end(), rest.begin(), rest.end());
@@ -968,6 +999,7 @@ void display_ratio_changed() {}
 bool desktop_player_mode() { return false; }
 bool desktop_restart_requested() { return false; }
 bool desktop_restart_on_setup() { return false; }
+std::string desktop_handover() { return {}; }
 int window_size_multiple(int, int) { return 0; }
 std::vector<std::string> desktop_prepare(int argc, char** argv, bool* ok) {
     *ok = true;

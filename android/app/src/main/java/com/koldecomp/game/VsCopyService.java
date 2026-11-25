@@ -44,7 +44,10 @@ public class VsCopyService extends Service {
         Thread t = new Thread(() -> {
             try {
                 System.loadLibrary("SDL2");
-                System.loadLibrary("main");
+                // The game being played (this is another process: the choice
+                // is the one SetupActivity kept, Game.java).
+                final int g = Game.current(this);
+                System.loadLibrary(Game.library(g >= 0 ? g : Game.USA));
                 int code = nativeRun(argv, env, log, dir);
                 Log.i(TAG, "the copy ended (" + code + ")");
             } catch (Throwable e) {

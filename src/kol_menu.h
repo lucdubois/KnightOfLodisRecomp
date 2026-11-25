@@ -188,6 +188,9 @@ struct MenuPlatform {
     void (*remove_mod)() = nullptr;   // files/mod/ emptied
     void (*restart)() = nullptr;      // the app ends and starts again
     void (*unlink_rom)() = nullptr;   // the ROM copy set aside, then restart
+    // Technical > Game: the setup screen, after a restart, to take the other
+    // game's ROM or switch to it (one package plays both: kol_region.h).
+    void (*choose_game)() = nullptr;
     void (*show_licenses)() = nullptr;   // Options > Licenses: the app's notices (assets/licenses.txt)
     void (*quit)() = nullptr;         // Options > Quit Game (a desktop: no system gesture closes the game)
     // The RetroAchievements login as a form in the menu itself (a desktop:

@@ -78,3 +78,11 @@ totkol-*.sav
 /build-windows-dev/
 /build-windows-deps/
 /build-windows.*
+# The Japanese game's program (KOL_REGION=ATOJ, docs/REGIONS.md): its own
+# build folders, and its recompiled code (a link to koldecomp/regionmap).
+/build-atoj/
+/build-macos-atoj/
+/build-macos-atoj.*
+/build-windows-atoj/
+/build-windows-atoj.*
+/generated_atoj

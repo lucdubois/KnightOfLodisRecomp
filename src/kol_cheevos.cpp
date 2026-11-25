@@ -1,4 +1,5 @@
 #include "kol_cheevos.h"
+#include "kol_region.h"
 
 #include "kol_settings.h"   // settings_dir
 #include "kol_menu.h"       // menu_cheevo_popup_render, menu_confirm_sound
@@ -271,17 +272,27 @@ void RC_CCONV on_game_loaded(int result, const char* error, rc_client_t* client,
 // set is made for the stock game; the page says why.
 bool begin_game_load(rc_client_t* c) {
     bool mod = false;
+    // The set is the USA cartridge's (kRomMd5): its conditions read that
+    // game's memory. Another cartridge's game keeps its memory elsewhere
+    // (kol_region.h), so the conditions fire by accident: the first run of
+    // the Japanese game, 2026-11-25, unlocked 25 achievements in its first
+    // seconds. A program for another cartridge never loads the set.
+    constexpr bool other_cart = kThisCart != 0;
     {
         std::lock_guard<std::mutex> lock(g_mu);
         if (g_state != CheevosState::LoggedIn || g_game_requested) return false;
         g_game_requested = true;
-        if (rom_patch_name()) {
+        if (other_cart) {
+            g_message = "Only for the USA version of the game.";
+            bump();
+        } else if (rom_patch_name()) {
             g_message = "Not available with a mod loaded.";
             bump();
             mod = true;
         }
     }
-    if (mod) welcome(c, "Achievements are off with a mod.");
+    if (other_cart) welcome(c, "Achievements are for the USA version.");
+    else if (mod) welcome(c, "Achievements are off with a mod.");
     else rc_client_begin_load_game(c, kRomMd5, &on_game_loaded, nullptr);
     return true;
 }

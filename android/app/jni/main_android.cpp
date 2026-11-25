@@ -35,6 +35,7 @@
 #include "kol_vs_cpu.h"
 #include "kol_vs_net.h"
 #include "kol_dev.h"
+#include "kol_region.h"
 #include "kol_settings.h"
 #include "kol_rumble.h"
 #include "kol_cheevos.h"
@@ -317,6 +318,7 @@ jmethodID g_mods_pick_bios = nullptr;
 jmethodID g_mods_pick_shaders = nullptr;
 jmethodID g_mods_sync_pick = nullptr, g_mods_sync_stop = nullptr, g_mods_sync_answer = nullptr;
 jmethodID g_setup_unlink = nullptr;
+jmethodID g_setup_choose = nullptr;
 
 bool platform_bind(JNIEnv* env) {
     if (!env) return false;
@@ -346,8 +348,9 @@ bool platform_bind(JNIEnv* env) {
     g_mods_sync_answer = env->GetStaticMethodID(g_mods_class, "syncAnswer", "(I)V");
     if (env->ExceptionCheck()) env->ExceptionClear();
     g_setup_unlink = env->GetStaticMethodID(g_setup_class, "unlinkRom", "()V");
+    g_setup_choose = env->GetStaticMethodID(g_setup_class, "chooseGame", "()V");
     if (env->ExceptionCheck()) env->ExceptionClear();
-    return g_mods_pick && g_mods_remove && g_mods_restart && g_setup_unlink;
+    return g_mods_pick && g_mods_remove && g_mods_restart && g_setup_unlink && g_setup_choose;
 }
 
 void call_static(jclass cls, jmethodID m) {
@@ -360,6 +363,7 @@ void mods_pick_android() { call_static(g_mods_class, g_mods_pick); }
 void mods_remove_android() { call_static(g_mods_class, g_mods_remove); }
 void restart_android() { call_static(g_mods_class, g_mods_restart); }
 void unlink_rom_android() { call_static(g_setup_class, g_setup_unlink); }
+void choose_game_android() { call_static(g_setup_class, g_setup_choose); }
 void licenses_android() { call_static(g_mods_class, g_mods_licenses); }
 void bios_pick_android() { call_static(g_mods_class, g_mods_pick_bios); }
 void shaders_pick_android() { call_static(g_mods_class, g_mods_pick_shaders); }
@@ -827,8 +831,8 @@ struct GuestArgs {
 void* guest_thread(void* p) {
     auto* a = static_cast<GuestArgs*>(p);
     gbarecomp::RunOptions opts;
-    opts.builtin_game_name = "Tactics Ogre: The Knight of Lodis";
-    opts.builtin_rom_sha1  = "85a46320a31f16f5c6dda27fc094edd078dbe43d";
+    opts.builtin_game_name = kol::kCartName;   // this library's cartridge (kol_region.h)
+    opts.builtin_rom_sha1  = kol::kCartSha1;
     opts.show_fps_by_default = true;
     // Rewind on L2 (gbarecomp's default binding): 20 s kept, a state every
     // 15 frames; each press goes back a second, held it repeats. Off while
@@ -858,9 +862,16 @@ int main(int argc, char** argv) {
                      "no internal storage path; cannot locate ROM/BIOS");
         return 1;
     }
-    const std::string rom  = std::string(base) + "/totkol.gba";
+    // This library's game keeps its ROM, save, slots and mod in its own
+    // folder of files/ (kol_region.h kCarts: files/ itself for the USA game,
+    // where they have always been; files/japan for the Japanese one). The
+    // BIOS and the settings are every game's.
+    const std::string game_base = *kol::kCarts[kol::kThisCart].folder
+        ? std::string(base) + "/" + kol::kCarts[kol::kThisCart].folder : std::string(base);
+    mkdir(game_base.c_str(), 0700);
+    const std::string rom  = game_base + "/totkol.gba";
     const std::string bios = std::string(base) + "/gba_bios.bin";
-    const std::string save = std::string(base) + "/totkol.sav";
+    const std::string save = game_base + "/totkol.sav";
     // VS Mode's session folders (kol_vs_cpu: std::filesystem's temporary
     // folder): an app has no /tmp; files/vs is its own.
     {
@@ -948,7 +959,7 @@ int main(int argc, char** argv) {
     // A mod (Options > Mod): a patch over the ROM, in memory. The runtime
     // gives it its own save and slots; KoL its own memo and numbered states.
     std::string mod_refused;
-    const std::string mod = pick_mod(base, rom, &mod_refused);
+    const std::string mod = pick_mod(game_base, rom, &mod_refused);
     if (!mod.empty()) {
         args.push_back("--rom-patch");
         args.push_back(mod);
@@ -1062,6 +1073,7 @@ int main(int argc, char** argv) {
             p.sync_answer = &sync_answer_android;
         }
         if constexpr (kol::kDevTools) p.unlink_rom = &unlink_rom_android;   // Debug > Unlink ROM
+        p.choose_game = &choose_game_android;   // Technical > Game
         kol::menu_set_platform(p);
     } else {
         std::fprintf(stderr, "mods: Mods / SetupActivity not bound; no Options > Mod\n");

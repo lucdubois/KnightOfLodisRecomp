@@ -17,13 +17,20 @@
 #
 # x86-64, Windows 10 or newer (the UTF-8 code page needs 1903). Not signed:
 # SmartScreen warns about a downloaded copy once ("More info", "Run anyway").
+#
+# Both games when the Japanese ROM's recompiled code is there (generated_atoj,
+# docs/REGIONS.md): KnightOfLodisRecomp-jp.exe (build-windows-atoj) beside the
+# USA one, which hands over to it when the Japanese game is the one to play.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(sed -n 's/.*versionName "\(.*\)".*/\1/p' "$ROOT/android/app/build.gradle" | head -1)"
 [ -n "$VERSION" ] || { echo "no versionName in android/app/build.gradle"; exit 1; }
 DEPS="$ROOT/build-windows-deps"
 BUILD="$ROOT/build-windows"
+BUILD_JP="$ROOT/build-windows-atoj"
 OUT="$ROOT/build/release"
+JAPAN=0
+[ -f "$ROOT/generated_atoj/dispatch_table.cpp" ] && JAPAN=1
 TOOLCHAIN="$ROOT/tools/mingw-w64-x86_64.cmake"
 FOLDER="Knight of Lodis Recomp"
 ZIP="KnightOfLodisRecomp-$VERSION-windows-x64.zip"
@@ -54,28 +61,42 @@ if [ "${1:-}" != "--no-build" ]; then
     fi
     echo "==> public build (Release, KOL_DEV_TOOLS=OFF, static)"
     P="$DEPS/prefix"
-    cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" -DKOL_WIN_PREFIX="$P" \
-        -DCMAKE_BUILD_TYPE=Release -DKOL_DEV_TOOLS=OFF \
-        -DGBARECOMP_STATIC_RELEASE=ON -DGBARECOMP_MINGW_PREFIX_UNIX="$P" -DSDL2_INCLUDE_DIR="$P/include/SDL2" \
-        "-DCMAKE_EXE_LINKER_FLAGS=-static -static-libgcc -static-libstdc++" > "$BUILD.configure.log" 2>&1 \
-        || { tail -20 "$BUILD.configure.log"; exit 1; }
-    cmake --build "$BUILD" --target KnightOfLodisRecomp > "$BUILD.log" 2>&1 \
-        || { grep -E "error" -A3 "$BUILD.log" | head -30; exit 1; }
+    # One build directory a game: the USA one, then the Japanese one's.
+    for b in "$BUILD" "$BUILD_JP"; do
+        region=ATOE
+        if [ "$b" = "$BUILD_JP" ]; then
+            [ "$JAPAN" = 1 ] || continue
+            region=ATOJ
+            echo "==> the Japanese game's program (KOL_REGION=ATOJ)"
+        fi
+        cmake -S "$ROOT" -B "$b" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" -DKOL_WIN_PREFIX="$P" \
+            -DCMAKE_BUILD_TYPE=Release -DKOL_DEV_TOOLS=OFF -DKOL_REGION=$region \
+            -DGBARECOMP_STATIC_RELEASE=ON -DGBARECOMP_MINGW_PREFIX_UNIX="$P" -DSDL2_INCLUDE_DIR="$P/include/SDL2" \
+            "-DCMAKE_EXE_LINKER_FLAGS=-static -static-libgcc -static-libstdc++" > "$b.configure.log" 2>&1 \
+            || { tail -20 "$b.configure.log"; exit 1; }
+        cmake --build "$b" --target KnightOfLodisRecomp > "$b.log" 2>&1 \
+            || { grep -E "error" -A3 "$b.log" | head -30; exit 1; }
+    done
 fi
 BIN="$BUILD/KnightOfLodisRecomp.exe"
+BIN_JP="$BUILD_JP/KnightOfLodisRecomp-jp.exe"
 [ -f "$BIN" ] || { echo "no build at $BIN"; exit 1; }
-for s in "Tools for testing." "Tile Info" "L2 Moves Sun" "Instant Win" "drawn_heights.cfg" "KOL_DESKTOP_MENU_AT" "KOL_SETUP_KEYS"; do
-    if grep -a -q -F -- "$s" "$BIN"; then echo "FOUND a dev tool's string in the release binary: $s"; exit 1; fi
-done
-# No DLL but Windows' own.
-DLLS="$(x86_64-w64-mingw32-objdump -p "$BIN" | sed -n 's/.*DLL Name: //p' | tr 'A-Z' 'a-z' | sort -u)"
-for d in $DLLS; do
-    case "$d" in
-        kernel32.dll|user32.dll|gdi32.dll|winmm.dll|imm32.dll|ole32.dll|oleaut32.dll|version.dll|advapi32.dll|\
-        setupapi.dll|shell32.dll|winhttp.dll|comdlg32.dll|msvcrt.dll|ws2_32.dll|api-ms-win-*|ucrtbase.dll|\
-        bcrypt.dll|dbghelp.dll|psapi.dll|dinput8.dll|hid.dll|cfgmgr32.dll|dwmapi.dll) ;;
-        *) echo "the .exe needs a DLL Windows does not have: $d"; exit 1 ;;
-    esac
+if [ "$JAPAN" = 1 ] && [ ! -f "$BIN_JP" ]; then echo "no build at $BIN_JP"; exit 1; fi
+for b in "$BIN" "$BIN_JP"; do
+    [ -f "$b" ] || continue
+    for s in "Tools for testing." "Tile Info" "L2 Moves Sun" "Instant Win" "drawn_heights.cfg" "KOL_DESKTOP_MENU_AT" "KOL_SETUP_KEYS"; do
+        if grep -a -q -F -- "$s" "$b"; then echo "FOUND a dev tool's string in the release binary $b: $s"; exit 1; fi
+    done
+    # No DLL but Windows' own.
+    DLLS="$(x86_64-w64-mingw32-objdump -p "$b" | sed -n 's/.*DLL Name: //p' | tr 'A-Z' 'a-z' | sort -u)"
+    for d in $DLLS; do
+        case "$d" in
+            kernel32.dll|user32.dll|gdi32.dll|winmm.dll|imm32.dll|ole32.dll|oleaut32.dll|version.dll|advapi32.dll|\
+            setupapi.dll|shell32.dll|winhttp.dll|comdlg32.dll|msvcrt.dll|ws2_32.dll|api-ms-win-*|ucrtbase.dll|\
+            bcrypt.dll|dbghelp.dll|psapi.dll|dinput8.dll|hid.dll|cfgmgr32.dll|dwmapi.dll) ;;
+            *) echo "$b needs a DLL Windows does not have: $d"; exit 1 ;;
+        esac
+    done
 done
 
 echo "==> pack"
@@ -83,6 +104,13 @@ DIR="$WORK/$FOLDER"
 mkdir -p "$DIR"
 cp "$BIN" "$DIR/KnightOfLodisRecomp.exe"
 x86_64-w64-mingw32-strip "$DIR/KnightOfLodisRecomp.exe"
+if [ "$JAPAN" = 1 ]; then
+    cp "$BIN_JP" "$DIR/KnightOfLodisRecomp-jp.exe"
+    x86_64-w64-mingw32-strip "$DIR/KnightOfLodisRecomp-jp.exe"
+fi
+GAMES="(Tactics Ogre: The Knight of Lodis, USA)"
+[ "$JAPAN" = 1 ] && GAMES="(Tactics Ogre: The Knight of Lodis, USA,
+or Tactics Ogre Gaiden: The Knight of Lodis, Japan)"
 [ -f "$ROOT/build/hd_instruments.bank" ] && cp "$ROOT/build/hd_instruments.bank" "$DIR/"
 cp "$ROOT/third_party/NOTICES-desktop.txt" "$DIR/licenses.txt"
 # Windows line ends, for Notepad.
@@ -90,9 +118,9 @@ sed 's/$/\r/' > "$DIR/README.txt" <<README
 Knight of Lodis Recomp $VERSION for Windows (64-bit, Windows 10 or newer)
 
 Start KnightOfLodisRecomp.exe. The first time, it asks for your own copy of
-the game (Tactics Ogre: The Knight of Lodis, USA) and of the GBA BIOS; it
-keeps copies of them, your saves and your settings in
-%APPDATA%\\KnightOfLodisRecomp.
+the game $GAMES
+and of the GBA BIOS; it keeps copies of them, your saves and your settings
+in %APPDATA%\\KnightOfLodisRecomp.
 
 Windows may warn that the program is from an unknown publisher (it is not
 signed): choose "More info", then "Run anyway".

@@ -38,7 +38,10 @@ std::string setup_mod_path(const std::string& dir);
 // once it is checked on the ROM in `dir` (when the ROM is there): a patch
 // that does not apply, or changes the game's code, is refused. False: *why,
 // a sentence for the player. The setup screen's Mod box and Options > Mod.
-bool setup_mod_take(const std::string& dir, const std::string& file, std::string* why);
+// `checked` false: copied as it is (the setup screen, for the other game of
+// the package: only that game's own program can try a patch on its ROM, and
+// does at its start).
+bool setup_mod_take(const std::string& dir, const std::string& file, std::string* why, bool checked = true);
 // `dir`/mod emptied: the original game from the next start.
 void setup_mod_remove(const std::string& dir);
 
@@ -51,10 +54,27 @@ void setup_mod_remove(const std::string& dir);
 int setup_file_dialog(int what, std::string* file);
 bool setup_file_dialog_poll(std::string* file);
 
+// ── One package, more than one game (kol_region.h kCarts) ───────────────
+// Cart `cart`'s folder in the player's `dir`: its ROM (totkol.gba), its
+// save, its mod, its states.
+std::string setup_game_dir(const std::string& dir, int cart);
+// Its program: this one's own path for the cart it runs, the file beside it
+// for another; "" when the package does not hold that program.
+std::string setup_program(int cart);
+// Whether its ROM is in its folder (told by its SHA-1).
+bool setup_rom_in_place(const std::string& dir, int cart);
+// The game to start: the one last chosen (`dir`/game.cfg) when its ROM is in
+// place and the package holds its program; else this program's own, then any
+// other, on the same terms; -1: none can start.
+int setup_game(const std::string& dir);
+// The choice, kept in `dir`/game.cfg.
+void setup_game_set(const std::string& dir, int cart);
+
 // Runs the screen over `dir`, in a window of its own (closable; a file
 // dropped on it is taken as the ROM, the BIOS or a mod by what it is). True:
-// Play was chosen with the right ROM in place. False: the window was closed
-// (the game does not start). `fullscreen`: unused, the screen is a window.
+// Play was chosen with a game's ROM in place (setup_game then names it: not
+// always the game this program runs). False: the window was closed (the game
+// does not start). `fullscreen`: unused, the screen is a window.
 bool setup_run(const std::string& dir, bool fullscreen);
 
 // A page of plain text in this screen's typeface, for the game's window (the

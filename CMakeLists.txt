@@ -169,6 +169,9 @@ option(KOL_DEV_TOOLS "Build the developer tools (Debug page, height editor, dev 
 target_compile_definitions(KnightOfLodisRecomp PRIVATE KOL_DEV_TOOLS=$<IF:$<BOOL:${KOL_DEV_TOOLS}>,1,0>)
 if(KOL_REGION STREQUAL "ATOJ")
     target_compile_definitions(KnightOfLodisRecomp PRIVATE KOL_REGION_ATOJ=1)
+    # The Japanese game's program, beside the USA one in a package for both
+    # (src/kol_region.h kCarts names it).
+    set_target_properties(KnightOfLodisRecomp PROPERTIES OUTPUT_NAME "KnightOfLodisRecomp-jp")
 endif()
 target_include_directories(KnightOfLodisRecomp PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}

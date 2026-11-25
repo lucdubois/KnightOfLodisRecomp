@@ -701,7 +701,7 @@ int on_roam_task(std::uint32_t, int, ArmCpuState* cpu) {
     // TEST (dev builds): KOL_WORLD_BUTTON_AT="k:n" taps the second screen's
     // world button k on this hook's n-th call, as the bar would: 0 Item,
     // 1 Spell, 2 Class, 3 Training, 4 Shop, 5 Save, 6 Load.
-    if (kDevTools) {
+    if constexpr (kDevTools) {
         static const char* spec = std::getenv("KOL_WORLD_BUTTON_AT");
         static int calls = 0;
         int k = 0, n = 0;

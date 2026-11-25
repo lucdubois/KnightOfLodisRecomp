@@ -24,7 +24,9 @@ import java.security.MessageDigest;
  * file picker; a note on the BIOS; Remove mod and Play.
  *
  * The ROM is required and SHA-1 checked here (the native runtime is the real
- * gate). The BIOS is optional: without one, or with a file that is not the
+ * gate). The app may hold more than one game (Game.java): either one's ROM is
+ * taken, into that game's own folder, and with both in place a button
+ * switches between them. The BIOS is optional: without one, or with a file that is not the
  * GBA BIOS, the runtime's HLE BIOS (high-level emulation: built-in
  * replacements for the BIOS's functions, gbarecomp --no-bios) is used; with
  * the real one, the real one. The choice is the files/no_bios marker that
@@ -37,8 +39,9 @@ import java.security.MessageDigest;
 public class SetupActivity extends Activity {
     private static final String TAG = "KoLSetup";
 
-    // main_android.cpp looks for exactly these names.
-    private static final String ROM_NAME  = "totkol.gba";
+    // main_android.cpp looks for exactly these names (the ROM in its game's
+    // folder, Game.rom; the BIOS in files/, every game's).
+    private static final String ROM_NAME  = Game.ROM_NAME;
     private static final String BIOS_NAME = "gba_bios.bin";
     // Present = play without a BIOS; main_android.cpp then passes --no-bios.
     private static final String NO_BIOS_NAME = "no_bios";
@@ -46,9 +49,11 @@ public class SetupActivity extends Activity {
     // start is this screen; "Use the previous ROM" puts it back.
     private static final String UNLINKED_NAME = "totkol.gba.unlinked";
 
-    // Verified in KnightOfLodisRecomp/CLAUDE.md.
-    private static final String ROM_SHA1  = "85a46320a31f16f5c6dda27fc094edd078dbe43d";
+    // Verified in KnightOfLodisRecomp/CLAUDE.md. (The ROMs': Game.SHA1.)
     private static final String BIOS_SHA1 = "300c20df6731a33952ded8c436f7f186d25d3492";
+    // Technical > Game (chooseGame): this screen stays up at the next start,
+    // to take the other game's ROM or switch to it.
+    private static final String CHOOSE_NAME = "choose_game";
 
     private static final int REQ_ROM  = 1;
     private static final int REQ_BIOS = 2;
@@ -75,9 +80,11 @@ public class SetupActivity extends Activity {
         TextView icon, line;
     }
     private Box romBox, biosBox, modBox;
+    private TextView title;      // the game the boxes are for
     private TextView status;     // a copy's error, a missing ROM
-    private Button removeMod, play;
+    private Button removeMod, play, switchGame;
     private boolean romOk, biosOk;
+    private int game = Game.USA;   // the game the boxes are for (Game.java)
 
     private int dp(float v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -159,8 +166,13 @@ public class SetupActivity extends Activity {
         root.setGravity(Gravity.CENTER);
         root.setPadding(dp(24), dp(16), dp(24), dp(16));
 
-        TextView title = new TextView(this);
-        title.setText("Tactics Ogre: The Knight of Lodis");
+        // The game the boxes are for: the running one's when the game opened
+        // this screen for a file, else the one that would start.
+        game = Game.loaded >= 0 ? Game.loaded : Math.max(Game.current(this), Game.USA);
+        Game.selected = game;
+
+        title = new TextView(this);
+        title.setText(Game.NAME[game]);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, 0, 0, dp(16));
@@ -176,18 +188,35 @@ public class SetupActivity extends Activity {
                                                         ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // Debug > Unlink ROM left the ROM aside: put it back without a file.
-        if (new File(getFilesDir(), UNLINKED_NAME).exists()) {
+        for (int g = 0; g < Game.COUNT; ++g) {
+            final int which = g;
+            final File aside = new File(Game.dir(this, g), UNLINKED_NAME);
+            if (!aside.exists()) continue;
             Button relink = new Button(this);
             relink.setText("Use the previous ROM");
             relink.setOnClickListener(v -> {
-                File rom = new File(getFilesDir(), ROM_NAME);
-                if (rom.exists() || new File(getFilesDir(), UNLINKED_NAME).renameTo(rom)) {
+                File rom = Game.rom(this, which);
+                if (rom.exists() || aside.renameTo(rom)) {
                     root.removeView(v);
+                    game = which;
                     refresh();
                 }
             });
             root.addView(relink);
         }
+
+        // Two games in place: the other one, with its own save and states.
+        switchGame = new Button(this);
+        switchGame.setOnClickListener(v -> {
+            for (int k = 1; k < Game.COUNT; ++k) {
+                final int g = (game + k) % Game.COUNT;
+                if (romIs(g)) { game = g; break; }
+            }
+            status.setText("");
+            refresh();
+        });
+        switchGame.setVisibility(android.view.View.GONE);
+        root.addView(switchGame);
 
         TextView note = new TextView(this);
         note.setText("A GBA BIOS file is best: the game runs on the real BIOS, as on the console. "
@@ -268,10 +297,65 @@ public class SetupActivity extends Activity {
             }, "sync-import").start();
             return;
         }
+        // Technical > Game asked for this screen: it stays up.
+        if (new File(getFilesDir(), CHOOSE_NAME).delete()) {
+            boxViews.get(romBox).requestFocus();
+            return;
+        }
         // Already provisioned from a previous run (the right ROM): go straight
         // to the game.
         if (romOk) launchGame();
         else boxViews.get(romBox).requestFocus();
+    }
+
+    @Override
+    protected void onDestroy() {
+        Game.selected = -1;
+        super.onDestroy();
+    }
+
+    /** Whether game g's ROM is in its folder (its SHA-1) and the app plays it. */
+    private boolean romIs(int g) {
+        final File rom = Game.rom(this, g);
+        return Game.hasProgram(this, g) && rom.exists() && Game.SHA1[g].equalsIgnoreCase(sha1(rom));
+    }
+
+    /** A ROM picked: told by its SHA-1, then into its own game's folder; that
+     *  game is the one the boxes are for. Anything else is left out, and the
+     *  ROMs in place stay as they are. */
+    private void pickedRom(Uri uri) {
+        final File tmp = new File(getFilesDir(), ROM_NAME + ".new");
+        String message = "";
+        try {
+            copyToPrivate(uri, tmp.getName());
+            final int g = Game.ofSha1(sha1(tmp));
+            final boolean both = Game.programs(this) > 1;
+            if (g < 0) {
+                message = both ? "Wrong file: not the game's ROM (the USA or the Japanese version is needed)."
+                               : "Wrong file: not this game's ROM (the USA version is needed).";
+            } else if (!Game.hasProgram(this, g)) {
+                message = "That is " + Game.NAME[g] + ": this app plays only the USA version.";
+            } else {
+                final File dir = Game.dir(this, g);
+                dir.mkdirs();
+                final File rom = Game.rom(this, g);
+                rom.delete();
+                if (!tmp.renameTo(rom)) {
+                    message = "The ROM could not be loaded.";
+                } else {
+                    new File(dir, UNLINKED_NAME).delete();
+                    game = g;
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "rom copy failed", e);
+            message = "Copy failed: " + e.getMessage();
+        }
+        tmp.delete();
+        refresh();   // the player presses Play
+        // (After refresh, which clears the line when the boxes' ROM is right:
+        // a file that was refused is said so even then.)
+        status.setText(message);
     }
 
     private void pick(int request) {
@@ -300,13 +384,15 @@ public class SetupActivity extends Activity {
             importShaders(data.getData());
             return;
         }
-        String name = (request == REQ_ROM) ? ROM_NAME : BIOS_NAME;
+        if (request == REQ_ROM) {
+            pickedRom(data.getData());
+            return;
+        }
         try {
-            copyToPrivate(data.getData(), name);
-            if (request == REQ_ROM) new File(getFilesDir(), UNLINKED_NAME).delete();
+            copyToPrivate(data.getData(), BIOS_NAME);
             // A BIOS chosen here is the one to play with (launchGame puts the
             // marker back if the file is not the GBA BIOS).
-            if (request == REQ_BIOS) setNoBios(false);
+            setNoBios(false);
         } catch (Exception e) {
             Log.e(TAG, "copy failed", e);
             status.setText("Copy failed: " + e.getMessage());
@@ -413,9 +499,9 @@ public class SetupActivity extends Activity {
         if (error == null) {
             try {
                 Mods.clear(this);
-                File dir = new File(getFilesDir(), Mods.DIR);
+                File dir = new File(Game.activeDir(this), Mods.DIR);   // (the game's own)
                 dir.mkdirs();
-                copyToPrivate(uri, Mods.DIR + "/" + name);
+                copyTo(uri, new File(dir, name));
             } catch (Exception e) {
                 Log.e(TAG, "mod copy failed", e);
                 Mods.clear(this);
@@ -454,7 +540,7 @@ public class SetupActivity extends Activity {
             android.content.Context ctx = org.libsdl.app.SDL.getContext();
             if (!(ctx instanceof Activity) || ((Activity) ctx).isFinishing()) return;
             final Activity act = (Activity) ctx;
-            File dir = act.getFilesDir();
+            File dir = Game.activeDir(act);   // (the running game's)
             File old = new File(dir, UNLINKED_NAME);
             old.delete();
             if (!new File(dir, ROM_NAME).renameTo(old)) {
@@ -466,7 +552,10 @@ public class SetupActivity extends Activity {
     }
 
     private void copyToPrivate(Uri src, String destName) throws Exception {
-        File dest = new File(getFilesDir(), destName);
+        copyTo(src, new File(getFilesDir(), destName));
+    }
+
+    private void copyTo(Uri src, File dest) throws Exception {
         try (InputStream in = getContentResolver().openInputStream(src);
              OutputStream out = new FileOutputStream(dest)) {
             if (in == null) throw new IllegalStateException("cannot open source");
@@ -492,9 +581,19 @@ public class SetupActivity extends Activity {
 
     /** Each box from the files there, SHA-1 checked; Remove mod and Play to match. */
     private void refresh() {
-        File rom = new File(getFilesDir(), ROM_NAME);
-        String romSha = rom.exists() ? sha1(rom) : null;
-        romOk = romSha != null && romSha.equalsIgnoreCase(ROM_SHA1);
+        // The boxes' game: the one chosen, or with no ROM of its own in place
+        // the one that has.
+        final boolean[] have = new boolean[Game.COUNT];
+        int games = 0;
+        for (int g = 0; g < Game.COUNT; ++g) if (have[g] = romIs(g)) ++games;
+        if (!have[game]) for (int g = 0; g < Game.COUNT; ++g) if (have[g]) { game = g; break; }
+        Game.selected = game;
+        title.setText(Game.NAME[game]);
+        switchGame.setVisibility(games > 1 ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (games > 1) switchGame.setText("Switch to " + Game.NAME[(game + 1) % Game.COUNT]);
+
+        File rom = Game.rom(this, game);
+        romOk = have[game];
         if (!rom.exists()) show(romBox, '!', RED, "Required: select the game's ROM");
         else if (romOk) show(romBox, '\u2713', GREEN, "Loaded");
         else show(romBox, '!', RED, "Wrong file: not this game's ROM");
@@ -539,7 +638,36 @@ public class SetupActivity extends Activity {
         // this runs on every start, the menu's restarts too, so it must not undo it.
         File bios = new File(getFilesDir(), BIOS_NAME);
         if (!(bios.exists() && BIOS_SHA1.equalsIgnoreCase(sha1(bios)))) setNoBios(true);
+        // The game to play, for MainActivity's library (and the VS copy's).
+        Game.choose(this, game);
+        // A process holds one game's library: with the other one's loaded
+        // here already, the app starts again (and comes back through this
+        // screen, straight to the game).
+        if (Game.loaded >= 0 && Game.loaded != game) {
+            RestartActivity.restart(this);
+            return;
+        }
         startActivity(new Intent(this, MainActivity.class));
         finish();
+    }
+
+    /**
+     * Technical > Game (kol_menu): the app starts again on this screen, which
+     * stays up, to take the other game's ROM or switch to it. Saves, states
+     * and settings stay.
+     */
+    public static void chooseGame() {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            android.content.Context ctx = org.libsdl.app.SDL.getContext();
+            if (!(ctx instanceof Activity) || ((Activity) ctx).isFinishing()) return;
+            final Activity act = (Activity) ctx;
+            try {
+                new FileOutputStream(new File(act.getFilesDir(), CHOOSE_NAME)).close();
+            } catch (Exception e) {
+                Log.e(TAG, "cannot write " + CHOOSE_NAME, e);
+                return;
+            }
+            RestartActivity.restart(act);
+        });
     }
 }
