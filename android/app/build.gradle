@@ -25,18 +25,27 @@ android {
     compileSdk 34
     ndkVersion '27.3.13750724'
 
+    // A one-off build for a player (gradle -PversionSuffix=name, 2026-11-24:
+    // the Odin 2 Portal's menu fix): "1.2.2-name", the same package and key,
+    // so it installs over the release; the log's version line says it too.
+    // KOL_VERSION is passed every time (empty without the suffix: CMake then
+    // reads versionName), so a suffix never stays in CMake's cache.
+    def versionSuffix = project.findProperty('versionSuffix')
+
     defaultConfig {
         applicationId "com.koldecomp.game"
         minSdk 24
         targetSdk 34
         versionCode 8
         versionName "1.2.2"
+        if (versionSuffix) versionNameSuffix "-${versionSuffix}"
 
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_shared',
                           '-DGBARECOMP_BUILD_ORACLE=OFF',
-                          '-DCMAKE_BUILD_TYPE=Release'
+                          '-DCMAKE_BUILD_TYPE=Release',
+                          "-DKOL_VERSION=${versionSuffix ? versionName + '-' + versionSuffix : ''}"
                 // arm64 only: the Thor and every modern Android handheld is
                 // arm64-v8a, and each extra ABI means another full 40 MB
                 // build of 38,217 recompiled functions in the APK.

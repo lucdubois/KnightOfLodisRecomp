@@ -116,8 +116,12 @@ set(KOL_SOURCES
 # release OFF).
 option(KOL_DEV_TOOLS "Build the developer tools (Debug page, height editor, dev logs)" ON)
 # The version in the session log's first line (kol_crash.cpp).
-file(STRINGS "${KOL_ROOT}/android/app/build.gradle" KOL_VERSION_LINE REGEX "versionName \"")
-string(REGEX REPLACE ".*versionName \"([^\"]*)\".*" "\\1" KOL_VERSION "${KOL_VERSION_LINE}")
+# -DKOL_VERSION (Gradle passes it: "1.2.2-name" for a -PversionSuffix build,
+# empty otherwise), else versionName.
+if(NOT KOL_VERSION)
+    file(STRINGS "${KOL_ROOT}/android/app/build.gradle" KOL_VERSION_LINE REGEX "versionName \"")
+    string(REGEX REPLACE ".*versionName \"([^\"]*)\".*" "\\1" KOL_VERSION "${KOL_VERSION_LINE}")
+endif()
 set_source_files_properties("${KOL_ROOT}/src/kol_crash.cpp" PROPERTIES COMPILE_DEFINITIONS "KOL_VERSION=\"${KOL_VERSION}\"")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KOL_ROOT}/android/app/build.gradle")
 
