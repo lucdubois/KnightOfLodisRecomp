@@ -177,6 +177,9 @@ void grow_over_sprite(const std::uint8_t* layers, int w, int h) {
                 }
         }
     }
+    // kNoOverGrowMaps: the covering pixels alone (with their margin), no growth.
+    static const bool grow_all = std::getenv("KOL_OVER_GROW_ALL") != nullptr;
+    if (!grow_all && by_map(kNoOverGrowMaps, current_map())) return;
     for (OverSeeds& o : g_over_seeds) {
         depth = o.depth;
         foot = o.foot;

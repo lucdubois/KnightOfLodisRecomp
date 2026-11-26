@@ -20001,6 +20001,31 @@ byte the same (0 pixels); the cover's patch now matches the bed; lying and sitti
 0,1; the sepia flashback states/thor/0121 (same scene); invariants 66e13ab2 / 9054c456. 51 pixels of
 the walls shift one pixel at rest, the warp's rows. Not seen on the Thor. `shots/map59/s14_*.png`.
 
+### The woman at the table lost her body behind the chair (2026-11-26)
+
+Reported on the Thor (Japanese state `states/thor_japan/0008`, map 59, "ここは…?"; the
+USA game alike, `states/thor/0306`): with the right stick off its rest, the woman at
+the table (actor 3, sitting at X 48, Y 16, Z 144) showed only her head; from the
+shoulders down the chair was drawn over her.
+
+Cause: the priority cut (kol_focus_atlas `grow_over_sprite`). At rest the game hides a
+few of her texels behind the table (29 pixels), the chair she sits in (11) and the
+floor (7); the card keeps them and those pixels are drawn again after it, where the
+camera puts them. Then they grow over every neighbour nearer than her by X + Z and
+above her feet, within 64 of the card: here the rest of the chair (its seat, its back's
+front end beside her), so with the stick off its rest the whole chair came over her.
+Found by leaving the chair out of the model (she was whole), then
+`KOL_UNIT_PRIORITY_CUT=1` (whole), then printing the seeds by model part
+(`g_modeled`). Keeping the growth within one part did not help: the chair's own seeds
+grew over the chair.
+
+Fix: `kNoOverGrowMaps` {59, 60, 61} (kol_focus_tables.h): in the bedroom the
+covering pixels are drawn again but do not grow. Growth is for a wall or a roof, of
+which more comes over a unit as the camera moves; a chair's back beside her and a
+table in front do not. `KOL_OVER_GROW_ALL=1`: grown (old). Checked: Japanese 0008 at
+five stick positions (whole in each, the table still over her lap where it is in front
+of her), the picture at rest identical to before (0 pixels), USA 0306 old against new.
+
 ## Four more scene maps modelled: 77, 78, 83 and 91 (2026-11-03)
 
 Asked to model scene maps 77, 78 and 83 the same way as the others (77 and

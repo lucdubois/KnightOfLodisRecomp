@@ -999,6 +999,19 @@ constexpr int kEveryActor = -2;
 // (OamClaim::seated_claim): 101, the intro's castle room.
 struct SeatedMap { int map; };
 constexpr SeatedMap kSeatedMaps[] = {{101}};
+// Rooms of furniture where what covers a unit at rest does not grow
+// (grow_over_sprite): only the pixels that hid its texels are drawn again
+// after its card, where the camera puts them. The bedroom (59, its night 60
+// and its day 61): the woman at the table (map 59, actor 3, sitting at X 48
+// Z 144) is hidden at rest by a few pixels of the table, of the chair she
+// sits in and of the floor; the chair's grew over the rest of the chair
+// nearer than her by X + Z (its back's front end beside her, its seat), and
+// with the stick off its rest it was drawn over her from the shoulders down
+// (Thor state japan/0008; the USA game alike). Growth is for a wall or a
+// roof, of which more comes over a unit as the camera moves; a chair's back
+// beside her and a table in front do not. KOL_OVER_GROW_ALL=1: grown (old).
+struct NoOverGrowMap { int map; };
+constexpr NoOverGrowMap kNoOverGrowMaps[] = {{59}, {60}, {61}};
 constexpr int kAnyY = -1000;
 // units_in_front: in its wall, but what it covers of a unit stays the unit's
 //   (map 3's church door: Eleanor ends in the doorway at the door's own place,
