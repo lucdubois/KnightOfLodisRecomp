@@ -29,6 +29,7 @@ On a computer, replace the old AppImage, app or folder with the new one. Your sa
 
 ## Fixes
 
+- **No sound on each setting change.** While the options menu is open, the game runs a few frames after each change so the change shows; those frames played a short piece of sound every time. They are silent now.
 - **The menu with translation mods.** With some translation mods (a Spanish one was reported), the menu did not open and the game stayed paused. The menu now opens, with the game's options in English.
 
 ## Known limits

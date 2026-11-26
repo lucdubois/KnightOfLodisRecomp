@@ -2346,6 +2346,15 @@ bool menu_is_open() {
 // the game never gets further than one run of them from where it was held;
 // a state loaded meanwhile (Save States) is saved again. Never in a network
 // match (the other player's game would wait for this one).
+// Those frames are not heard (asked 2026-11-26: a bit of sound played at
+// each change, the same frames each time): the output is muted from the
+// change until the game is held again (gba_audio_request_mute). The game is
+// silent on either side, held, so nothing clicks.
+}  // namespace kol
+namespace gba {                            // gba_audio.h
+void gba_audio_request_mute(bool on);
+}
+namespace kol {
 namespace {
 constexpr int kNudgeFrames = 4;
 constexpr int kHoldSlot = 91;   // (kol_states: 90 is a picked load)
@@ -2368,6 +2377,13 @@ const std::string& hold_path() {
     }();
     return p;
 }
+
+void nudge_mute(bool on) {
+    static bool muted = false;   // (asked about 100 times a second)
+    if (on == muted) return;
+    muted = on;
+    gba::gba_audio_request_mute(on);
+}
 }  // namespace
 
 int menu_pause_query() {
@@ -2376,6 +2392,7 @@ int menu_pause_query() {
         g_nudge_seen.store(rev, std::memory_order_relaxed);
         g_nudge.store(0, std::memory_order_relaxed);
         g_snap.store(kSnapNone, std::memory_order_relaxed);
+        nudge_mute(false);
         return 0;
     }
     if (g_snap.load(std::memory_order_relaxed) == kSnapNone && !hold_path().empty()) {
@@ -2401,7 +2418,9 @@ int menu_pause_query() {
             gbarecomp::runtime_request_state_load(kHoldSlot);
         }
     }
-    return g_nudge.load(std::memory_order_relaxed) > 0 ? 0 : 1;
+    const bool nudging = g_nudge.load(std::memory_order_relaxed) > 0;
+    nudge_mute(nudging);   // held again: the next sound heard is the game's own
+    return nudging ? 0 : 1;
 }
 
 const char* menu_hold_state_path(int slot) {

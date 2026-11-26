@@ -24725,3 +24725,25 @@ phone's touch button. Checked headless: the speed by
 toggle (a headless run takes no pad or keyboard): on the Thor or a desktop
 with a controller.
 
+
+## A bit of sound at each change of a setting (2026-11-26)
+
+Asked: no sound heard on each setting change. The options menu holds the
+game, and each change reloads the state saved as the menu opened and runs 4
+frames from it (with the frame or so before the load), so the change is drawn
+(the menu hold, kol_menu `menu_pause_query`). Those frames were heard: the
+same piece of music and effects each time. `settings_music_quiet` only
+turned the music down, gliding over ~30 ms, and only in HQ and HD (the
+volumes need the MP2K shadow); the effects stayed at full and in Original
+nothing was quieted. Now the whole output is muted from the change until the
+game is held again (`nudge_mute`, gbarecomp `gba_audio_request_mute`:
+ENHANCEMENTS "Muting the output"). The game is silent on either side, held,
+so nothing clicks. A menu sound asked for while the game is held is played
+in those frames and is not heard either; before, only its first 4 frames
+were.
+
+Checked headless (`KOL_DESKTOP_TOUCH_AT`, three changes on the title screen
+with the menu open, `GBARECOMP_AUDIO_RAW`, the build before against this
+one): the two recordings are identical sample for sample except frames
+898.6..914.5, where the build before played the title music (peak 10674) and
+this one plays zeros. The user confirmed it on the Thor.
