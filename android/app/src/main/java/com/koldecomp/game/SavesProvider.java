@@ -28,6 +28,11 @@ import java.io.IOException;
  * the one before, with a crash's report: kol_crash.h). The ROM, the BIOS and
  * the settings are never shown.
  *
+ * The Japanese game keeps its own in files/japan (Game.java): that folder is
+ * shown at the top too, holding the same kinds of files and folders as the
+ * top (its saves, slot states and states' folders; the logs are every game's,
+ * at the top only), so its saves are reached the same way.
+ *
  * A file put in under a name that exists replaces it; the one that was there
  * is kept beside it as "<name>.bak". The game reads totkol.sav when it starts,
  * so a save is replaced with the game closed; a state is read when it is loaded.
@@ -64,9 +69,16 @@ public class SavesProvider extends DocumentsProvider {
         return name.matches("states(-[0-9a-f]{8})?");
     }
 
-    /** A folder shown at the top: the states' folders, and the logs (kol_crash.h). */
-    private static boolean shownDir(String name) {
-        return statesDir(name) || name.equals("logs");
+    /** A game's own top: files/ itself (the USA game's) or a game's folder (files/japan). */
+    private static boolean gameTop(String id) {
+        return id.equals(TOP) || Game.isFolder(id);
+    }
+
+    /** A folder shown in a game's top: the states' folders; at the very top also
+     *  the logs (kol_crash.h) and the other games' folders. */
+    private static boolean shownDir(String parentId, String name) {
+        if (statesDir(name)) return true;
+        return parentId.equals(TOP) && (name.equals("logs") || Game.isFolder(name));
     }
 
     /** May this path under files/ be shown? Never anything with a ".." in it. */
@@ -75,15 +87,22 @@ public class SavesProvider extends DocumentsProvider {
         String[] parts = id.split("/", -1);
         for (String part : parts)
             if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
-        if (shownDir(parts[0])) return true;
-        return parts.length == 1 && saveName(id);
+        int at = 0;   // where the game's own path starts: after "japan/"
+        if (Game.isFolder(parts[0])) {
+            if (parts.length == 1) return true;
+            at = 1;
+        } else if (parts[0].equals("logs")) {
+            return true;
+        }
+        if (statesDir(parts[at])) return true;
+        return parts.length == at + 1 && saveName(parts[at]);
     }
 
     /** May a file of this name be made in (or renamed within) this folder? */
     private static boolean nameAllowed(String parentId, String name) {
         if (name.contains("/") || !shown(childId(parentId, name))) return false;
-        // At the top only a save or a state: never a file in a states folder's name.
-        return !parentId.equals(TOP) || saveName(name);
+        // In a game's top only a save or a state: never a file in a folder's name.
+        return !gameTop(parentId) || saveName(name);
     }
 
     private File file(String id) throws FileNotFoundException {
@@ -162,8 +181,8 @@ public class SavesProvider extends DocumentsProvider {
             for (File f : children) {
                 String id = childId(parentId, f.getName());
                 if (!shown(id)) continue;
-                // At the top only files, and the states folders.
-                if (parentId.equals(TOP) && f.isDirectory() != shownDir(f.getName())) continue;
+                // In a game's top only files, and the folders shown there.
+                if (gameTop(parentId) && f.isDirectory() != shownDir(parentId, f.getName())) continue;
                 addRow(c, id, f);
             }
         }

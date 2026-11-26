@@ -43,7 +43,10 @@ import java.util.regex.Pattern;
  * totkol.sav and totkol.state1.., a mod's totkol-<8 hex>.sav and states, the
  * numbered states' folders ("states", "states-<8 hex>", with their pictures
  * and notes), and "logs". These are "the saves" below; the logs are copied
- * too but are never asked about or backed up.
+ * too but are never asked about or backed up. The Japanese game's saves are
+ * the same kinds of files in files/japan (Game.java), copied to a "japan"
+ * folder in the picked one (the logs are every game's, at the top only).
+ * Every question, backup and import covers both games' saves as one set.
  *
  * Picking a folder that already holds saves of this game which differ from the
  * game's asks which to keep (kol_menu, menu_sync_ask): the folder's or the
@@ -109,23 +112,32 @@ final class SyncFolder {
         return rel.matches(".*\\.state[0-9]*");
     }
 
-    /** files/'s saves (relative path -> file), and its logs if asked. */
+    /** files/'s saves (relative path -> file), every game's, and its logs if asked. */
     static TreeMap<String, File> appFiles(File base, boolean logs) {
         final TreeMap<String, File> out = new TreeMap<>();
-        final File[] top = base.listFiles();
-        if (top == null) return out;
+        appGameFiles(base, "", logs, out);
+        for (int g = 0; g < Game.COUNT; ++g) {
+            final String folder = Game.folder(g);
+            if (!folder.isEmpty()) appGameFiles(new File(base, folder), folder + "/", false, out);
+        }
+        return out;
+    }
+
+    /** One game's saves, in dir, under prefix ("" or "japan/"). */
+    private static void appGameFiles(File dir, String prefix, boolean logs, TreeMap<String, File> out) {
+        final File[] top = dir.listFiles();
+        if (top == null) return;
         for (File f : top) {
             final String n = f.getName();
             if (f.isFile() && TOP.matcher(n).matches()) {
-                out.put(n, f);
+                out.put(prefix + n, f);
             } else if (f.isDirectory() && (STATES.matcher(n).matches() || (logs && n.equals(LOGS)))) {
                 final File[] in = f.listFiles();
                 if (in != null)
                     for (File g : in)
-                        if (g.isFile() && !g.getName().startsWith(".")) out.put(n + "/" + g.getName(), g);
+                        if (g.isFile() && !g.getName().startsWith(".")) out.put(prefix + n + "/" + g.getName(), g);
             }
         }
-        return out;
     }
 
     /** A file or folder in the picked folder. */
@@ -163,27 +175,40 @@ final class SyncFolder {
         return out;
     }
 
-    /** The folder's saves (relative path -> doc), and its logs if asked. Its
-     *  subfolders read go in dirs, the folder itself as "". */
+    /** The folder's saves (relative path -> doc), every game's, and its logs if
+     *  asked. Its subfolders read go in dirs, the folder itself as "". */
     static TreeMap<String, Doc> folderFiles(ContentResolver cr, Uri tree, Map<String, Doc> dirs, boolean logs)
             throws IOException {
         final String root = DocumentsContract.getTreeDocumentId(tree);
         final TreeMap<String, Doc> out = new TreeMap<>();
         dirs.put("", new Doc(root, null, 0, 0, true));
+        folderGameFiles(cr, tree, root, "", dirs, logs, out);
+        return out;
+    }
+
+    /** One game's saves in the folder's doc id, under prefix ("" or "japan/");
+     *  at the top, the other games' folders too. */
+    private static void folderGameFiles(ContentResolver cr, Uri tree, String id, String prefix, Map<String, Doc> dirs,
+                                        boolean logs, TreeMap<String, Doc> out) throws IOException {
         final List<String> sub = new ArrayList<>();
-        for (Map.Entry<String, Doc> e : children(cr, tree, root).entrySet()) {
+        final List<String> games = new ArrayList<>();
+        for (Map.Entry<String, Doc> e : children(cr, tree, id).entrySet()) {
             final String n = e.getKey();
             final Doc d = e.getValue();
-            if (!d.dir && TOP.matcher(n).matches()) out.put(n, d);
-            else if (d.dir && (STATES.matcher(n).matches() || (logs && n.equals(LOGS)))) {
+            if (!d.dir && TOP.matcher(n).matches()) {
+                out.put(prefix + n, d);
+            } else if (d.dir && (STATES.matcher(n).matches() || (logs && n.equals(LOGS)))) {
+                dirs.put(prefix + n, d);
+                sub.add(prefix + n);
+            } else if (d.dir && prefix.isEmpty() && Game.isFolder(n)) {
                 dirs.put(n, d);
-                sub.add(n);
+                games.add(n);
             }
         }
-        for (String n : sub)
-            for (Map.Entry<String, Doc> e : children(cr, tree, dirs.get(n).id).entrySet())
-                if (!e.getValue().dir && !e.getKey().startsWith(".")) out.put(n + "/" + e.getKey(), e.getValue());
-        return out;
+        for (String rel : sub)
+            for (Map.Entry<String, Doc> e : children(cr, tree, dirs.get(rel).id).entrySet())
+                if (!e.getValue().dir && !e.getKey().startsWith(".")) out.put(rel + "/" + e.getKey(), e.getValue());
+        for (String g : games) folderGameFiles(cr, tree, dirs.get(g).id, g + "/", dirs, false, out);
     }
 
     private static Doc stat(ContentResolver cr, Uri tree, String id, String parent) {
@@ -749,6 +774,17 @@ final class SyncFolder {
 
     // ── The folder's saves put in place (SetupActivity, before the game) ─
 
+    /** Every file stageFolders copied in (relative path -> file): the paths
+     *  folderFiles gave, so "japan/states/0001.state" and the like. */
+    private static void stagedFiles(File dir, String prefix, TreeMap<String, File> out) {
+        final File[] in = dir.listFiles();
+        if (in == null) return;
+        for (File f : in) {
+            if (f.isFile()) out.put(prefix + f.getName(), f);
+            else if (f.isDirectory()) stagedFiles(f, prefix + f.getName() + "/", out);
+        }
+    }
+
     static boolean importWaiting(Context c) {
         return new File(new File(c.getFilesDir(), IMPORT), "plan").isFile();
     }
@@ -778,17 +814,8 @@ final class SyncFolder {
                     allowed |= u.getUri().equals(tree) && u.isWritePermission();
                 if (!allowed) throw new IOException("the folder may no longer be reached; choose it again");
 
-                final File from = new File(stage, "files");
                 final TreeMap<String, File> staged = new TreeMap<>();
-                final File[] top = from.listFiles();
-                if (top != null)
-                    for (File f : top) {
-                        if (f.isFile()) staged.put(f.getName(), f);
-                        else {
-                            final File[] in = f.listFiles(File::isFile);
-                            if (in != null) for (File g : in) staged.put(f.getName() + "/" + g.getName(), g);
-                        }
-                    }
+                stagedFiles(new File(stage, "files"), "", staged);
                 final TreeMap<String, File> ours = appFiles(base, false);
 
                 // The game's own first, to the backup folder.

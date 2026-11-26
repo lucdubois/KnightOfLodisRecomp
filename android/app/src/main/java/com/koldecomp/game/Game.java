@@ -45,6 +45,15 @@ final class Game {
 
     static File rom(Context c, int game) { return new File(dir(c, game), ROM_NAME); }
 
+    /** The game's folder under files/: "" for the USA game (files/ itself). */
+    static String folder(int game) { return FOLDER[game]; }
+
+    /** Whether this name is a game's own folder under files/ ("japan"). */
+    static boolean isFolder(String name) {
+        for (String f : FOLDER) if (!f.isEmpty() && f.equals(name)) return true;
+        return false;
+    }
+
     static String library(int game) { return LIBRARY[game]; }
 
     /** Whether this app holds the game's library (the Japanese one is built
