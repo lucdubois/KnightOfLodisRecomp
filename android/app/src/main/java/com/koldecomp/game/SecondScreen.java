@@ -290,7 +290,7 @@ public final class SecondScreen {
         try { nativeBottomSize(w, h); } catch (Throwable t) { /* native not ready */ }
     }
     static int bottomScaling() {
-        try { return nativeBottomScaling(); } catch (Throwable t) { return 0; }
+        try { return nativeBottomScaling(); } catch (Throwable t) { return 1; }   // Smooth, the default
     }
 
     // Options > Display > Bottom Shader (kol_shaders screen 1): the second

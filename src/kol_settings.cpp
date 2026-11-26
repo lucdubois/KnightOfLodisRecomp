@@ -175,8 +175,9 @@ constexpr unsigned kRatioCount = sizeof(kRatios) / sizeof(kRatios[0]);
 constexpr unsigned kRatio169 = kRatioCount - 1u;   // with no panel known
 // Options > Display > Scaling (2026-11-23; the desktop's first, then Android
 // too, asked: a 1080p panel is 6.75x the native 240x160): how the picture
-// fills the window or screen. 0 Integer (the default), 1 Smooth (gbarecomp's
-// sharp scaling; "sharp" in the file), 2 Stretch (the fill as before).
+// fills the window or screen. 0 Integer, 1 Smooth (gbarecomp's sharp
+// scaling; "sharp" in the file; the default since 2026-11-26, asked: it was
+// Integer), 2 Stretch (the fill as before). A saved choice is kept.
 // gbarecomp g_host_scaling_mode; scaling= in enhancements.cfg.
 constexpr unsigned kScalingCount = 3;
 constexpr const char* kScalingKeys[kScalingCount] = {"integer", "sharp", "stretch"};
@@ -185,10 +186,12 @@ constexpr const char* kScalingHelp[kScalingCount] = {
     "Even pixels. Can show a black\nborder around the picture.",
     "Stretches the pixels, with a\nfilter to make them look even.",
     "Fills the window, with\nstretched pixels."};
-unsigned g_scaling = 0;
+constexpr unsigned kScalingDefault = 1u;   // Smooth
+unsigned g_scaling = kScalingDefault;
 // The same three for a second screen (Android's presentation display, drawn
 // by StatsView at a whole scale of its 248x184 canvas): bottom_scaling=.
-unsigned g_bottom_scaling = 0;
+// Smooth by default too (2026-11-26, asked).
+unsigned g_bottom_scaling = kScalingDefault;
 // Options > Display > Shader (kol_shaders.h): "" none, or "user:<path>"
 // (under the player's shaders folder).
 std::string g_shader;
@@ -198,7 +201,7 @@ std::atomic<int> g_bottom_size{0};   // the bottom screen's w << 16 | h, 0 none
 
 void apply_scaling() {
     static constexpr int kHostMode[kScalingCount] = {1, 2, 0};   // gbarecomp: 1 integer, 2 sharp, 0 stretch
-    gbarecomp::g_host_scaling_mode = kHostMode[g_scaling < kScalingCount ? g_scaling : 0u];
+    gbarecomp::g_host_scaling_mode = kHostMode[g_scaling < kScalingCount ? g_scaling : kScalingDefault];
 }
 
 unsigned g_ratio = kRatio169;
@@ -431,8 +434,8 @@ void save() {
     std::fprintf(f, "height=%u\n", g_widescreen_height);
     // Only a picked shape: otherwise the screen's own decides at each start.
     if (g_ratio_chosen) std::fprintf(f, "ratio=%s\n", kRatios[g_ratio].label);
-    std::fprintf(f, "scaling=%s\n", kScalingKeys[g_scaling < kScalingCount ? g_scaling : 0u]);
-    std::fprintf(f, "bottom_scaling=%s\n", kScalingKeys[g_bottom_scaling < kScalingCount ? g_bottom_scaling : 0u]);
+    std::fprintf(f, "scaling=%s\n", kScalingKeys[g_scaling < kScalingCount ? g_scaling : kScalingDefault]);
+    std::fprintf(f, "bottom_scaling=%s\n", kScalingKeys[g_bottom_scaling < kScalingCount ? g_bottom_scaling : kScalingDefault]);
     if (!g_shader.empty()) std::fprintf(f, "shader=%s\n", g_shader.c_str());
     if (!g_shader_params.empty()) std::fprintf(f, "shader_params=%s\n", g_shader_params.c_str());
     if (!g_bottom_shader.empty()) std::fprintf(f, "bottom_shader=%s\n", g_bottom_shader.c_str());
@@ -492,7 +495,7 @@ const char* scaling_choice_label(unsigned i) { return i < kScalingCount ? kScali
 const char* scaling_choice_help(unsigned i) { return i < kScalingCount ? kScalingHelp[i] : ""; }
 unsigned scaling_choice_current() { return g_scaling; }
 void scaling_choice_set(unsigned i) {
-    g_scaling = i < kScalingCount ? i : 0u;
+    g_scaling = i < kScalingCount ? i : kScalingDefault;
     apply_scaling();
     save();
 }
@@ -520,7 +523,7 @@ void bottom_shader_choice_set(const std::string& key) {
 
 unsigned bottom_scaling_choice_current() { return g_bottom_scaling; }
 void bottom_scaling_choice_set(unsigned i) {
-    g_bottom_scaling = i < kScalingCount ? i : 0u;
+    g_bottom_scaling = i < kScalingCount ? i : kScalingDefault;
     save();
 }
 void bottom_screen_size_set(int w, int h) {
