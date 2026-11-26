@@ -428,6 +428,12 @@ bool g_turn_logged = false;   // sub-state 2's answer logged since the last fork
 // the ones ai_army_tick took in a story battle.
 constexpr char kForkHookId[] = "kol.ai-army-fork";
 constexpr std::uint32_t kTurnFork = usa(0x0806D924u);
+// EWRAM offsets (through kol_region.h): the game mode (4: VS Mode), the
+// phase flags (bit 7 of 0x020011CC, bit 4 two bytes on) and the battle's
+// 16 unit entries (0x1C each).
+constexpr std::uint32_t kEwMode = usa(0x020012E0u) - 0x02000000u;
+constexpr std::uint32_t kEwFlags = usa(0x020011CCu) - 0x02000000u;
+constexpr std::uint32_t kEwBattleUnits = usa(0x02001AA0u) - 0x02000000u;
 
 int on_turn_fork(std::uint32_t, int, ArmCpuState* cpu) {
     gba::GbaBus* bus = gbarecomp::active_bus();
@@ -437,12 +443,12 @@ int on_turn_fork(std::uint32_t, int, ArmCpuState* cpu) {
         const std::uint8_t* p = ew + (a - 0x02000000u);
         return std::uint32_t(p[0]) | std::uint32_t(p[1]) << 8 | std::uint32_t(p[2]) << 16 | std::uint32_t(p[3]) << 24;
     };
-    const bool vs = ew[0x12E0] == 4u;                   // VS Mode (0x08143070: mode 4)
-    const bool f7 = (ew[0x11CC] & 0x80u) != 0u, f20 = (ew[0x11CE] & 0x10u) != 0u;
+    const bool vs = ew[kEwMode] == 4u;                   // VS Mode (0x08143070: mode 4)
+    const bool f7 = (ew[kEwFlags] & 0x80u) != 0u, f20 = (ew[kEwFlags + 2] & 0x10u) != 0u;
     const bool on = g_ai_army_active.load(std::memory_order_relaxed);
     unsigned own = 0, done = 0;
     for (int i = 0; i < 16; ++i) {
-        const std::uint8_t* e = ew + 0x1AA0u + i * 0x1Cu;
+        const std::uint8_t* e = ew + kEwBattleUnits + i * 0x1Cu;
         if (g_taken[i] || ((e[0] & 0x80u) && e[0] != 0xFFu && !(e[0x17] & 0x20u))) own |= 1u << i;
         if (e[0x0C]) done |= 1u << i;
     }
@@ -492,8 +498,8 @@ int on_story_var(std::uint32_t, int, ArmCpuState* cpu) {
     if (!g_ai_army_active.load(std::memory_order_relaxed)) return 0;
     gba::GbaBus* bus = gbarecomp::active_bus();
     const std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
-    if (!ew || ew[0x12E0] != 4u) return 0;
-    const bool f7 = (ew[0x11CC] & 0x80u) != 0u, f20 = (ew[0x11CE] & 0x10u) != 0u;
+    if (!ew || ew[kEwMode] != 4u) return 0;
+    const bool f7 = (ew[kEwFlags] & 0x80u) != 0u, f20 = (ew[kEwFlags + 2] & 0x10u) != 0u;
     if (f7 == f20) return 0;                             // not this game's own phase
     const std::uint32_t side = f7 ? 1u : 0u;             // the phase's side
     if (!sub2 && (cpu->R[0] & 0xFFFFu) != side) return 0;
@@ -635,10 +641,10 @@ void ai_army_tick(unsigned long frame) {
     std::uint8_t* taken = g_taken;
     // VS Mode needs no poke: the turn fork's hook decides (and the slots
     // are part of the battle start's checksummed exchange).
-    if (ew[0x12E0] == 4u || vs_cpu_child()) return;
+    if (ew[kEwMode] == 4u || vs_cpu_child()) return;
     const bool on = g_ai_army_active.load();
     for (int i = 0; i < 16; ++i) {
-        std::uint8_t* e = ew + 0x1AA0 + i * 0x1C;
+        std::uint8_t* e = ew + kEwBattleUnits + i * 0x1C;
         if (taken[i] && (e[0x17] & 0x20)) {   // the slot now holds the other game's unit: let go
             e[0x17] &= static_cast<std::uint8_t>(~0x02u);
             taken[i] = 0;

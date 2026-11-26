@@ -1,4 +1,4 @@
-Addresses in usa(): 379. In the table: 379. {'exact': 329, 'derived': 28, 'checked': 1, 'near': 8, 'aligned': 13}
+Addresses in usa(): 380. In the table: 380. {'exact': 329, 'derived': 28, 'checked': 2, 'near': 8, 'aligned': 13}
 
 NOT PLACED (0): every use is a compile error in the Japanese build.
 

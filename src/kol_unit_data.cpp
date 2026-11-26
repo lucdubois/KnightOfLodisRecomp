@@ -2661,7 +2661,8 @@ bool unit_can_use_spell(std::uint32_t record, int id) {
     if (!((kind >= 1u && kind <= 6u) || kind == 11u)) return true;
     const unsigned group = gauge::class_field(r[0x4F], r[0x50], 0x33u, false);
     if (group > 15u || !((rom16(e + 0x20u) >> group) & 1u)) return false;
-    const unsigned mode = 0x12E0u < esz ? ew[0x12E0u] : 0u;
+    constexpr std::uint32_t kEwMode = usa(0x020012E0u) - kEwramBase;   // the game mode (kol_region.h)
+    const unsigned mode = kEwMode < esz ? ew[kEwMode] : 0u;
     if (mode == 4u && !(rom8(e + 0x1Du) & 8u)) return false;
     if (mode == 3u && !(rom8(e + 0x1Du) & 4u)) return false;
     return true;

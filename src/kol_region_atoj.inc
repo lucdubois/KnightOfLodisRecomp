@@ -65,6 +65,7 @@
     {0x0202B2A8u, 0x0202BCD8u},   // exact; memory: unverified
     {0x0202B710u, 0x0202C144u},   // near; memory: confirmed
     {0x0202B714u, 0x0202C148u},   // near; memory: confirmed
+    {0x0202D90Cu, 0x0202E2ECu},   // checked; memory: region?
     {0x0203C734u, 0x0203D07Cu},   // near; memory: unverified
     {0x0203C738u, 0x0203D080u},   // near; memory: unverified
     {0x03000820u, 0x03000840u},   // exact; memory: confirmed

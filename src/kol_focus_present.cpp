@@ -933,7 +933,8 @@ void scene_fades(ScenePixels* out) {
     // full palette at 0x0202D90C (found mid-fade; maps 99 and 100). The
     // flames' and smoke's own palette (BG 15) as it is against that one,
     // darker or whiter.
-    constexpr std::uint32_t kFullPal = 0x2D90Cu;   // EWRAM offset
+    // (Japan: 0x0202E2EC, regionmap's overrides: map 98's fade, 2026-11-26.)
+    constexpr std::uint32_t kFullPal = kol::usa(0x0202D90Cu) - 0x02000000u;   // EWRAM offset
     // (Only where BG 15 is the flames' or the smoke's: on map 63 it is
     // other art, and its campfire's effect, kFireActors, came out
     // whitened.)
@@ -1012,7 +1013,7 @@ void scene_fades(ScenePixels* out) {
         if (!no_white && out->scene_white < 1.0f && g_cap.pal.size() >= 0x200u)
             for (unsigned r = 0; r < 16u && !whitish; ++r) whitish = white_in_row(r) >= 14u;
         if (whitish && g_cap.ew.size() >= 0x40000u) {
-            const std::uint32_t arr = rd32(g_cap.ew.data(), 0x26CA8u);
+            const std::uint32_t arr = rd32(g_cap.ew.data(), kEwBg0Array);
             if (arr >= 0x02000000u && arr + 0xC000u <= 0x02040000u) {
                 std::uint16_t rows = 0;
                 const std::uint8_t* m = g_cap.ew.data() + (arr - 0x02000000u);
@@ -1061,7 +1062,7 @@ float map_palette_dim(const ScenePixels& sp) {
     static std::array<int, 16> held{};
     constexpr int kHold = 120;
     if (off || g_cap.pal.size() < 0x200u || g_cap.ew.size() < 0x40000u) return 1.0f;
-    const std::uint32_t arr = rd32(g_cap.ew.data(), 0x26CA8u);
+    const std::uint32_t arr = rd32(g_cap.ew.data(), kEwBg0Array);
     if (arr < 0x02000000u || arr + 0xC000u > 0x02040000u) return 1.0f;
     static int settle = 0;   // pictures since the map changed
     if (sp.map != map_seen) { map_seen = sp.map; ref.fill(0u); cand.fill(0u); held.fill(0); settle = 0; }

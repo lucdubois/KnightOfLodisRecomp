@@ -124,6 +124,9 @@ constexpr std::uint32_t kTerrainTable = kol::usa(0x0861CA5Cu);   // 0x20 a recor
 // The battle's map number: the u16 the map header parser 0x08021B68 reads
 // (header = 0x085C55C4 + 2 + (number - 1) * 0x6A).
 constexpr std::uint32_t kMapNumber = kol::usa(0x02029D40u);
+// The u32 pointing at BG0's composed map (kol_map_source kArrayPtrAddr; BG1's
+// follows it), as an EWRAM offset (Japan: 0x02026C28).
+constexpr std::uint32_t kEwBg0Array = kol::usa(0x02026CA8u) - 0x02000000u;
 constexpr std::uint32_t kObjectsPtr  = kol::usa(0x0202A238u);
 constexpr int           kObjects     = 26;
 constexpr std::uint32_t kObjStride   = 0xD0u;

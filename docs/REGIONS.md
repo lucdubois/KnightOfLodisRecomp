@@ -275,6 +275,44 @@ the ROMs in place are untouched. On the Thor: installed over the debug app
 (1.2.1), its save, ROM, settings, memo and 883 state files unchanged; the
 user then played both games there.
 
+### The Japanese game's saves in the Files app and Sync Folder (2026-11-26)
+
+Asked: the Japanese saves and states available in Android's Files app, and
+synced. Both used to look only at the top of files/, so files/japan was
+neither listed nor copied.
+
+- **Files app** (`SavesProvider`): the `japan` folder is shown at the top,
+  and inside it the same kinds of files and folders as at the top (saves,
+  slot states, `states` and a mod's `states-<8 hex>`, `.bak`s); its ROM is
+  never shown. The logs are every game's, at the top only. Copying a file in
+  under a name that exists keeps the old one as `<name>.bak`, as at the top.
+- **Sync Folder** (`SyncFolder`): the Japanese game's files are copied to a
+  `japan` folder in the picked one, at the same paths as under files/
+  (`japan/totkol.sav`, `japan/states/0001.state`). The question, the backups
+  and the import treat both games' saves as one set: the question's counts
+  include both, a backup keeps the `japan/` path, and choosing the folder's
+  set replaces both games' saves at the next start. An earlier version
+  syncing the same folder from another device ignores `japan/`.
+- Game.java's `folder(g)` / `isFolder(name)` name the games' folders, so a
+  third game's would follow.
+
+Checked on the emulator (debug app, test files in files/japan, headless,
+uiautomator): the Files app shows `japan` (holding `states`, the save and a
+slot state, not its ROM) and its states; a save copied into `japan` from
+Downloads replaced the one there and left it as `totkol.sav.bak`. Sync
+Folder picked on an empty folder: all 8 files copied, the 5 Japanese ones
+byte for byte under `japan/`; a Japanese save changed in the game was copied
+again; a numbered state deleted in the game was deleted in the folder; the
+folder's Japanese save changed from outside and then the game's went to
+`backup-.../japan/totkol.sav` (byte for byte) before the game's was written.
+The same folder picked again with a different Japanese save and a new state:
+the question counted both games' files; Folder's, then Restart: the game's
+`japan/` held the folder's save and state, its old save was in
+`backup-.../japan/totkol.sav`, the identical slot state was left alone, and
+the USA save and state stayed byte for byte unchanged throughout. Not tried:
+the Thor, and a real save written by the Japanese game while synced (the
+same files, written the same way as the USA game's).
+
 ### The APK's size (measured 2026-11-25)
 
 113.0 MB packed fresh (debug, both games) against 77.1 MB (debug, one game)
@@ -306,8 +344,9 @@ folder on the Deck, build-release-atoj there, both in usr/bin; KOL_SSH for
 a Deck at another address, KOL_PACKAGE_TAG for a test build's file name, so
 a release's AppImage on the Deck is never overwritten). Nothing is
 compressed beyond what each package format already did (the user's choice,
-2026-11-25). Not done: the Files provider and Sync Folder on Android (they
-carry the USA game's files only, as before), and `tools/package_flatpak.sh`.
+2026-11-25). Not done: `tools/package_flatpak.sh`. The Files provider and
+Sync Folder on Android carry the Japanese game's files since 2026-11-26
+(below, "The Japanese game's saves in the Files app and Sync Folder").
 
 ### Checked (desktop packages, 2026-11-25)
 
@@ -330,8 +369,63 @@ Mac app headless (dummy video); the Windows zip under Wine with the null
 display driver; the AppImage on the Deck headless, in a test folder
 (removed after; the player's own folder untouched).
 
+## Offsets written bare (2026-11-26)
+
+Reported on the Thor (Japanese state on map 98, the archers' town, Enhanced
+settings): when the screen fades to the burning town, our flames stayed lit
+over the darkening town; in the USA game they fade with it. Cause: the
+flames' fade compares PAL RAM with the scene's full palette in EWRAM, and
+`kol_focus_present.cpp` named it by a bare EWRAM offset (`0x2D90C`), which
+`wrap_source.py` never sees (it wraps whole 8-digit addresses only): the
+Japanese build read the USA game's offset. Found the same way: four reads of
+the map number (`ew[0x29D40]`) in kol_widescreen.cpp (the magic circle, the
+sea and world-map BG2 maps, the fade log), which read 65535 in Japan.
+
+- The scenes' full palette is at **0x0202E2EC** in Japan (USA 0x0202D90C):
+  in the Thor state just before the fade, two EWRAM blocks equal the bright
+  BG palette, 0x02000010 (the palette buffer, already in the table) and
+  this one; 30 frames into the fade this one is unchanged while PAL and the
+  buffer have darkened. Added as a `checked` line of
+  `regionmap/out/atoj_overrides.map`; the table gained that one entry.
+- Written through `kol::usa()` now: that palette, the map number, the
+  palette buffer and the weather block (kol_widescreen.cpp), the game mode,
+  the phase flags and the battle's unit entries (kol_states.cpp), the game
+  mode (kol_unit_data.cpp). The USA code is unchanged: the four files
+  compiled from the old and the new source give the same code.
+- Checked: the Thor state through the fade, Japanese build, Enhanced
+  settings, before and after (`KOL_FADE_LOG` now reads map 98 and the full
+  palette, 2721/2721 before the fade, 1499/2721 into it): the flames now
+  fade with the town.
+- Then (same day, Thor state `0004`, map 102): the "An Anecdote of Ogre
+  Battle Saga" title got our light, shadows and evening grade over the
+  whited-out map. The check that the map is whited out walks its composed
+  tilemap through the pointer at 0x02026CA8, read as `rd32(ew, 0x26CA8u)`
+  (a read call's offset, which the first sweep missed) in three places:
+  the title (`scene_white`), the sky's dimming (`map_palette_dim`) and map
+  84's model fade. The table already had it (0x02026C28); now
+  `kEwBg0Array` (kol_focus_internal.h). Checked: the Japanese title at three
+  moments, before (effects over the map) and after (a white field and the
+  text), and the USA title at the same point of its scene with the new USA
+  build: the same picture but for the words (both have the same 9 black
+  pixels at the field's edges, an older and separate thing). The USA code
+  of the 15 files involved is identical, old source against new.
+- `regionmap/bare_offsets.py` lists every offset still written bare (index,
+  pointer arithmetic, read calls, and named constants used to index EWRAM),
+  and whether the table has its address. Left, each needing its Japanese
+  address found first: war funds (0x02001184, kol_unit_data.cpp), the death
+  scene's rumble (scene number 0x020013BE, kol_rumble.cpp, which reads the
+  map and the story flag bare too), the evening rooms' time of day
+  (0x020021BC, kol_focus.cpp), Smooth Boxes' descriptor pointer
+  (0x0200283C, kol_widescreen.cpp), VS against the computer (0x02002830,
+  0x02002836, 0x02029B80, 0x02029BD0, kol_vs_cpu.cpp; and kol_vs_bot.cpp's
+  constants, two of them heap addresses already in the overrides), a debug
+  log line (kol_states.cpp).
+
 ## Not done
 
+- **Offsets written bare** that have no Japanese address yet: the list just
+  above (war funds, the death scene's rumble, the evening rooms, Smooth
+  Boxes, VS against the computer).
 - **Seen only in part.** Grey text (colour 1) has not been on screen; a unit
   with no sex shows two dashes (the USA ROM's "--" string has no Japanese
   twin where it should be); a made item's name is read as a unit's. The shop
@@ -356,9 +450,6 @@ display driver; the AppImage on the Deck headless, in a test folder
   merged. gbarecomp's rule: a person reviews what goes into a game's
   config, so the translated game.toml should become a generated overlay
   under a small hand-written base.
-- Android's Files provider (`SavesProvider`) and Sync Folder still see the
-  USA game's files only; the Japanese game's (files/japan) are neither
-  listed nor copied. The packaging scripts pack one program.
 - This branch starts at 9159d23: the uncommitted menu fix on `main`
   (kol_menu.cpp, the translation mod) is not in it, and will meet this
   branch's kol_menu.cpp changes when merged.

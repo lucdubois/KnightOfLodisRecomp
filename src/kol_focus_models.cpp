@@ -323,8 +323,8 @@ bool map84_stairs_open() {
     static const char* mid = std::getenv("KOL_MAP84_FADE_OPEN_AT");   // EVA under this: open
     if (g_cap.world_bg2 && g_cap.world_bg2_eva >= (mid && *mid ? std::atoi(mid) : 8)) return false;
     const std::vector<std::uint8_t>& ew = g_cap.ew;
-    if (ew.size() < 0x26CACu) return false;
-    const std::uint32_t arr = rd32(ew.data(), 0x26CA8u);   // BG0's composed map (kol_map_source)
+    if (ew.size() < kEwBg0Array + 4u) return false;
+    const std::uint32_t arr = rd32(ew.data(), kEwBg0Array);   // BG0's composed map (kol_map_source)
     const std::uint32_t at = arr - 0x02000000u + 40u * 0x100u + 28u * 2u;
     if (arr < 0x02000000u || at + 2u > ew.size()) return false;
     return (ew[at] | (ew[at + 1] << 8)) != 0x30DE;

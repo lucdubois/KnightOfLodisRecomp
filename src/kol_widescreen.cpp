@@ -96,6 +96,15 @@ extern "C" void runtime_pc_watch_set(std::uint32_t pc, void (*cb)(void*), void* 
 #include "runtime_arm.h"
 extern "C" uint32_t g_irq_nest_depth;
 namespace {
+// EWRAM offsets read below, through kol_region.h (an offset written bare is
+// the USA game's in the Japanese build too): the map shown (u16), the
+// scenes' full palette, the palette buffer, the weather's drops and block.
+constexpr std::uint32_t kEwMap = kol::usa(0x02029D40u) - 0x02000000u;
+constexpr std::uint32_t kEwFullPal = kol::usa(0x0202D90Cu) - 0x02000000u;
+constexpr std::uint32_t kEwPalBuffer = kol::usa(0x02002400u) - 0x02000000u;
+constexpr std::uint32_t kEwDrops = kol::usa(0x0202A0F8u) - 0x02000000u;
+constexpr std::uint32_t kEwWeather = kol::usa(0x0202A1C0u) - 0x02000000u;
+int ew_map(const std::uint8_t* ew) { return ew[kEwMap] | (ew[kEwMap + 1] << 8); }
 struct EntryRec { std::uint32_t pc, depth, sp; unsigned long long cycles; };
 std::vector<EntryRec> g_entry_log;
 bool g_entry_log_on = false;
@@ -261,7 +270,7 @@ void bg2_circle_update(const std::uint8_t* ew) {
     g_bg2_circle = false;
     static const bool wrap = std::getenv("KOL_WS_BG2_CIRCLE_WRAP") != nullptr;
     if (wrap || !g_vram || !g_io || !ew) return;
-    const int map = ew[0x29D40] | (ew[0x29D41] << 8);
+    const int map = ew_map(ew);
     if (!kol::map_flag(kol::MapFlag::MagicCircle, map)) return;
     const unsigned dispcnt = g_io[0] | (g_io[1] << 8);
     const unsigned cnt = g_io[0x0C] | (g_io[0x0D] << 8);
@@ -2028,8 +2037,8 @@ bool sea_bg2_frame(std::uint16_t dispcnt, const std::uint16_t bgcnt[4]) {
     if (((bgcnt[2] >> 14) & 3u) != 0u) return false;   // 256x256
     std::uint32_t esz = 0;
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&esz);
-    if (!ew || esz < 0x29D42u) return false;
-    const int map = ew[0x29D40] | (ew[0x29D41] << 8);
+    if (!ew || esz < kEwMap + 2u) return false;
+    const int map = ew_map(ew);
     bool listed = false;
     for (int m : kSeaBg2Maps) listed = listed || m == map;
     if (!listed) return false;
@@ -2046,8 +2055,8 @@ bool world_bg2_frame(std::uint16_t dispcnt, const std::uint16_t bgcnt[4], bool w
     if (((bgcnt[2] >> 14) & 3u) != 2u || ((bgcnt[2] >> 2) & 3u) != 2u) return false;
     std::uint32_t esz = 0;
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&esz);
-    if (!ew || esz < 0x29D42u) return false;
-    const int map = ew[0x29D40] | (ew[0x29D41] << 8);
+    if (!ew || esz < kEwMap + 2u) return false;
+    const int map = ew_map(ew);
     for (int m : kWorldBg2Maps)
         if (m == map) return true;
     return false;
@@ -2483,17 +2492,17 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
                     return s;
                 };
                 int drops = 0;   // the weather's live drops and block (kol_focus kWeatherBlock)
-                for (int i = 0; i < 10; ++i) drops += ew[0x2A0F8 + i * 0x14 + 4] != 0;
+                for (int i = 0; i < 10; ++i) drops += ew[kEwDrops + i * 0x14 + 4] != 0;
                 std::fprintf(stderr, "fade: frame %lu map %u rows0-3 %u/%u rows4-8 %u/%u bldcnt %04x bldy %u bldalpha %04x dispcnt %04x drops %d weather %02x %02x %02x field %d bg9-15 %u obj %u pillarbox %d win0 %04x/%04x winin %04x winout %04x\n",
-                             static_cast<unsigned long>(f->frame_count), ew[0x29D40] | (ew[0x29D41] << 8),
-                             sum(pal, 0, 4), sum(ew + 0x2D90C, 0, 4), sum(pal, 4, 9), sum(ew + 0x2D90C, 4, 9),
+                             static_cast<unsigned long>(f->frame_count), ew_map(ew),
+                             sum(pal, 0, 4), sum(ew + kEwFullPal, 0, 4), sum(pal, 4, 9), sum(ew + kEwFullPal, 4, 9),
                              bus->read16(0x04000050u), bus->read16(0x04000054u) & 31u, bus->read16(0x04000052u),
-                             bus->read16(0x04000000u), drops, ew[0x2A1C0], ew[0x2A1C4], ew[0x2A1C6], g_ui_field_drawn,
+                             bus->read16(0x04000000u), drops, ew[kEwWeather], ew[kEwWeather + 4], ew[kEwWeather + 6], g_ui_field_drawn,
                              sum(pal, 9, 16), sum(pal, 16, 32), g_ws_pillarbox,
                              bus->read16(0x04000040u), bus->read16(0x04000044u), bus->read16(0x04000048u),
                              bus->read16(0x0400004Au));
                 std::fprintf(stderr, "fade: frame %lu backdrop %04x\n", static_cast<unsigned long>(f->frame_count),
-                             ew[0x2400] | (ew[0x2401] << 8));   // the sky (kol_focus g_overcast)
+                             ew[kEwPalBuffer] | (ew[kEwPalBuffer + 1] << 8));   // the sky (kol_focus g_overcast)
                 // The frame's BG layout and scroll (as the frame hook has them).
                 std::fprintf(stderr, "fade: frame %lu bgcnt %04x %04x %04x %04x ofs %u,%u %u,%u %u,%u %u,%u battle %d world_bg2 %d\n",
                              static_cast<unsigned long>(f->frame_count), io16(f->io, 0x08), io16(f->io, 0x0A),
