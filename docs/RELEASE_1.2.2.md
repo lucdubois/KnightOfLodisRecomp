@@ -15,13 +15,13 @@ On a computer, replace the old AppImage, app or folder with the new one. Your sa
 
 ## What's new
 
-- **Sync Folder (Android).** In **Options > Enhancement Options > Technical > Sync Folder**, choose a folder. The game then copies your save, your save states and its logs there whenever they change. Use it to keep a backup, to move your game to another device, or to send the logs with a bug report.
+- **Sync Folder (Android).** In **Options > Enhancements > Technical > Sync Folder**, choose a folder. The game then copies your save, your save states and its logs there whenever they change. Use it to keep a backup, to move your game to another device, or to send the logs with a bug report.
   - If the folder already has saves from this game, the game asks whether to keep the folder's or its own. Either way, the other set goes to a `backup-<date>` folder inside it, so nothing is lost.
   - If you keep the folder's, the game restarts to use them.
   - If a save in the folder is changed by something else, another device for example, the game moves it to a backup folder before writing over it.
   - Sync Folder replaces the logs' Save button. The logs are still in the Files app, as in 1.2.1.
-- **A shader for the second screen (Android).** On devices with a second screen, such as the AYN Thor, **Options > Enhancement Options > Display > Bottom Shader** picks a RetroArch preset for the bottom screen. It is chosen and adjusted separately from the top screen's.
-- **Mods from the menu on a computer.** **Options > Enhancement Options > Mod** now lets you choose or remove a mod (an .ips, .ups or .bps patch) and restart, as on Android. Where no file dialog can open, as in the Steam Deck's Gaming Mode, it takes you to the setup screen instead.
+- **A shader for the second screen (Android).** On devices with a second screen, such as the AYN Thor, **Options > Enhancements > Display > Bottom Shader** picks a RetroArch preset for the bottom screen. It is chosen and adjusted separately from the top screen's.
+- **Mods from the menu on a computer.** **Options > Enhancements > Mod** now lets you choose or remove a mod (an .ips, .ups or .bps patch) and restart, as on Android. Where no file dialog can open, as in the Steam Deck's Gaming Mode, it takes you to the setup screen instead.
 
 ## Fixes
 

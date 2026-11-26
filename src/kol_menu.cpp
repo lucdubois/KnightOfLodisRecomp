@@ -608,7 +608,7 @@ struct Row {
 // Deck in Desktop Mode) leaves the game, and Debug is a dev build's.
 const Row kMain[] = {
     {Kind::Page, 10, "Game Options", "The game's own options, as\nits OPTION command shows them."},
-    {Kind::Page, 11, "Enhancement Options", "Presets, display, graphics,\nsound, gameplay, cheats, mods."},
+    {Kind::Page, 11, "Enhancements", "Presets, display, graphics,\nsound, gameplay, cheats, mods."},
     {Kind::Page, 7, "Save States", "Every numbered state:\ntap one to load it."},
     {Kind::Page, 8, "Achievements", "RetroAchievements: log in and\nsee what you have unlocked."},
 #if !defined(__ANDROID__)
@@ -630,7 +630,7 @@ const Row kGameOptionsPage[] = {
     {Kind::Game, 8, nullptr, nullptr}, {Kind::Game, 9, nullptr, nullptr},
     {Kind::Game, 10, nullptr, nullptr}, {Kind::Game, 11, nullptr, nullptr},
 };
-// Page 11, Enhancement Options: ours, the mod, and the Technical page.
+// Page 11, Enhancements: ours, the mod, and the Technical page.
 const Row kEnhancements[] = {
     {Kind::Back, 0, "Back", "Return to the options."},
     {Kind::Preset, 0, "Preset", "Sets the other options at once:\nEnhanced, or the game as it was."},
@@ -1010,7 +1010,7 @@ LoginForm g_login;
 std::string g_login_last_user;   // the name of the last attempt, to start from
 int g_page = 0;            // 0 the options, 1 Debug, 2 Audio, 3 Layers (in Debug), 4 Graphics,
                            // 5 Gameplay, 6 Cheats, 7 Save States (also in Debug), 8 Achievements,
-                           // 9 Display, 10 Game Options, 11 Enhancement Options, 12 Technical
+                           // 9 Display, 10 Game Options, 11 Enhancements, 12 Technical
                            // (parent_page)
 int g_states_parent = 0;   // the page Save States was opened from (0 main, 1 Debug)
 std::atomic<bool> g_game_option{false};   // the game is waiting on its OPTION window: ours
@@ -1153,7 +1153,7 @@ void states_scroll_to(float scroll);
 void follow_selection();
 
 // The page a page goes back to: Layers to Debug, Save States where it was
-// opened from, Enhancement Options' pages to it, the rest to the main page.
+// opened from, Enhancements' pages to it, the rest to the main page.
 int parent_page(int page) {
     switch (page) {
         case 3: return 1;

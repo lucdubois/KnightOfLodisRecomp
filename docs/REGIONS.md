@@ -510,7 +510,8 @@ at the battle's first AI turn, read ~3900: the test's fault, not the game's.)
   now (2026-11-25): the options menu's added rows and pages, the titles of
   the bar's help cards over the game's Japanese text, the Save States page.
   Should they be translated later: the game's font has only the 650 or so
-  kanji the game uses. "Enhancement Options" reaches its row's arrow.
+  kanji the game uses. The page "Enhancement Options" reached its row's
+  arrow in the game's font; it is "Enhancements" since 2026-11-26 (asked).
 - **Untested there**: the unit list's taps (they move the cursor as next /
   previous unit does, which is checked), opening a unit's profile from the
   world map, the stick cursor, story scenes' actors (the user played map

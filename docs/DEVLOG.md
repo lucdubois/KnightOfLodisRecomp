@@ -23749,21 +23749,21 @@ invariants (66e13ab2 / 9054c456). Not tried on a device.
 Asked the same day: the game's options on a page of their own, the
 enhancements on another, Save States and Achievements staying on the first
 level. The main page is now **Game Options** (page 10: the cartridge's
-twelve), **Enhancement Options** (page 11: Preset, Display, Graphics,
+twelve), **Enhancements** (page 11: Preset, Display, Graphics,
 Audio, Gameplay, Cheats, Mod, Licenses), Save States, Achievements, then
 Quit Game on a computer and Debug in a dev build. Quit Game stays on the
 first level (my call, said to the user): it is how a computer with only a
 controller leaves the game. The "- Enhancements -" heading is gone.
 
-- Back goes to the page's parent (`parent_page`: Enhancement Options' five
+- Back goes to the page's parent (`parent_page`: Enhancements' five
   pages to it, Layers to Debug, Save States where it was opened from), the
   hand on the row that opened the page; `g_return_sel` is gone.
 - The game's own OPTION command (its system menu) opens the menu on Game
   Options, first option, and Back/B there closes it, back to the game's
   menu, as its own window did (`g_game_option`).
 
-Checked (KOL_MENU_PPM): the main page, Enhancement Options, Game Options
-(the cartridge's names and HELP), B from Graphics -> Enhancement Options on
+Checked (KOL_MENU_PPM): the main page, Enhancements, Game Options
+(the cartridge's names and HELP), B from Graphics -> Enhancements on
 Graphics' row; DZ (the system menu on Option): A opens Game Options, B
 closes it and the game's menu is back (present dump). Not tried on a device.
 
@@ -24315,7 +24315,7 @@ Asked: the mod swappable from the menu, as on Android. Before, the desktop's
 Mod row only said a mod is chosen on the setup window (quit, delete
 totkol.gba or start with `--setup`).
 
-Now it works as Android's: Options > Enhancement Options > Mod shows what
+Now it works as Android's: Options > Enhancements > Mod shows what
 plays, with Choose / Remove / Cancel.
 - **Choose** opens the system's Open dialog: the Open panel on a Mac,
   Windows' Open dialog, kdialog or zenity on Linux (on a thread, answered
@@ -24711,7 +24711,7 @@ dev-string check clean; build/release/special/ (with its libmain.so, xz).
 ## Fast forward: held or a toggle, and its speed (2026-11-26)
 
 Asked: R2 as a toggle or hold, and a speed from x2 to x10. Options >
-Enhancement Options > Gameplay: **Fast Forward** (Hold, the default and the
+Enhancements > Gameplay: **Fast Forward** (Hold, the default and the
 behaviour before; Toggle) and **Fast Forward Speed** (x2 .. x10, x4 the
 default), saved as `fast_forward=` and `fast_forward_speed=` (kol_settings,
 `apply_fast_forward` at start and on each change). They set gbarecomp's

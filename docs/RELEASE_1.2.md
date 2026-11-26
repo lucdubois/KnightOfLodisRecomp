@@ -22,7 +22,7 @@ On a computer, replace the old AppImage, app or folder with the new one. Your sa
 - **Options > Display > Ratio**: the picture's shape (1:1, 4:3, 3:2, 16:10 or 16:9), which sets the sizes **Graphics > View Size** offers. Until you pick one, your screen's own shape.
 - **The options menu pauses the game** and no longer darkens it, on every device, the second screen of dual-screen handhelds included. A change shows on the picture at once, and the game does not move on while you try settings. A frame in the menu's own border shows that the menu has the controls.
 - **Options > Technical > BIOS**: switch between the GBA BIOS and the built-in one from the menu (it applies at the next start). The licenses moved to this page too.
-- **The options menu is in two pages:** the game's own options, then Enhancement Options (Preset, Display, Graphics, Audio, Gameplay, Cheats, Mod, Technical).
+- **The options menu is in two pages:** the game's own options, then Enhancements (Preset, Display, Graphics, Audio, Gameplay, Cheats, Mod, Technical).
 
 ## Android
 

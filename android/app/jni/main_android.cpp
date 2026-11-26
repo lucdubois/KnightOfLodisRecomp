@@ -941,7 +941,7 @@ int main(int argc, char** argv) {
     // "Play without a BIOS (experimental)" switch. The runtime then takes the
     // built-in replacements (--no-bios) and no BIOS file at all, so
     // gba_bios.bin may be absent. Without the marker the real BIOS is used,
-    // as before. Options > Enhancement Options > Technical > BIOS writes or
+    // as before. Options > Enhancements > Technical > BIOS writes or
     // removes the same marker, for the next start (2026-11-23); with no
     // gba_bios.bin the built-in one is the only choice.
     const bool no_bios = access((std::string(base) + "/no_bios").c_str(), F_OK) == 0 ||
