@@ -435,6 +435,17 @@ sea and world-map BG2 maps, the fade log), which read 65535 in Japan.
   Anywhere): its block reads the same tab, count, cursor row and item ids
   in both games (the block's offsets are the same), so the second screen's
   shop list names the right item.
+- Then (same day, the user on the Thor: no rumble when attacked or attacking,
+  Japanese state `states/thor_japan/0010`, map 6): kol_rumble's battle
+  records were `kBattleRecs = 0x1420u`, declared beside another constant, a
+  form the scan's named-constant pattern missed; now `usa(0x02001420u)`
+  (0x02001B00 in Japan, in the table). Before: the enemy's blow brought its
+  number and found no HP drop; after: "hit" at frame 140432. The scan takes
+  `kX = 0x....u,` too now. The sound effects' numbers are the USA game's in
+  the Japanese one (its song table at 0x0816A92C: the same header bytes for
+  43 entries checked, the same player word for all 449), so the thunder's
+  (205) and Shaher's death's (418) rumble alike.
+
 ### VS in the Japanese game (2026-11-26)
 
 VS against the computer did not start in the Japanese game: it went to

@@ -198,7 +198,10 @@ void death_frame(const std::uint8_t* io) {
 // each ends 20 ms later.
 constexpr RumbleStep kHit[] = {{40, 0.90f}, {80, 0.45f}, {70, 0.15f}};
 constexpr RumbleStep kKill[] = {{80, 1.00f}, {90, 0.60f}, {120, 0.30f}, {120, 0.10f}};
-constexpr std::uint32_t kBattleRecs = 0x1420u, kRecStride = 0x68u;
+// The battle records (an EWRAM offset, through kol_region.h: 0x02001B00 in the
+// Japanese game, where the bare 0x1420 read other memory and no hit rumbled,
+// 2026-11-26).
+constexpr std::uint32_t kBattleRecs = usa(0x02001420u) - 0x02000000u, kRecStride = 0x68u;
 constexpr int kBattleUnits = 16, kAfterNumber = 90, kDropLife = 600;
 
 void hit_frame() {
