@@ -84,6 +84,20 @@ const char* const kRumbleChoices[] = {"Off", "Light", "Medium", "Strong"};
 constexpr float kRumbleStrength[] = {0.0f, 0.4f, 0.7f, 1.0f};
 constexpr unsigned kRumbleChoiceCount = sizeof(kRumbleChoices) / sizeof(kRumbleChoices[0]);
 unsigned g_rumble_choice = 2;
+// Fast-forward (asked 2026-11-26): its controls (R2, the keyboard's 2 and
+// Tab, a phone's touch button) held (0, as before) or a toggle (1: each
+// press turns it on or off), and its speed, x2 to x10 (x4 as before); saved
+// as fast_forward= and fast_forward_speed=. gbarecomp
+// g_host_fast_forward_toggle / g_host_fast_forward_speed.
+const char* const kFastForwardModes[] = {"Hold", "Toggle"};
+constexpr unsigned kFastForwardModeCount = sizeof(kFastForwardModes) / sizeof(kFastForwardModes[0]);
+constexpr unsigned kFastForwardSpeedMin = 2u, kFastForwardSpeedMax = 10u;
+unsigned g_ff_mode = 0;
+unsigned g_ff_speed = 4;
+void apply_fast_forward() {
+    gbarecomp::g_host_fast_forward_toggle = g_ff_mode == 1u ? 1 : 0;
+    gbarecomp::g_host_fast_forward_speed = static_cast<int>(g_ff_speed);
+}
 // VS Mode's other GBA (kol_vs_cpu): the computer, or a player on the local
 // network; saved as vs_mode=.
 const char* const kVsModeChoices[] = {"Computer", "Network"};
@@ -425,6 +439,8 @@ void save() {
     std::fprintf(f, "music_quality=%u\n", g_sound_choice);
     std::fprintf(f, "ambient_occlusion=%u\n", g_ao_choice);
     std::fprintf(f, "rumble=%u\n", g_rumble_choice);
+    std::fprintf(f, "fast_forward=%u\n", g_ff_mode);
+    std::fprintf(f, "fast_forward_speed=%u\n", g_ff_speed);
     std::fprintf(f, "vs_mode=%u\n", g_vs_mode_choice);
     std::fprintf(f, "shadows=%u\n", g_shadow_choice);
     std::fprintf(f, "music_volume=%u\n", g_music_volume * 10u);
@@ -711,6 +727,22 @@ void rumble_choice_set(unsigned i) {
     save();
     std::fprintf(stderr, "settings: rumble = %s\n", kRumbleChoices[i]);
     std::fflush(stderr);
+}
+unsigned fast_forward_mode_count() { return kFastForwardModeCount; }
+const char* fast_forward_mode_label(unsigned i) { return i < kFastForwardModeCount ? kFastForwardModes[i] : ""; }
+unsigned fast_forward_mode_current() { return g_ff_mode; }
+void fast_forward_mode_set(unsigned i) {
+    if (i >= kFastForwardModeCount) return;
+    g_ff_mode = i;
+    apply_fast_forward();
+    save();
+}
+unsigned fast_forward_speed_current() { return g_ff_speed; }
+void fast_forward_speed_set(unsigned x) {
+    if (x < kFastForwardSpeedMin || x > kFastForwardSpeedMax) return;
+    g_ff_speed = x;
+    apply_fast_forward();
+    save();
 }
 std::string settings_file_path() { return cfg_path(); }
 void settings_net_match(bool on) { g_net_match.store(on); }
@@ -1099,6 +1131,16 @@ void settings_init(const char* dir, unsigned widescreen_width,
                         g_rumble_choice = static_cast<unsigned>(value);
                     continue;
                 }
+                if (std::strcmp(line, "fast_forward") == 0) {
+                    if (value >= 0 && static_cast<unsigned>(value) < kFastForwardModeCount)
+                        g_ff_mode = static_cast<unsigned>(value);
+                    continue;
+                }
+                if (std::strcmp(line, "fast_forward_speed") == 0) {
+                    if (value >= static_cast<int>(kFastForwardSpeedMin) && value <= static_cast<int>(kFastForwardSpeedMax))
+                        g_ff_speed = static_cast<unsigned>(value);
+                    continue;
+                }
                 if (std::strcmp(line, "ambient_occlusion") == 0) {
                     if (value >= 0 && static_cast<unsigned>(value) < kAoChoiceCount)
                         g_ao_choice = static_cast<unsigned>(value);
@@ -1202,6 +1244,7 @@ void settings_init(const char* dir, unsigned widescreen_width,
     g_settings_ready = true;
     apply_view_size();
     apply_scaling();
+    apply_fast_forward();
     shaders_install();
     std::fprintf(stderr, "settings: view=%ux%u music_quality=%u highlight=%d screen2=%d weather=%d pad=%d dof=%d persp=%d debug_mesh=%d auto_win=%d\n",
                  g_widescreen_width, g_widescreen_height, g_sound_choice,

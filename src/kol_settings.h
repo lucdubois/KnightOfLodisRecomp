@@ -225,6 +225,15 @@ const char* rumble_choice_label(unsigned i);
 unsigned rumble_choice_current();
 void rumble_choice_set(unsigned i);
 float rumble_strength();
+// Fast-forward (gbarecomp's assist): its controls held (0, the default) or a
+// toggle (1), saved as fast_forward=; its speed x2..x10 (4 the default),
+// fast_forward_speed=.
+unsigned fast_forward_mode_count();
+const char* fast_forward_mode_label(unsigned i);
+unsigned fast_forward_mode_current();
+void fast_forward_mode_set(unsigned i);
+unsigned fast_forward_speed_current();
+void fast_forward_speed_set(unsigned x);
 // Shadows cast by the terrain on the perspective battlefield (kol_focus.cpp):
 // Off, On; saved as shadows= (0 off, else on). The sun's height above the
 // ground in degrees, 36 (the default sun; its direction and a map's own sun

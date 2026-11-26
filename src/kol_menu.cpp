@@ -573,6 +573,7 @@ private:
 // ── The rows ─────────────────────────────────────────────────────────────
 enum class Kind : std::uint8_t { Game, Heading, Setting, View, Blur, Occlusion, Shadows, Sound, Music,
                                  Effects, Map, Page, Back, Preset, Rumble,
+                                 FastForward, FastForwardSpeed,   // Gameplay: R2's way, and the speed
                                  Cheevo,     // the Achievements page's rows (page 8)
                                  Mod,        // a mod (a ROM patch): the platform's dialog
                                  UnlinkRom,     // Debug: back to the setup screen
@@ -731,6 +732,8 @@ const Row kGameplay[] = {
     {Kind::Setting, static_cast<int>(Setting::AnalogCursor), "Analog Cursor",
      "The left stick moves the hand\nfreely; it settles on a tile."},
     {Kind::Rumble, 0, "Rumble", "The handheld shakes with the\ngame's thunder, this strongly."},
+    {Kind::FastForward, 0, "Fast Forward", "R2 (2 on a keyboard): held,\nor a press turns it on or off."},
+    {Kind::FastForwardSpeed, 0, "Fast Forward Speed", "How fast the game runs while\nfast forward is on."},
     {Kind::Setting, static_cast<int>(Setting::FastLoading), "Fast Loading",
      "Screens load quicker than\nthe cartridge did."},
     {Kind::Setting, static_cast<int>(Setting::FastActions), "Fast Actions",
@@ -1224,6 +1227,13 @@ Text value_text(const Art& a, const Row& r) {
         case Kind::Rumble:   // OFF, or its strength
             if (rumble_choice_current() == 0) return a.opts[3].values[1];
             return encode(rumble_choice_label(rumble_choice_current()));
+        case Kind::FastForward:
+            return encode(fast_forward_mode_label(fast_forward_mode_current()));
+        case Kind::FastForwardSpeed: {
+            char x[8];
+            std::snprintf(x, sizeof x, "x%u", fast_forward_speed_current());
+            return encode(x);
+        }
         case Kind::Shadows:   // ON / OFF (the sun's angle is fixed, or the map's own)
             return a.opts[3].values[shadow_choice_current() != 0 ? 0 : 1];
         case Kind::Sound: {
@@ -1629,6 +1639,12 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
         case Kind::Rumble:
             rumble_choice_set(wrap(rumble_choice_current(), dir, rumble_choice_count()));
             kol::rumble_test();   // feel the new strength at once
+            break;
+        case Kind::FastForward:
+            fast_forward_mode_set(wrap(fast_forward_mode_current(), dir, fast_forward_mode_count()));
+            break;
+        case Kind::FastForwardSpeed:   // x2 .. x10, around
+            fast_forward_speed_set(2u + wrap(fast_forward_speed_current() - 2u, dir, 9u));
             break;
         case Kind::Sound:
             sound_choice_set(wrap(sound_choice_current(), dir, sound_choice_count()));

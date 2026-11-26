@@ -24708,3 +24708,20 @@ Sent to the player as a one-off: `./gradlew assembleRelease
 keeps it) -> com.totkol.game 1.2.2-menufix, versionCode 8, the release key,
 dev-string check clean; build/release/special/ (with its libmain.so, xz).
 
+## Fast forward: held or a toggle, and its speed (2026-11-26)
+
+Asked: R2 as a toggle or hold, and a speed from x2 to x10. Options >
+Enhancement Options > Gameplay: **Fast Forward** (Hold, the default and the
+behaviour before; Toggle) and **Fast Forward Speed** (x2 .. x10, x4 the
+default), saved as `fast_forward=` and `fast_forward_speed=` (kol_settings,
+`apply_fast_forward` at start and on each change). They set gbarecomp's
+`g_host_fast_forward_toggle` / `g_host_fast_forward_speed` (ENHANCEMENTS
+"Fast-forward held or toggled"): the toggle acts on every fast-forward
+control, R2 (gbarecomp's default pad binding), the keyboard's 2 and Tab, a
+phone's touch button. Checked headless: the speed by
+`GBARECOMP_ASSIST_SCRIPT="1:fast_on;"` (1200 presents: 2404 frames at x2,
+11990 at x10), the menu rows and their saved values (Toggle, x6 ->
+`fast_forward=1`, `fast_forward_speed=6`). Not checked: R2 itself as a
+toggle (a headless run takes no pad or keyboard): on the Thor or a desktop
+with a controller.
+

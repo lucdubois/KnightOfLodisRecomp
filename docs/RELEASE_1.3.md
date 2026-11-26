@@ -23,6 +23,7 @@ On a computer, replace the old AppImage, app or folder with the new one. Your sa
   - The Japanese game is in Japanese, and so is what the second screen shows from it: the unit sheet, equipment and talents, and the help texts. The enhancement options added by this project stay in English.
   - The 3D battlefield and its lighting work in the Japanese version as in the USA one.
   - Achievements are for the USA version only: RetroAchievements' set is made for it.
+- **Fast forward, your way.** **Options > Enhancement Options > Gameplay > Fast Forward**: **Hold** (as before: fast while R2 is held) or **Toggle** (each press of R2 turns it on or off). **Fast Forward Speed**: from x2 to x10 (x4 as before). The keyboard's 2 and Tab, and the touch button on phones, follow the same choice.
 - **Smooth scaling by default.** A new install starts with **Options > Enhancement Options > Display > Scaling** on **Smooth**, which fills the screen with a light filter (it was **Integer**), and so does **Bottom Screen** on devices with a second screen. If you already have the game, your settings are kept.
 
 ## Fixes

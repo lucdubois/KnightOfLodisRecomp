@@ -64,8 +64,9 @@ Everything below is optional; the **Original** preset plays the game as it was.
   own), with a separate one for the second screen on Android; Integer, Smooth
   or Stretch scaling; on computers, a window or full screen.
 - **Quality of life**: fast loading, faster walking, actions and enemy turns,
-  numbered save states, an analog cursor, rumble, Swap Face Buttons, and an
-  options menu that pauses the game while you try settings.
+  fast forward on R2 (held or toggled, x2 to x10), numbered save states, an
+  analog cursor, rumble, Swap Face Buttons, and an options menu that pauses
+  the game while you try settings.
 - **Cheats** (off by default): Rewind, Shop Anywhere, No Random Battles.
 - **Mods**: IPS, UPS or BPS patches made for the game that change its data
   (text, stats, graphics) can be played over your ROM, chosen at setup or from
@@ -163,7 +164,7 @@ opens the folder. On Android the Files app shows a `logs` folder under
 | Z | B | Right Shift | Select |
 | S | Next unit (the pad's north button) | A | Previous unit (west button) |
 | Esc or F10 | Options menu | `` ` `` (left of 1) | Rewind (when the Rewind cheat is on) |
-| 2, or Tab held | Fast-forward | Alt+Return | Full screen |
+| 2, or Tab | Fast-forward (held, or a toggle: Options > Gameplay) | Alt+Return | Full screen |
 | Shift+F1 or F5 | Save a state | F1 or F6 | Load the latest state |
 
 To change them, put a `keybinds.ini` in the game's folder:
