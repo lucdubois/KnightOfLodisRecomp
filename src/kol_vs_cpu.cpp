@@ -89,16 +89,23 @@ namespace net = gba::net;
 namespace {
 
 constexpr int kSlot = 0x5653;                       // "VS": the snapshot's slot (its path is ours)
-constexpr std::uint32_t kWorld = 0x29BD0;           // EWRAM: the world state's pointer (VS's NAVI pages on: logs only)
-constexpr std::uint32_t kScreen = 0x29B80;          // EWRAM: the Quest/VS/Exchange menu's screen
+constexpr std::uint32_t kWorld = usa(0x02029BD0u) - 0x02000000u;   // EWRAM: the world state's pointer (VS's NAVI pages on: logs only)
+constexpr std::uint32_t kScreen = usa(0x02029B80u) - 0x02000000u;  // EWRAM: the Quest/VS/Exchange menu's screen
 constexpr std::uint32_t kConnecting = usa(0x08246C18u);  // ... "Connecting..." (0x08246CA8 the menu itself)
-constexpr std::uint32_t kCursor = 0xED1;            // IWRAM: the menu's cursor, kept on Connecting: 0 Quest, 1 VS, 2 Exchange
-constexpr std::uint32_t kMode = 0x12E0;             // EWRAM: 4 from the battle's preparation on
-constexpr std::uint32_t kScene = 0x2830;            // EWRAM: 0x24 and +6 0x1A on Connecting, 0x46 VS's NAVI pages
+constexpr std::uint32_t kCursor = usa(0x03000ED1u) - 0x03000000u;  // IWRAM: the menu's cursor, kept on Connecting: 0 Quest, 1 VS, 2 Exchange
+constexpr std::uint32_t kMode = usa(0x020012E0u) - 0x02000000u;    // EWRAM: 4 from the battle's preparation on
+constexpr std::uint32_t kScene = usa(0x02002830u) - 0x02000000u;   // EWRAM: 0x24 and +6 0x1A on Connecting, 0x46 VS's NAVI pages
                                                     // (the screen pointer is 0x08246C18 from the menu's A on)
 constexpr std::uint32_t kLinkInit = usa(0x0800601Cu);     // the game's link routines set up (struct 0x03002A10 cleared,
 constexpr std::uint32_t kLinkInitFromConnecting = usa(0x0814FB2Cu);   // the port to Multi-Player) by Connecting's code
-constexpr std::uint32_t kLinkState = 0x2A11;       // IWRAM: the game's link routines' state byte (0 until their
+// ... and by VS's Connecting (its own caller: the only call there in the
+// Japanese game, frame 2082 from regionmap's atoj vs_qmenu + A, 2026-11-26).
+constexpr std::uint32_t kLinkInitFromVsConnecting = usa(0x0814D8F8u);
+// VS's start: Connecting's first frame by the USA game's text byte (kScene),
+// or the link set-up's call from Connecting's code (on_fn_entry) in the
+// Japanese game, which has no such byte.
+constexpr bool kVsAtSetUp = kThisCart != 0;
+constexpr std::uint32_t kLinkState = usa(0x03002A11u) - 0x03000000u;   // IWRAM: the game's link routines' state byte (0 until their
                                                     // first call, which decides parent or child once: 0x08006210)
 constexpr int kOffTicks = 180;                      // the port out of Multi-Player mode this long: link closed
 constexpr auto kLinkWait = std::chrono::seconds(20);
@@ -733,17 +740,29 @@ bool begin_session(bool net, bool exchange) {
 // set by the title's menu, with the cursor byte still on Exchange, which
 // started a search on the title (2026-11-23, the Thor), and it does not change
 // when Exchange is chosen again after a time-out.
+//
+// In the Japanese game VS starts here too (kVsAtSetUp), against the computer
+// or over the network: the USA game's sign of Connecting's first frame, the
+// byte 0x02002830 (0x24, +6 0x1A), belongs to its text engine, which the
+// Japanese game does not share, and no byte of the Japanese game was found
+// to tell that screen by (docs/REGIONS.md, 2026-11-26). The set-up comes on
+// Connecting alone (not on VS's NAVI pages, nor on the title's menu).
 void (*g_prev_entry)(std::uint32_t) = nullptr;
 void on_fn_entry(std::uint32_t pc) {
     if (g_prev_entry) g_prev_entry(pc);
-    if (pc != kLinkInit || (g_cpu.R[14] & ~1u) != kLinkInitFromConnecting) return;
-    if (vs_mode_choice_current() != 1u || g_phase.load() != kIdle || gba::SioLink::instance()) return;
+    const std::uint32_t from = g_cpu.R[14] & ~1u;
+    if (pc != kLinkInit || (from != kLinkInitFromConnecting && !(kVsAtSetUp && from == kLinkInitFromVsConnecting))) return;
+    const bool net = vs_mode_choice_current() == 1u;
+    if ((!net && !kVsAtSetUp) || g_phase.load() != kIdle || gba::SioLink::instance()) return;
     gba::GbaBus* bus = gbarecomp::active_bus();
     const std::uint8_t* ew = bus ? bus->ewram_ptr() : nullptr;
     const std::uint8_t* iw = bus ? bus->iwram_ptr() : nullptr;
-    if (!ew || !iw || rd32(ew + kScreen) != kConnecting || iw[kCursor] != 2u || ew[kMode] == 4u) return;
+    if (!ew || !iw || rd32(ew + kScreen) != kConnecting || ew[kMode] == 4u) return;
+    const unsigned cursor = iw[kCursor];
+    const bool vs = kVsAtSetUp && from == kLinkInitFromVsConnecting && cursor == 1u;
+    if (!vs && (from != kLinkInitFromConnecting || cursor != 2u || !net)) return;   // Exchange: over the network only
     std::lock_guard<std::mutex> lock(g_mu);
-    if (!begin_session(true, true)) return;
+    if (!begin_session(net, !vs)) return;
     g_save_asked.store(true);
     gbarecomp::runtime_request_state_save_now(kSlot);
 }
@@ -891,15 +910,16 @@ void vs_cpu_tick() {
     const std::uint32_t screen = rd32(ew + kScreen);
     const bool connecting = screen == kConnecting && (cursor == 1u || (cursor == 2u && net_chosen)) &&
                             ew[kMode] != 4u;
-    if (net_chosen) entry_hook_install();   // Exchange's start (on_fn_entry)
+    if (net_chosen || kVsAtSetUp) entry_hook_install();   // Exchange's start, and VS's in Japan (on_fn_entry)
     // VS's snapshot comes at 0x2836 0x1A, before its link routines are set
     // up. Exchange's starts at their set-up instead (on_fn_entry).
-    const bool connecting_screen = connecting && cursor == 1u && ew[kScene] == 0x24u && ew[kScene + 6] == 0x1Au;
+    const bool connecting_screen = !kVsAtSetUp && connecting && cursor == 1u && ew[kScene] == 0x24u &&
+                                   ew[kScene + 6] == 0x1Au;
     // KOL_VS_LOG=1: the bytes the Connecting screen is told by, when they change.
     if (static const bool log = std::getenv("KOL_VS_LOG") != nullptr; log) {
         char now[128];
         std::snprintf(now, sizeof now, "screen=%08X cursor=%u world=%08X ef0=%02X 2830=%02X 2836=%02X multi=%d",
-                      rd32(ew + kScreen), iw[kCursor], rd32(ew + kWorld), iw[0xEF0], ew[0x2830], ew[0x2836],
+                      rd32(ew + kScreen), iw[kCursor], rd32(ew + kWorld), iw[usa(0x03000EF0u) - 0x03000000u], ew[kScene], ew[kScene + 6],
                       multi ? 1 : 0);
         static std::string last;
         if (last != now) {

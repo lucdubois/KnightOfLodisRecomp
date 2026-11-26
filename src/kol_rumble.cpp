@@ -66,10 +66,15 @@ bool death_scene() {
     static const bool off = std::getenv("KOL_NO_DEATH_RUMBLE") != nullptr;
     std::uint32_t size = 0;
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&size);
-    if (off || !ew || size < 0x29D42u) return false;
-    const unsigned map = ew[0x29D40] | (ew[0x29D41] << 8);
-    const unsigned scene = ew[0x13BE] | (ew[0x13BF] << 8);
-    return map == kDeathMap && scene == kDeathScene && ew[0x13D0] == 1u;
+    // The map shown, the scene number (u16) and the story-event flag, as
+    // EWRAM offsets through kol_region.h.
+    constexpr std::uint32_t kEwMap = usa(0x02029D40u) - 0x02000000u;
+    constexpr std::uint32_t kEwScene = usa(0x020013BEu) - 0x02000000u;
+    constexpr std::uint32_t kEwStory = usa(0x020013D0u) - 0x02000000u;
+    if (off || !ew || size < kEwMap + 2u) return false;
+    const unsigned map = ew[kEwMap] | (ew[kEwMap + 1] << 8);
+    const unsigned scene = ew[kEwScene] | (ew[kEwScene + 1] << 8);
+    return map == kDeathMap && scene == kDeathScene && ew[kEwStory] == 1u;
 }
 
 constexpr std::uint32_t kSongStart = usa(0x0815C4E8u);   // m4aSongNumStart(song)

@@ -607,10 +607,16 @@ void ai_army_tick(unsigned long frame) {
         const std::uint8_t* e = b ? b->ewram_ptr() : nullptr;
         const std::uint8_t* i = b ? b->iwram_ptr() : nullptr;
         if (e && i) {
+            // The battle task's preparation byte and its stack, the sub-state,
+            // and the unit list (heap: its place depends on the screen).
+            constexpr std::uint32_t kLogPrep = usa(0x0202A81Au) - 0x02000000u;
+            constexpr std::uint32_t kLogSub = usa(0x0202A82Eu) - 0x02000000u;
+            constexpr std::uint32_t kLogList = usa(0x02037B40u) - 0x02000000u;
             char now[96];
             std::snprintf(now, sizeof now, "prep=%02X phase=%02X stack=%02X.%02X.%02X.%02X sub=%02X.%02X cur=%02X list=%02X/%02X",
-                          e[0x2A81A], e[0x2A81C], e[0x2A81D], e[0x2A81E], e[0x2A81F], e[0x2A820], e[0x2A82E],
-                          e[0x2A82F], i[0xFD5], e[0x37B6C], e[0x37B6E]);
+                          e[kLogPrep], e[kLogPrep + 2], e[kLogPrep + 3], e[kLogPrep + 4], e[kLogPrep + 5],
+                          e[kLogPrep + 6], e[kLogSub], e[kLogSub + 1], i[usa(0x03000FD5u) - 0x03000000u],
+                          e[kLogList + 0x2C], e[kLogList + 0x2E]);
             static std::string last;
             if (last != now) {
                 std::fprintf(stderr, "ai-state: frame %lu %s\n", frame, now);

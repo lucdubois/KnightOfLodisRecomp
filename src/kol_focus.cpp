@@ -273,7 +273,7 @@ const EveningRoom* evening_room() {
     if (off || map < 0) return nullptr;
     const std::uint8_t* ew = guest_ew();
     if (!ew) return nullptr;
-    const std::uint8_t tod = ew[0x21BC];
+    const std::uint8_t tod = ew[kol::usa(0x020021BCu) - 0x02000000u];   // the time of day
     if (tod < 1 || tod > 4) return nullptr;
     static EveningRoom env{};
     static const bool env_on = [] {

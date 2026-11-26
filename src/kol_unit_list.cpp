@@ -816,7 +816,8 @@ void unit_list_dump_tick(unsigned frame) {
         map_cursor_cell(&sx, &sz);
         if (iw)
             std::printf("unit_list: trace frame=%u on=%08X mode=%u target=(%u,%u) slot=(%d,%d) hl=%08X\n",
-                        frame, on_unit, iw[0xFD5], rd16(iw, 0xFDC), rd16(iw, 0xFE0), sx, sz,
+                        frame, on_unit, iw[usa(0x03000FD5u) - 0x03000000u], rd16(iw, usa(0x03000FDCu) - 0x03000000u),
+                        rd16(iw, usa(0x03000FE0u) - 0x03000000u), sx, sz,
                         rd32(bus->ewram_ptr(), usa(0x02028960u) - 0x02000000u));
     }
     static int last_h = -1;

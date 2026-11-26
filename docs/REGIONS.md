@@ -411,21 +411,81 @@ sea and world-map BG2 maps, the fade log), which read 65535 in Japan.
   of the 15 files involved is identical, old source against new.
 - `regionmap/bare_offsets.py` lists every offset still written bare (index,
   pointer arithmetic, read calls, and named constants used to index EWRAM),
-  and whether the table has its address. Left, each needing its Japanese
-  address found first: war funds (0x02001184, kol_unit_data.cpp), the death
-  scene's rumble (scene number 0x020013BE, kol_rumble.cpp, which reads the
-  map and the story flag bare too), the evening rooms' time of day
-  (0x020021BC, kol_focus.cpp), Smooth Boxes' descriptor pointer
-  (0x0200283C, kol_widescreen.cpp), VS against the computer (0x02002830,
-  0x02002836, 0x02029B80, 0x02029BD0, kol_vs_cpu.cpp; and kol_vs_bot.cpp's
-  constants, two of them heap addresses already in the overrides), a debug
-  log line (kol_states.cpp).
+  and whether the table has its address.
+- Then the rest (same day): every offset the scan listed, EWRAM and IWRAM
+  (kol_vs_bot's and kol_vs_cpu's constants, the link state, the unit list's
+  trace), is written through `usa()` now; the scan finds none. The table
+  placed all 13 new addresses; each was then checked in memory at the same
+  10 paired states of both games (`regionmap/{atoe,atoj}/states`, made
+  from the same save and keys), and four got a `checked` override line:
+  war funds 0x02001864 (99,999,999 in both), the scene number 0x02001A9E,
+  the time of day 0x0200289C (equal, and changing: 0 on the world map, 2
+  in battle), and the window control block's pointer 0x020297B0 (the USA
+  pointer + 0xA34, the heap's shift in Japan; the neighbours' guess
+  0x0200044C held 0). Confirmed as placed: the Quest menu's screen pointer
+  and the world state pointer (ROM pointers, + the ROM's 0x2D74 shift),
+  the battle phase, the menu cursor (1 on VS in the Japanese Quest menu).
+- Checked in use: **Smooth Boxes** in the Japanese build (state `dlg0`, A
+  every 40 frames, `KOL_BOX_ANIM_LOG=1`): the old program never left idle,
+  the new one opens the boxes in phases with the box's own descriptor (0 22
+  3 6). **Fast Actions, Fast Walking and Quick Enemy Turns**: a move from
+  `b_move` in both games skips the same holds to the frame and the cycle
+  (2.09 and 7.41 frames) and shows the enemy's move x4 alike. **The shop's
+  Buy list** (the bar's Shop button, `KOL_WORLD_BUTTON_AT=4:20`, Shop
+  Anywhere): its block reads the same tab, count, cursor row and item ids
+  in both games (the block's offsets are the same), so the second screen's
+  shop list names the right item.
+### VS in the Japanese game (2026-11-26)
+
+VS against the computer did not start in the Japanese game: it went to
+"Connecting...", found no one and went back. Four things, found by driving
+the Japanese game from its title (regionmap's `atoj/states/vs_title_menu`
+.. `vs_qmenu`: Down to QUEST MODE, A, A on the save slot, Down to VS; the
+USA game's `atoe/states/vs_qmenu` the same way) and running whole matches
+headless (`KOL_AI_ARMY=1`, `KOL_KEY_SCRIPT` for the player's A on VS, on
+the attack order and on the Winning Condition, `KOL_VS_KEEP=1`):
+
+- **The start.** The USA game is told by 0x02002830 = 0x24 and +6 0x1A on
+  Connecting's first frame: a byte of its text engine, which the Japanese
+  game does not share (the routines that load it moved by 0x14CC to 0x2FC4;
+  no Japanese byte pair behaves alike: `guess` line in the overrides, NOT
+  FOUND, now unused in Japan). The Japanese game starts VS where Exchange
+  always started: the link routines' set-up (0x0800601C), when VS's
+  Connecting calls it. VS's call comes from its own place, USA 0x0814D8F8 /
+  Japan 0x08150734 (the only call there, frame 2082 after A on VS; Exchange's
+  is 0x0814FB2C); `kVsAtSetUp` in kol_vs_cpu.cpp, false in the USA build
+  (its code unchanged). VS Network takes the same start in Japan.
+- **The attack-order byte** 0x03000EF0 (Japan 0x03000A80, as placed) was
+  right: it reads 0, 2, 0, 2 through Connecting, the attack order and after
+  the A in both games. (On that screen and on the Winning Condition the
+  player answers, in both games; the bot only answers for the computer's
+  side there, where the 2 comes.)
+- **The Yes/No box** ("Start the battle?", "Appoint X as leader?"): at
+  0x020380D4 as placed, but its input byte and hand are at +0x1C / +0x1B in
+  the Japanese game, +0x1F / +0x1E in the USA one (the hand byte at
+  0x020380EF went 1 -> 0 on Up). `kYesNoInput` / `kYesNoHand` in kol_vs_bot.
+- **The deployment's unit list** is at 0x02038520 in the preparation (the
+  overrides had 0x02038574, its place in battle): the same bytes as the USA
+  list (roster order 00-12, cursor +0x2C, scroll +0x2E). Before, the bot sent
+  out one unit and started; now five, as in the USA game.
+
+Checked: VS against the computer in the Japanese game from the Quest menu:
+the snapshot on Connecting, the computer's game started and linked in
+121-132 ms, attack order, roulette (a battlefield chosen), Winning
+Condition, both sides send out five units, Start Game, Yes, leaders
+appointed, the battle's turns (frame 9065: "Enemy phase", units with END).
+The USA code of the 18 files involved is identical, old source against
+new. VS Network (two Japanese copies on this Mac, `KOL_VS_MODE=1`, both
+armies by the AI, the copies too through `KOL_VS_CHILD_ENV="KOL_AI_ARMY=1
+KOL_AI_ARMY_AT=3000"`): found each other, linked, five units each, 142
+hashes matched to read 9156, well into the battle. (Without the AI switch
+passed to the copies, both the Japanese and the USA pair went out of step
+at the battle's first AI turn, read ~3900: the test's fault, not the game's.)
 
 ## Not done
 
-- **Offsets written bare** that have no Japanese address yet: the list just
-  above (war funds, the death scene's rumble, the evening rooms, Smooth
-  Boxes, VS against the computer).
+- **The evening room (map 77)**: the time of day is read from the checked
+  address now, but no Japanese state is in that room to see it.
 - **Seen only in part.** Grey text (colour 1) has not been on screen; a unit
   with no sex shows two dashes (the USA ROM's "--" string has no Japanese
   twin where it should be); a made item's name is read as a unit's. The shop
@@ -440,11 +500,13 @@ sea and world-map BG2 maps, the fade log), which read 65535 in Japan.
   the bar's help cards over the game's Japanese text, the Save States page.
   Should they be translated later: the game's font has only the 650 or so
   kanji the game uses. "Enhancement Options" reaches its row's arrow.
-- **Untested there**: the unit list's taps, opening a unit's profile from
-  the world map,
-  Fast Actions and the other hooks' behaviour, the stick cursor, story
-  scenes' actors, sound placement, HD music, achievements, mods, versus mode
-  (kol_vs_bot's heap addresses depend on the screen).
+- **Untested there**: the unit list's taps (they move the cursor as next /
+  previous unit does, which is checked), opening a unit's profile from the
+  world map, the stick cursor, story scenes' actors (the user played map
+  98's archers in Japanese and reported only the fade), sound placement,
+  mods. Checked since: VS against the computer (above), Fast Actions and the other speed hooks,
+  the bar's Shop button and the Buy list, Smooth Boxes (above); HD music
+  runs (its log: the tick model matches, HD PSG notes played).
 - **Two functions run interpreted** in the Japanese build (0x08012EDC,
   0x08012F4A); proposals in `regionmap/atoj/carried_proposals.toml`, not
   merged. gbarecomp's rule: a person reviews what goes into a game's

@@ -4,6 +4,7 @@
 // {the USA ROM's, this ROM's},   // how it was placed; what the memory check said
     {0x02000030u, 0x02000710u},   // exact; memory: confirmed
     {0x02000D30u, 0x02001410u},   // exact; memory: region
+    {0x02001184u, 0x02001864u},   // checked
     {0x0200118Bu, 0x0200186Bu},   // exact; memory: confirmed
     {0x0200118Cu, 0x0200186Cu},   // derived; memory: confirmed
     {0x02001197u, 0x02001877u},   // derived; memory: confirmed
@@ -17,12 +18,16 @@
     {0x02001330u, 0x02001A10u},   // derived; memory: same
     {0x02001331u, 0x02001A11u},   // derived; memory: same
     {0x020013BCu, 0x02001A9Cu},   // derived; memory: confirmed
+    {0x020013BEu, 0x02001A9Eu},   // checked
     {0x020013D0u, 0x02001AB0u},   // derived; memory: tracks
     {0x02001420u, 0x02001B00u},   // exact; memory: region
     {0x02001AA0u, 0x02002180u},   // exact; memory: tracks
     {0x02001C60u, 0x02002340u},   // derived; memory: unverified
+    {0x020021BCu, 0x0200289Cu},   // checked; memory: tracks
     {0x020021CCu, 0x020028ACu},   // derived; memory: tracks
     {0x02002400u, 0x02000010u},   // exact; memory: confirmed
+    {0x02002830u, 0x02000440u},   // guess; memory: unverified
+    {0x0200283Cu, 0x020297B0u},   // checked; memory: unverified
     {0x02002B1Cu, 0x02026C40u},   // exact; memory: tracks
     {0x020042E4u, 0x02004264u},   // exact; memory: confirmed
     {0x02016440u, 0x020163C0u},   // checked; memory: corrected
@@ -35,6 +40,8 @@
     {0x02028960u, 0x020293F0u},   // exact; memory: confirmed
     {0x02028ED0u, 0x02029860u},   // derived; memory: confirmed
     {0x02029AC4u, 0x0202A464u},   // exact; memory: tracks
+    {0x02029B80u, 0x0202A520u},   // exact; memory: confirmed
+    {0x02029BD0u, 0x0202A570u},   // exact; memory: confirmed
     {0x02029C54u, 0x0202A5F4u},   // exact; memory: confirmed
     {0x02029C5Cu, 0x0202A5FCu},   // exact; memory: confirmed
     {0x02029CACu, 0x0202A64Cu},   // exact; memory: unverified
@@ -55,6 +62,7 @@
     {0x0202A5B0u, 0x0202AF80u},   // exact; memory: region
     {0x0202A5F0u, 0x0202AFC0u},   // derived; memory: tracks
     {0x0202A81Au, 0x0202B1EAu},   // derived; memory: confirmed
+    {0x0202A81Cu, 0x0202B1ECu},   // derived; memory: confirmed
     {0x0202A82Eu, 0x0202B1FEu},   // derived; memory: confirmed
     {0x0202A900u, 0x0202B330u},   // exact; memory: confirmed
     {0x0202A903u, 0x0202B333u},   // derived; memory: confirmed
@@ -66,12 +74,16 @@
     {0x0202B710u, 0x0202C144u},   // near; memory: confirmed
     {0x0202B714u, 0x0202C148u},   // near; memory: confirmed
     {0x0202D90Cu, 0x0202E2ECu},   // checked; memory: region?
+    {0x020376A0u, 0x020380D4u},   // heap; memory: corrected
+    {0x02037B40u, 0x02038520u},   // heap; memory: conflict
     {0x0203C734u, 0x0203D07Cu},   // near; memory: unverified
     {0x0203C738u, 0x0203D080u},   // near; memory: unverified
     {0x03000820u, 0x03000840u},   // exact; memory: confirmed
     {0x03000822u, 0x03000842u},   // derived; memory: confirmed
     {0x03000E1Au, 0x030009AAu},   // exact; memory: confirmed
     {0x03000E1Cu, 0x030009ACu},   // exact; memory: confirmed
+    {0x03000ED1u, 0x03000A61u},   // derived; memory: tracks
+    {0x03000EF0u, 0x03000A80u},   // derived; memory: region
     {0x03000FA0u, 0x03000B30u},   // exact; memory: tracks
     {0x03000FD5u, 0x03000B65u},   // exact; memory: confirmed
     {0x03000FD6u, 0x03000B66u},   // derived; memory: confirmed
@@ -82,6 +94,7 @@
     {0x030029F0u, 0x03002580u},   // exact; memory: confirmed
     {0x030029F4u, 0x03002584u},   // exact; memory: confirmed
     {0x030029F8u, 0x03002588u},   // exact; memory: confirmed
+    {0x03002A11u, 0x030025A1u},   // derived
     {0x030032B8u, 0x03002E48u},   // exact; memory: confirmed
     {0x03004150u, 0x03003CE0u},   // exact; memory: confirmed
     {0x03005DE0u, 0x03005970u},   // derived; memory: confirmed
@@ -263,6 +276,7 @@
     {0x0813DC92u, 0x0813E8A2u},   // exact
     {0x08142FACu, 0x08143AF8u},   // exact
     {0x0814506Cu, 0x08145F94u},   // exact
+    {0x0814D8F8u, 0x08150734u},   // exact
     {0x0814FB2Cu, 0x08152A38u},   // exact
     {0x0815B838u, 0x0815E45Cu},   // exact
     {0x0815BC94u, 0x0815E8B8u},   // exact

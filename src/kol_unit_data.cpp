@@ -2686,9 +2686,10 @@ int spell_icon_sub(int id) { return rom8(kTalentTable + static_cast<std::uint32_
 std::uint32_t war_funds() {
     std::uint32_t esz = 0;
     const std::uint8_t* ew = gbarecomp::runtime_ewram_view(&esz);
-    if (!ew || 0x1188u > esz) return 0;
-    return static_cast<std::uint32_t>(ew[0x1184]) | (ew[0x1185] << 8) | (ew[0x1186] << 16) |
-           (static_cast<std::uint32_t>(ew[0x1187]) << 24);
+    constexpr std::uint32_t kEwFunds = usa(0x02001184u) - kEwramBase;   // u32: the war funds
+    if (!ew || kEwFunds + 4u > esz) return 0;
+    return static_cast<std::uint32_t>(ew[kEwFunds]) | (ew[kEwFunds + 1] << 8) | (ew[kEwFunds + 2] << 16) |
+           (static_cast<std::uint32_t>(ew[kEwFunds + 3]) << 24);
 }
 bool shop_spell_free() {
     const std::uint8_t* ew = nullptr;

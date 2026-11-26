@@ -1087,7 +1087,9 @@ void box_anim_update() {
     gba::GbaBus* bus = gbarecomp::active_bus();
     if (!bus || !g_io || !kol::setting_on(kol::Setting::SmoothBoxes)) { b.phase = BoxPhase::Idle; return; }
     const std::uint8_t* ew = bus->ewram_ptr();
-    const std::uint32_t blk = ew[0x283C] | (ew[0x283D] << 8) | (ew[0x283E] << 16) | (static_cast<std::uint32_t>(ew[0x283F]) << 24);
+    constexpr std::uint32_t kEwBlockPtr = kol::usa(0x0200283Cu) - 0x02000000u;   // u32: the window control block
+    const std::uint32_t blk = ew[kEwBlockPtr] | (ew[kEwBlockPtr + 1] << 8) | (ew[kEwBlockPtr + 2] << 16) |
+                              (static_cast<std::uint32_t>(ew[kEwBlockPtr + 3]) << 24);
     if (blk < 0x02000000u || blk + kol::usa_ctl(0x1B93u) + 4u >= 0x02040000u) { b.phase = BoxPhase::Idle; return; }
     const std::uint8_t* d = ew + (blk - 0x02000000u) + kol::usa_ctl(0x1B93u);
     const int left = d[0], inner_w = d[1], mid = d[2], inner_h = d[3];

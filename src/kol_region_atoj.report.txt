@@ -1,12 +1,18 @@
-Addresses in usa(): 380. In the table: 380. {'exact': 329, 'derived': 28, 'checked': 2, 'near': 8, 'aligned': 13}
+Addresses in usa(): 394. In the table: 394. {'exact': 332, 'checked': 6, 'derived': 32, 'guess': 1, 'near': 8, 'heap': 2, 'aligned': 13}
 
 NOT PLACED (0): every use is a compile error in the Japanese build.
 
-WEAK (4): in the table, but on evidence that has not been confirmed.
+WEAK (7): in the table, but on evidence that has not been confirmed.
+  02002830 -> 02000440  guess / unverified  by hand: NOT FOUND: VS's Connecting-screen byte (kol_vs_cpu kScene; USA 0x02 on the Quest menu, 0x24 with +6 0x1A on Connecting). This neighbour placement reads 0 in all 10 paired states; no Japanese byte pair has the USA values there or on the Japanese Connecting screen, and none splits 14 paired states as the USA one does while also changing from the menu to Connecting (2026-11-26, regionmap states vs_qmenu/vs_pages). Unused in Japan since: VS starts at the link set-up there (kol_vs_cpu kVsAtSetUp; docs/REGIONS.md "VS in the Japanese game")
+      kol_vs_cpu.cpp:97
   02029D84 -> 0202A754  near / unverified  02029D80+0x4 (+9D0); next 02029D90 +9A0
       kol_unit_data.cpp:2347
   02029DA0 -> 0202A740  near / unverified  02029D98+0x8 (+9A0); next 02029DA8 +9D0
       kol_unit_data.cpp:2348
+  020376A0 -> 020380D4  heap / corrected  by hand: the Yes/No box (kol_vs_bot): +A34 at the 3 moments that have it
+      kol_vs_bot.cpp:96
+  02037B40 -> 02038520  heap / conflict  by hand: the unit list (kol_vs_bot), read in the preparation: 02038520 there (VS's deployment list, phase 2 sub 5: the same bytes as the USA list at 02037B40, roster order 00-12, +2C cursor, +2E scroll, +2F 13; 2026-11-26) and on the Training setup screen (2); 02038574 in battle (11 moments)
+      kol_states.cpp:614, kol_vs_bot.cpp:93
   0203C734 -> 0203D07C  near / unverified  02039FF0+0x2744 (+948); next none
       kol_focus_queries.cpp:281, kol_unit_data.cpp:2345
   0203C738 -> 0203D080  near / unverified  02039FF0+0x2748 (+948); next none

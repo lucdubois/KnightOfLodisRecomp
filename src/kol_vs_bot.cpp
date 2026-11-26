@@ -83,18 +83,26 @@ constexpr int kSettle = 6;    // frames the state must stay the same before a pr
 constexpr int kTries = 3;     // the same press on the same target, then give it up
 constexpr int kTeam = 5;      // VS Mode's MEMBER limit
 
-// EWRAM / IWRAM offsets.
-constexpr std::uint32_t kMode = 0x12E0u;          // 4: Quest (VS) battles
-constexpr std::uint32_t kPrep = 0x2A81Au;         // 0 in the preparation
-constexpr std::uint32_t kPhase = 0x2A81Cu;
-constexpr std::uint32_t kSub = 0x2A82Eu;
-constexpr std::uint32_t kList = 0x37B40u;
-constexpr std::uint32_t kEntries = 0x1AA0u;
-constexpr std::uint32_t kCellsPtr = 0x29CCCu;
-constexpr std::uint32_t kYesNo = 0x376A0u;
-constexpr std::uint32_t kCursor = 0x0FA0u;        // IWRAM
-constexpr std::uint32_t kAttackMenu = 0x0EF0u;    // IWRAM: 2 while "attacks 1st" takes input
-constexpr std::uint32_t kWorldState = 0x29BD0u;   // the world map's state pointer
+// EWRAM / IWRAM offsets, through kol_region.h (an offset written bare is the
+// USA game's in the Japanese build too).
+constexpr std::uint32_t kEwBase = 0x02000000u, kIwBase = 0x03000000u;
+constexpr std::uint32_t kMode = usa(0x020012E0u) - kEwBase;      // 4: Quest (VS) battles
+constexpr std::uint32_t kPrep = usa(0x0202A81Au) - kEwBase;      // 0 in the preparation
+constexpr std::uint32_t kPhase = usa(0x0202A81Cu) - kEwBase;
+constexpr std::uint32_t kSub = usa(0x0202A82Eu) - kEwBase;
+constexpr std::uint32_t kList = usa(0x02037B40u) - kEwBase;      // heap: regionmap's overrides
+constexpr std::uint32_t kEntries = usa(0x02001AA0u) - kEwBase;
+constexpr std::uint32_t kCellsPtr = usa(0x02029CCCu) - kEwBase;
+constexpr std::uint32_t kYesNo = usa(0x020376A0u) - kEwBase;     // heap: regionmap's overrides
+// The box's bytes: 3 while it takes input, and its hand (1 No, where it
+// opens; 0 Yes). The Japanese game's box has them 3 bytes nearer its start
+// (VS's "Start the battle?" box: the hand byte at 0x020380EF went 1 -> 0 on
+// Up, the input byte at 0x020380F0 was 3; 2026-11-26).
+constexpr std::uint32_t kYesNoInput = kYesNo + (kThisCart != 0 ? 0x1Cu : 0x1Fu);
+constexpr std::uint32_t kYesNoHand = kYesNo + (kThisCart != 0 ? 0x1Bu : 0x1Eu);
+constexpr std::uint32_t kCursor = usa(0x03000FA0u) - kIwBase;    // IWRAM
+constexpr std::uint32_t kAttackMenu = usa(0x03000EF0u) - kIwBase;   // IWRAM: 2 while "attacks 1st" takes input
+constexpr std::uint32_t kWorldState = usa(0x02029BD0u) - kEwBase;   // the world map's state pointer
 constexpr std::uint32_t kWinCondition = usa(0x08246D50u);
 
 std::atomic<std::uint16_t> g_out{0};              // keys pressed now (active high)
@@ -174,8 +182,8 @@ void decide(const std::uint8_t* ew, const std::uint8_t* iw, std::uint64_t state)
     const std::uint8_t phase = ew[kPhase], sub = ew[kSub];
     const bool cursor_out = iw[kCursor + 0x35] == 1;
     const int cx = rd16i(kCursor + 0x3C), cz = rd16i(kCursor + 0x40);
-    const bool yesno = ew[kYesNo + 0x1F] == 3;
-    const bool on_no = ew[kYesNo + 0x1E] != 0;
+    const bool yesno = ew[kYesNoInput] == 3;
+    const bool on_no = ew[kYesNoHand] != 0;
 
     // This game's own units in the battle entries (+0x00 = 0x80 | roster
     // index, not the other game's, +0x17 bit 5), and their cells.
@@ -405,7 +413,7 @@ void bot_tick(unsigned long frame) {
                                 static_cast<std::uint64_t>(iw[kCursor + 0x40]) << 32 |
                                 static_cast<std::uint64_t>(ew[kList + 0x2C]) << 40 |
                                 static_cast<std::uint64_t>(ew[kList + 0x2E]) << 48 |
-                                static_cast<std::uint64_t>(ew[kYesNo + 0x1F] | ew[kYesNo + 0x1E] << 4) << 56;
+                                static_cast<std::uint64_t>(ew[kYesNoInput] | ew[kYesNoHand] << 4) << 56;
     if (state != g_last_state) {
         g_last_state = state;
         g_settle = 0;
