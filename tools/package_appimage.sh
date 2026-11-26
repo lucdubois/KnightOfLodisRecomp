@@ -25,7 +25,8 @@
 # hands over to the other when the Japanese game is the one to play.
 #
 # The tree goes to ~/kol/<this checkout's folder name> on the Deck (a git
-# worktree keeps its own), its links to outside it copied as files.
+# worktree keeps its own); its recompiled code is copied as folders even
+# where it is a link.
 # KOL_SSH=<a script running ssh with the right options> when the Deck's
 # address is not ~/.ssh/config's. KOL_PACKAGE_TAG=name puts "-name" after the
 # version in the file's name (a test build must not overwrite a release's
@@ -76,9 +77,15 @@ if [ "${1:-}" != "--no-build" ]; then
     echo "==> sources to the Deck"
     cd "$ROOT/.."
     rsync -e "$SSH" -a --delete --exclude '/build*/' --exclude '/.git/' --exclude 'hang_*' --exclude '.DS_Store' gbarecomp/ steamdeck:kol/gbarecomp/
-    # (--copy-unsafe-links: a worktree's generated/ and generated_atoj/ are
-    # links to outside it. /build-*/ also keeps the Deck's own build folders.)
-    rsync -e "$SSH" -a --delete --copy-unsafe-links --exclude '/build/' --exclude '/build-*/' --exclude '/android/' --exclude '/states/' --exclude '/shots/' --exclude '/recomp_cache/' --exclude '/.git' --exclude '/diagnostics_*/' --exclude '*.bmp' --exclude '*.state*' --exclude 'hang_*' --exclude '*.gba' --exclude '*.sav' --exclude '.DS_Store' --exclude '__pycache__/' "$ROOT/" "steamdeck:kol/$TREE/"
+    # The recompiled code on its own: in a worktree, generated/ and
+    # generated_atoj/ are links to outside it, which the trailing slash
+    # follows. (Not --copy-unsafe-links: the Mac's rsync stops on any link to
+    # nothing in the tree, excluded or not.) /build-*/ also keeps the Deck's
+    # own build folders.
+    rsync -e "$SSH" -a --delete --exclude '/generated' --exclude '/generated_atoj' --exclude '/build/' --exclude '/build-*/' --exclude '/android/' --exclude '/states/' --exclude '/shots/' --exclude '/recomp_cache/' --exclude '/.git' --exclude '/diagnostics_*/' --exclude '*.bmp' --exclude '*.state*' --exclude 'hang_*' --exclude '*.gba' --exclude '*.sav' --exclude '.DS_Store' --exclude '__pycache__/' "$ROOT/" "steamdeck:kol/$TREE/"
+    for d in generated generated_atoj; do
+        [ -d "$ROOT/$d/" ] && rsync -e "$SSH" -a --delete "$ROOT/$d/" "steamdeck:kol/$TREE/$d/"
+    done
     echo "==> public build on the Deck (Release, KOL_DEV_TOOLS=OFF)"
     "$SSH" steamdeck "TREE=$TREE VERSION=$VERSION sh -s" <<'REMOTE'
 K=/home/deck/kol

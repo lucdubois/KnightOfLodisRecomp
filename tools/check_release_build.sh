@@ -12,10 +12,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "${1:-}" != "--no-build" ]; then
     (cd "$ROOT/android" && ./gradlew assembleRelease -q) || exit 2
 fi
-LIB=$(find "$ROOT/android/app/build/intermediates" -path '*release*' -path '*arm64-v8a*' -name libmain.so 2>/dev/null | head -1)
-[ -n "$LIB" ] || { echo "no release libmain.so under android/app/build/intermediates"; exit 2; }
-echo "checking $LIB"
+# Every game's library (libmain.so, and libmain_jp.so when the app holds the
+# Japanese game too: docs/REGIONS.md), from the release build's merged libs.
+DIR=$(find "$ROOT/android/app/build/intermediates" -path '*release*' -path '*arm64-v8a*' -name libmain.so 2>/dev/null | head -1)
+[ -n "$DIR" ] || { echo "no release libmain.so under android/app/build/intermediates"; exit 2; }
+DIR=$(dirname "$DIR")
 found=0
+for LIB in "$DIR"/libmain*.so; do
+echo "checking $LIB"
 # One string per tool: the Debug page, the editor and its file, the device
 # switches file, the miss recording, the load-hold and memo logs.
 for s in "Tools for testing." "Unlink ROM" "Restart on the setup screen" "Tile Info" "L2 Moves Sun" "Instant Win" "Return to Debug." "No Second Screen" \
@@ -26,5 +30,6 @@ for s in "Tools for testing." "Unlink ROM" "Restart on the setup screen" "Tile I
         found=1
     fi
 done
-[ $found -eq 0 ] && echo "clean: none of the dev tools' strings are in the release library"
+done
+[ $found -eq 0 ] && echo "clean: none of the dev tools' strings are in the release libraries"
 exit $found

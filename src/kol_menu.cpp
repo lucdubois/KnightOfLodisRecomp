@@ -1734,8 +1734,8 @@ void step_value(const Art& a, const Row& r, int dir = 1) {
                 break;
             }
             const std::string text = std::string("Playing ") + kCarts[kThisCart].name +
-                                     ". Restart on the setup screen to play the other version? It has its own "
-                                     "saves; these are kept.";
+                                     ". Go to the setup screen to play the other version? The game restarts. "
+                                     "Each version has its own saves; these are kept.";
             open_dialog("Game", text.c_str(), {"Setup", "Cancel"}, 1, [](int b) {
                 if (b == 0 && g_platform.choose_game) g_platform.choose_game();
             });
