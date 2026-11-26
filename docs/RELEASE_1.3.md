@@ -22,6 +22,7 @@ On a computer, replace the old AppImage, app or folder with the new one. Your sa
   - On Android, the Japanese version's save and save states are in the Files app and in your Sync Folder too, in a folder named `japan`.
   - The Japanese game is in Japanese, and so is what the second screen shows from it: the unit sheet, equipment and talents, and the help texts. The enhancement options added by this project stay in English.
   - The 3D battlefield and its lighting work in the Japanese version as in the USA one.
+  - VS Mode works in the Japanese version too: against the computer, and over the local network between two players who both play the Japanese version.
   - Achievements are for the USA version only: RetroAchievements' set is made for it.
 - **Fast forward, your way.** **Options > Enhancements > Gameplay > Fast Forward**: **Hold** (as before: fast while R2 is held) or **Toggle** (each press of R2 turns it on or off). **Fast Forward Speed**: from x2 to x10 (x4 as before). The keyboard's 2 and Tab, and the touch button on phones, follow the same choice.
 - **The options menu's Enhancement Options page is now called Enhancements**, which fits the menu in the Japanese version.
@@ -30,6 +31,7 @@ On a computer, replace the old AppImage, app or folder with the new one. Your sa
 ## Fixes
 
 - **No sound on each setting change.** While the options menu is open, the game runs a few frames after each change so the change shows; those frames played a short piece of sound every time. They are silent now.
+- **A woman hidden by her chair.** In the house where Alphonse wakes up, moving the camera with the right stick drew the chair over the woman sitting at the table, from her shoulders down. She stays whole now.
 - **The menu with translation mods.** With some translation mods (a Spanish one was reported), the menu did not open and the game stayed paused. The menu now opens, with the game's options in English.
 
 ## Known limits

@@ -495,8 +495,6 @@ at the battle's first AI turn, read ~3900: the test's fault, not the game's.)
 
 ## Not done
 
-- **The evening room (map 77)**: the time of day is read from the checked
-  address now, but no Japanese state is in that room to see it.
 - **Seen only in part.** Grey text (colour 1) has not been on screen; a unit
   with no sex shows two dashes (the USA ROM's "--" string has no Japanese
   twin where it should be); a made item's name is read as a unit's. The shop
@@ -516,7 +514,13 @@ at the battle's first AI turn, read ~3900: the test's fault, not the game's.)
   previous unit does, which is checked), opening a unit's profile from the
   world map, the stick cursor, story scenes' actors (the user played map
   98's archers in Japanese and reported only the fade), sound placement,
-  mods. Checked since: VS against the computer (above), Fast Actions and the other speed hooks,
+  mods. Checked since: the evening room (map 77, Thor state
+  `states/thor_japan/0016.state`, after the flashback, from the USA save
+  copied to `japan/`; 0015 is the same room by day): time of day 1, and the
+  room keeps its day colours (the palette is the set at the table
+  0x085EC5BC + 0x7D40, the header's +0x20; the game's evening set, +0x24,
+  differs in 51 of 96 colours), the user saw it right on the Thor
+  (2026-11-26); VS against the computer (above), Fast Actions and the other speed hooks,
   the bar's Shop button and the Buy list, Smooth Boxes (above); HD music
   runs (its log: the tick model matches, HD PSG notes played).
 - **Two functions run interpreted** in the Japanese build (0x08012EDC,
