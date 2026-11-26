@@ -2523,9 +2523,10 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
             if (gba::GbaBus* bus = gbarecomp::active_bus()) {
                 const std::uint8_t* ew = bus->ewram_ptr();
                 auto r16 = [&](std::uint32_t a) { return static_cast<std::int16_t>(ew[a] | (ew[a + 1] << 8)); };
+                constexpr std::uint32_t kEwCam = kol::usa(0x02026C78u) - 0x02000000u;   // and its ease target at +8
                 std::fprintf(stderr, "cam: frame %lu cam %d,%d target %d,%d bg0 %u,%u presented %llu\n",
-                             static_cast<unsigned long>(f->frame_count), r16(0x26C78), r16(0x26C7A), r16(0x26C80),
-                             r16(0x26C82), bus->read16(0x04000010u) & 511u, bus->read16(0x04000012u) & 511u,
+                             static_cast<unsigned long>(f->frame_count), r16(kEwCam), r16(kEwCam + 2), r16(kEwCam + 8),
+                             r16(kEwCam + 10), bus->read16(0x04000010u) & 511u, bus->read16(0x04000012u) & 511u,
                              static_cast<unsigned long long>(gbarecomp::g_runtime_presented_frame));
             }
     }
@@ -2542,7 +2543,7 @@ void kol_extended_view_frame(const gbarecomp::ExtendedViewFrameInfo* f) {
                 const std::uint8_t* ew = bus->ewram_ptr();
                 auto r32 = [&](std::uint32_t a) { return ew[a] | (ew[a + 1] << 8) | (ew[a + 2] << 16) | (static_cast<std::uint32_t>(ew[a + 3]) << 24); };
                 auto r16 = [&](std::uint32_t a) { return ew[a] | (ew[a + 1] << 8); };
-                const std::uint32_t list = r32(0x2A238);
+                const std::uint32_t list = r32(kol::usa(0x0202A238u) - 0x02000000u);
                 std::fprintf(stderr, "objs: frame %lu", static_cast<unsigned long>(f->frame_count));
                 if (list >= 0x02000000u && list + 26u * 0xD0u <= 0x02040000u)
                     for (int i = 0; i < 26; ++i) {
